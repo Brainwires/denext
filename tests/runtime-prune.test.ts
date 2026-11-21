@@ -531,3 +531,170 @@ Deno.test("runtimeRemove: prune keeps the runtime releases selected here (projec
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+/** Run `fn` with Deno.exit throwing instead of exiting, and console.log / console.error captured. */
+async function exiting(
+  fn: () => Promise<void>,
+): Promise<{ code: number | null; errors: string; out: string }> {
+  const exit = Deno.exit;
+  const error = console.error;
+  const log = console.log;
+  const errors: string[] = [];
+  const out: string[] = [];
+  let code: number | null = null;
+  Deno.exit = ((c?: number): never => {
+    code = c ?? 0;
+    throw new Error("__exit__");
+  }) as typeof Deno.exit;
+  console.error = (...a: unknown[]) => void errors.push(a.join(" "));
+  console.log = (...a: unknown[]) => void out.push(a.join(" "));
+  try {
+    await fn();
+  } catch (err) {
+    if (!(err instanceof Error && err.message === "__exit__")) throw err;
+  } finally {
+    Deno.exit = exit;
+    console.error = error;
+    console.log = log;
+  }
+  return { code, errors: errors.join("\n"), out: out.join("\n") };
+}
+
+Deno.test("runtimeRemove: arguments that ask for nothing coherent exit 1 before touching the cache", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-prune-args-" });
+  try {
+    const deps = {
+      roots: { deno: join(dir, "nope"), desktop: join(dir, "nope2") },
+      ownPins: () => {
+        throw new Error("never reached");
+      },
+    };
+    const prune = await exiting(() => runtimeRemove(ctxOf(["prune", "1.0.0"], dir), deps));
+    assertEquals(prune.code, 1);
+    assertStringIncludes(prune.errors, "`runtime prune` takes no version");
+    const all = await exiting(() =>
+      runtimeRemove(ctxOf(["uninstall", "1.0.0"], dir, { all: true }), deps)
+    );
+    assertEquals(all.code, 1);
+    assertStringIncludes(all.errors, "`runtime uninstall --all` takes no version");
+    const none = await exiting(() => runtimeRemove(ctxOf(["uninstall"], dir), deps));
+    assertEquals(none.code, 1);
+    assertStringIncludes(none.errors, "name a version to uninstall");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "runtimeRemove: a version that can't be deleted is reported and exits 1",
+  ignore: !POSIX,
+  async fn() {
+    const dir = await Deno.makeTempDir({ prefix: "denext-prune-fail-" });
+    const stuck = join(dir, "cache", "denext-deno", "1.0.0-denext.1", "x86_64-target");
+    try {
+      const roots = await fakeCache(join(dir, "cache"), [
+        ["deno", "1.0.0-denext.1", 10],
+        ["deno", "1.0.0-denext.2", 20],
+      ]);
+      // A read-only directory under the version: its file can't be unlinked.
+      await Deno.chmod(stuck, 0o500);
+      const deps = {
+        roots,
+        ownPins: () => ({
+          deno: "1.0.0-denext.2",
+          desktopRuntime: null,
+          gleam: null,
+          fastlane: null,
+        }),
+      };
+      const run = await exiting(() =>
+        runtimeRemove(ctxOf(["uninstall", "1.0.0-denext.1"], dir), deps)
+      );
+      const jsonRun = await exiting(() =>
+        runtimeRemove(ctxOf(["uninstall", "1.0.0-denext.1"], dir, {}, true), deps)
+      );
+      const human = run.out;
+      const json = jsonRun.out;
+      if (Deno.uid() === 0) return; // root deletes through any mode
+      assertEquals(run.code, 1);
+      assertEquals(jsonRun.code, 1);
+      assertStringIncludes(human, "could not remove Deno toolchain 1.0.0-denext.1");
+      assertStringIncludes(human, "freed 0 B");
+      const parsed = JSON.parse(json);
+      assertEquals(parsed.removed.length, 1);
+      assert(typeof parsed.removed[0].error === "string" && parsed.removed[0].error.length > 0);
+      assertEquals(parsed.freedBytes, 0);
+    } finally {
+      await Deno.chmod(stuck, 0o755).catch(() => {});
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test("runtimeRemove: unreadable own pins and a malformed project runtime pin keep nothing extra", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-prune-defaults-" });
+  const env = ["DENEXT_TOOLCHAIN_PIN_FILE", "DENEXT_RUNTIME_DEFAULT_FILE"] as const;
+  const saved = env.map((k) => Deno.env.get(k));
+  try {
+    const roots = await fakeCache(join(dir, "cache"), [["deno", "3.0.0-denext.30", 10]]);
+    const project = join(dir, "app");
+    await Deno.mkdir(join(project, ".git"), { recursive: true });
+    await Deno.writeTextFile(
+      join(project, "deno.json"),
+      JSON.stringify({ denext: { runtime: { version: "not-a-release" } } }),
+    );
+    // The pin-file override points nowhere: this denext's own toolchain pin can't be read.
+    Deno.env.set("DENEXT_TOOLCHAIN_PIN_FILE", join(dir, "missing-pin.json"));
+    Deno.env.set("DENEXT_RUNTIME_DEFAULT_FILE", join(dir, "missing-default.json"));
+    const json = JSON.parse(
+      await captured(() =>
+        runtimeRemove(ctxOf(["prune"], project, { "dry-run": true }, true), { roots })
+      ),
+    );
+    assertEquals(json.removed.map((e: { version: string }) => e.version), ["3.0.0-denext.30"]);
+  } finally {
+    env.forEach((k, i) => saved[i] === undefined ? Deno.env.delete(k) : Deno.env.set(k, saved[i]!));
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("runtimeRemove: a published pin that fails to fetch counts as absent; its rollback is kept", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-prune-jsr-rollback-" });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = ((input: string | URL | Request) => {
+    const url = String(input instanceof Request ? input.url : input);
+    const file = url.slice(url.lastIndexOf("/") + 1);
+    if (file === "deno-toolchain-pin.json") {
+      return Promise.resolve(
+        Response.json({ version: "1.0.0-denext.3", rollback: { version: "1.0.0-denext.2" } }),
+      );
+    }
+    return Promise.reject(new TypeError("network down"));
+  }) as typeof fetch;
+  try {
+    const roots = await fakeCache(join(dir, "cache"), [
+      ["deno", "1.0.0-denext.1", 10],
+      ["deno", "1.0.0-denext.2", 20],
+      ["deno", "1.0.0-denext.3", 30],
+    ]);
+    const project = join(dir, "app");
+    await Deno.mkdir(join(project, ".git"), { recursive: true });
+    await Deno.writeTextFile(
+      join(project, "deno.json"),
+      JSON.stringify({ imports: { denext: "jsr:@denext/denext@0.0.3" } }),
+    );
+    const json = JSON.parse(
+      await captured(() =>
+        runtimeRemove(ctxOf(["prune"], project, { "dry-run": true }, true), {
+          roots,
+          ownPins: () => ({ deno: null, desktopRuntime: null, gleam: null, fastlane: null }),
+        })
+      ),
+    );
+    assertEquals(json.removed.map((e: { version: string }) => e.version), ["1.0.0-denext.1"]);
+    assertEquals(json.warning, undefined);
+  } finally {
+    globalThis.fetch = realFetch;
+    await Deno.remove(dir, { recursive: true });
+  }
+});
