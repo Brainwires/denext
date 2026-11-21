@@ -70,7 +70,7 @@ jobs:
       hosted: ${{ steps.pick.outputs.hosted }}
     steps:
       - id: pick
-        uses: Brainwires/.github/actions/pick-runners@8a0cb356b969132668442f9539b75d3173d59b3e # pick-runners (ETA overflow)
+        uses: Brainwires/.github/actions/pick-runners@9ba7db292c456d71728680b8fedd038c2eb4b441 # pick-runners (ETA overflow)
         with:
           jobs: >-
             ${{ github.event_name == 'push' && github.ref != 'refs/heads/main'
