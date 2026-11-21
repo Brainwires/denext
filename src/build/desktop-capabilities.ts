@@ -26,6 +26,11 @@ import { createUnifiedDiff } from "./patch-diff.ts";
 import { desktopImportMapArgsFor } from "./desktop-import-map.ts";
 import { desktopNetSplitFor } from "./desktop-runtime.ts";
 import {
+  CORE_FOUNDATION_PATH,
+  CORE_SERVICES_PATH,
+  DEFAULT_BROWSER_LINUX_PROGRAMS,
+} from "../desktop/browser-config.ts";
+import {
   desktopBakedCapabilitiesRuntime,
   desktopDataTokenRuntime,
   desktopDataTokenRuntimeProblem,
@@ -450,6 +455,30 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       "start the app at login: macOS login item / Windows Run value / Linux autostart (pinned runtime)",
     manual: [
       "launch-at-login: turn it on only when the user asks (a settings toggle): it makes the app start with every login. macOS 13+ may answer `requires-approval` until the user allows it in System Settings › Login Items; it needs a signed app bundle.",
+    ],
+  },
+  "default-browser": {
+    key: "defaultBrowser",
+    value: true,
+    api: [
+      "setDefaultBrowser (denext/desktop/app)",
+      "getSchemeOwner",
+      "isDefaultBrowser",
+      "createDefaultBrowser (denext/desktop)",
+    ],
+    // In the app's own process: LaunchServices over FFI on macOS (the two framework paths, not an
+    // unscoped --allow-ffi), xdg-settings / xdg-mime on Linux. Windows: not supported yet, nothing
+    // baked.
+    os: {
+      darwin: { ffi: [CORE_SERVICES_PATH, CORE_FOUNDATION_PATH] },
+      linux: { run: [...DEFAULT_BROWSER_LINUX_PROGRAMS] },
+    },
+    trust: "full",
+    notes:
+      "become the default web browser: LaunchServices over FFI (macOS, the OS confirms) / xdg-settings (Linux); pair with desktop.app.browser",
+    manual: [
+      'default-browser: set desktop.app.browser: true (and desktop.app.identifier) so the OS lists the app as a browser: packaging writes the Info.plist http / https URL types and HTML document types (macOS) and the .desktop MimeType entries (Linux). Ask from the user\'s action (a "Make default" button): macOS shows its own confirmation and setDefaultBrowser() resolves "prompted" until the user answers.',
+      "default-browser: --allow-ffi of CoreServices and CoreFoundation (macOS) and --allow-run of xdg-settings and xdg-mime (Linux, shell scripts) are full trust for any code in the app's Deno process; the capability itself passes only the http / https schemes and the app's own identifier. Windows is not supported yet (a browser there needs StartMenuInternet / Capabilities registry keys): every call answers unsupported.",
     ],
   },
   "system-stats": {

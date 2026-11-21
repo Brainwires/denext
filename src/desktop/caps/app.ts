@@ -788,6 +788,8 @@ async function appCapabilities(s: AppState) {
     cameraAccess: facts.cameraAccess,
     cameraAccessReason: facts.cameraAccessReason,
     bounce: typeof dock?.bounce === "function",
+    // The runtime delivers http / https links to a desktop.app.browser app.
+    browserLinks: s.options.api?.browserLinks === true,
     dockMenu: dockMenuWorks(s),
     ...trayAndDockCapabilities(s, trayReason === null),
   };

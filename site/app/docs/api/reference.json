@@ -16895,6 +16895,12 @@
             },
             {
               "kind": "property",
+              "name": "defaultBrowser",
+              "signature": "defaultBrowser?: boolean",
+              "doc": "Ask to become the system's default web browser and read who handles a scheme\n(`setDefaultBrowser` / `getSchemeOwner` / `isDefaultBrowser` in `denext/desktop/app`), in the\napp's own process: LaunchServices over FFI on macOS (bakes `--allow-ffi` of the CoreServices and\nCoreFoundation frameworks; macOS confirms the change with its own dialog), `xdg-settings` /\n`xdg-mime` on Linux (bakes `--allow-run=xdg-settings,xdg-mime`); not supported on Windows yet.\nNeeds `desktop.app.identifier`; pair it with `desktop.app.browser: true`, which declares the\napp a browser to the OS."
+            },
+            {
+              "kind": "property",
               "name": "systemStats",
               "signature": "systemStats?: boolean",
               "doc": "The machine's aggregate CPU, GPU and memory load (`system.stats` / `system.onStats` in\n`denext/desktop/client` and `denext/desktop`) through `Deno.desktop.systemStats` in denext's Deno\nDesktop runtime (`unsupported` on a runtime without it). Percentages only, no per-process data; it bakes no\nDeno permission (the runtime serves it to an app whose launch config lists the capability)."
@@ -16976,7 +16982,7 @@
             {
               "kind": "property",
               "name": "app",
-              "signature": "app?: { identifier?: string; name?: string; icons?: DesktopAppIcons; origin?: string; deepLinks?: string[]; singleInstance?: boolean; bridgeOrigins?: string[]; allowedNavigationOrigins?: string[]; keepAlive?: boolean; dock?: boolean | \"while-window-open\"; activationPolicy?: \"regular\" | \"accessory\"; restoreWindows?: boolean; maxWindows?: number }",
+              "signature": "app?: { identifier?: string; name?: string; icons?: DesktopAppIcons; origin?: string; deepLinks?: string[]; browser?: boolean; singleInstance?: boolean; bridgeOrigins?: string[]; allowedNavigationOrigins?: string[]; keepAlive?: boolean; dock?: boolean | \"while-window-open\"; activationPolicy?: \"regular\" | \"accessory\"; restoreWindows?: boolean; maxWindows?: number }",
               "doc": "App identity for the RUNTIME. Its `identifier` keys the OS app-support/cache/documents folders\nand the `secureStore` keychain SERVICE, so it MUST be unique per app — a reverse-DNS id such as\n`\"com.example.myapp\"`. Without it, `secureStore`/`fs`/`sqlite` refuse to start (they would\notherwise share one folder and one keychain service across every denext desktop app, letting\none app read another's data and secrets). Keep it equal to `deno.json`'s `desktop.app.identifier`\n(which `deno desktop` uses for the bundle id); the scaffold writes both."
             },
             {
@@ -45763,6 +45769,25 @@
           "denextOnly": true
         },
         {
+          "name": "createDefaultBrowser",
+          "slug": "createDefaultBrowser",
+          "kind": "function",
+          "signature": "createDefaultBrowser(options: DefaultBrowserOptions): DefaultBrowserApi",
+          "doc": "The default-browser calls for the app options.identifier on options.os.",
+          "docFull": "The default-browser calls for the app `options.identifier` on `options.os`.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The identifier, and the OS / FFI / command runner (tests)."
+            }
+          ],
+          "returns": "The API.",
+          "examples": [
+            "```ts\nimport { createDefaultBrowser } from \"denext/desktop\";\n\nconst browser = createDefaultBrowser({ identifier: \"com.example.browser\" });\nif (!(await browser.isDefaultBrowser())) await browser.setDefaultBrowser();\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "createDesktopHandler",
           "slug": "createDesktopHandler",
           "kind": "function",
@@ -45874,6 +45899,147 @@
           "signature": "DEFAULT_DESKTOP_INSTALLERS: Readonly<Record<DesktopOs, readonly DesktopInstallerFormat[]>>",
           "doc": "The formats built when neither --format nor desktop.installers.<os> names any.",
           "docFull": "The formats built when neither `--format` nor `desktop.installers.<os>` names any.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DefaultBrowserApi",
+          "slug": "DefaultBrowserApi",
+          "kind": "interface",
+          "signature": "interface DefaultBrowserApi",
+          "doc": "The default browser, as the app sees it.",
+          "docFull": "The default browser, as the app sees it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "method",
+              "name": "setDefaultBrowser",
+              "signature": "setDefaultBrowser(): Promise<SetDefaultBrowserResult>",
+              "doc": "Ask to become the default web browser (`http` and `https`). Call it from the user's action (a\n\"Make default\" button): macOS shows its confirmation.",
+              "returns": "See SetDefaultBrowserResult."
+            },
+            {
+              "kind": "method",
+              "name": "getSchemeOwner",
+              "signature": "getSchemeOwner(scheme: string): Promise<string | null>",
+              "doc": "Which app handles `scheme`: a bundle id on macOS (LaunchServices may report it in lower\ncase), a `.desktop` file id on Linux.",
+              "params": [
+                {
+                  "name": "scheme",
+                  "doc": "A URL scheme (\"http\", \"https\", \"mailto\", …), without :."
+                }
+              ],
+              "returns": "The handler's id, or null when no app handles it. Rejects validation for a malformed scheme and unsupported on Windows (or on Linux without xdg-mime)."
+            },
+            {
+              "kind": "method",
+              "name": "isDefaultBrowser",
+              "signature": "isDefaultBrowser(): Promise<boolean>",
+              "doc": "Whether the app is the default web browser: macOS, it handles both `http` and `https`; Linux,\n`xdg-settings` names its `.desktop` file. `false` on Windows.",
+              "returns": "Whether it is."
+            }
+          ]
+        },
+        {
+          "name": "DefaultBrowserCommandOutput",
+          "slug": "DefaultBrowserCommandOutput",
+          "kind": "interface",
+          "signature": "interface DefaultBrowserCommandOutput",
+          "doc": "A command's outcome.",
+          "docFull": "A command's outcome.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "code",
+              "signature": "readonly code: number",
+              "doc": "The exit code."
+            },
+            {
+              "kind": "property",
+              "name": "stdout",
+              "signature": "readonly stdout: string",
+              "doc": "Its standard output, decoded."
+            }
+          ]
+        },
+        {
+          "name": "DefaultBrowserDlopen",
+          "slug": "DefaultBrowserDlopen",
+          "kind": "typeAlias",
+          "signature": "type DefaultBrowserDlopen = (path: string, symbols: Record<string, { parameters: string[]; result: string }>) => { symbols: Record<string, (...args: unknown[]) => unknown>; close(): void }",
+          "doc": "The symbols of Deno.dlopen the macOS side uses (a fake in tests).",
+          "docFull": "The symbols of `Deno.dlopen` the macOS side uses (a fake in tests).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DefaultBrowserOptions",
+          "slug": "DefaultBrowserOptions",
+          "kind": "interface",
+          "signature": "interface DefaultBrowserOptions",
+          "doc": "Options for createDefaultBrowser.",
+          "docFull": "Options for {@linkcode createDefaultBrowser}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "identifier",
+              "signature": "readonly identifier: string",
+              "doc": "The app's identifier (`desktop.app.identifier`): its macOS bundle id, and its Linux `.desktop`\nfile id without the extension."
+            },
+            {
+              "kind": "property",
+              "name": "os",
+              "signature": "readonly os?: DefaultBrowserOs",
+              "doc": "The OS (default `Deno.build.os`)."
+            },
+            {
+              "kind": "property",
+              "name": "dlopen",
+              "signature": "readonly dlopen?: DlopenFn",
+              "doc": "`Deno.dlopen` (tests pass a fake)."
+            },
+            {
+              "kind": "property",
+              "name": "run",
+              "signature": "readonly run?: RunCommandFn",
+              "doc": "Runs a program (default `Deno.Command`; tests pass a fake)."
+            }
+          ]
+        },
+        {
+          "name": "DefaultBrowserOs",
+          "slug": "DefaultBrowserOs",
+          "kind": "typeAlias",
+          "signature": "type DefaultBrowserOs = \"darwin\" | \"windows\" | \"linux\"",
+          "doc": "The OS spelling the implementation branches on (Deno.build.os).",
+          "docFull": "The OS spelling the implementation branches on (`Deno.build.os`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DefaultBrowserRunCommand",
+          "slug": "DefaultBrowserRunCommand",
+          "kind": "typeAlias",
+          "signature": "type DefaultBrowserRunCommand = (program: string, args: string[]) => Promise<CommandOutput>",
+          "doc": "Runs program with args (no shell). Rejects Deno.errors.NotFound when it is not installed, Deno.errors.NotCapable / PermissionDenied when the app may not run it.",
+          "docFull": "Runs `program` with `args` (no shell). Rejects `Deno.errors.NotFound` when it is not installed,\n`Deno.errors.NotCapable` / `PermissionDenied` when the app may not run it.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -48659,6 +48825,12 @@
               "name": "singleInstance",
               "signature": "readonly singleInstance: boolean",
               "doc": "Whether the launcher turns the single-instance lock on (`desktop.app.singleInstance`)."
+            },
+            {
+              "kind": "property",
+              "name": "browser",
+              "signature": "readonly browser?: boolean",
+              "doc": "Whether the app may be the default web browser (`desktop.app.browser`): the Linux entries then\nclaim `http` / `https` and the HTML types (absent means off)."
             },
             {
               "kind": "property",
@@ -51740,6 +51912,12 @@
             },
             {
               "kind": "property",
+              "name": "browserLinks",
+              "signature": "readonly browserLinks: boolean",
+              "doc": "`desktop.app.browser`: `runDesktop` delivers `http` / `https` links to `onDeepLink` too."
+            },
+            {
+              "kind": "property",
               "name": "pickedPaths",
               "signature": "readonly pickedPaths: PickedPaths",
               "doc": "The per-launch picked-path set the `dialogs`, `fs` and `shell` capabilities share; `runDesktop`\nadds files the OS opens with the app to it (read-only handles for `onOpenFile`)."
@@ -51818,7 +51996,7 @@
           "kind": "function",
           "signature": "resolveDesktopCapabilities(runtimeConfig: DesktopRuntimeConfig | undefined, options?: ResolveDesktopOptions): Promise<ResolvedDesktop>",
           "doc": "Resolve config.desktop.capabilities into the capability objects the bridge serves, plus the app-support directory the runtime hands to handlers.",
-          "docFull": "Resolve `config.desktop.capabilities` into the capability objects the bridge serves, plus the\napp-support directory the runtime hands to handlers.\n\nThe built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,\n`secureStore`, `dialogs`, `clipboard`, `passkeys`, `notifications`, `contextMenu`,\n`globalShortcuts`, `launchAtLogin`, `systemStats`, `updates`, `pty`, and the `echo` diagnostic), plus any `extensions` module\npaths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets\n`authSessionEnabled`. A capability the running Deno Desktop runtime cannot serve answers\n`unavailable` per call (the page uses its web path), never an error. A bad extension path IS an\nerror, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a\n`desktop.app.identifier` — both fail fast at launch.",
+          "docFull": "Resolve `config.desktop.capabilities` into the capability objects the bridge serves, plus the\napp-support directory the runtime hands to handlers.\n\nThe built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,\n`secureStore`, `dialogs`, `clipboard`, `passkeys`, `notifications`, `contextMenu`,\n`globalShortcuts`, `launchAtLogin`, `defaultBrowser`, `systemStats`, `updates`, `pty`, and the `echo` diagnostic), plus any `extensions` module\npaths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets\n`authSessionEnabled`. A capability the running Deno Desktop runtime cannot serve answers\n`unavailable` per call (the page uses its web path), never an error. A bad extension path IS an\nerror, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a\n`desktop.app.identifier` — both fail fast at launch.",
           "params": [
             {
               "name": "runtimeConfig",
@@ -51966,6 +52144,12 @@
               "name": "deepLinks",
               "signature": "deepLinks?: readonly string[]",
               "doc": "The deep-link schemes (`desktop.app.deepLinks`, lower-case; from {@link\nresolveDesktopCapabilities}). Under denext's pinned runtime, links with these schemes reach the\npage's `onDeepLink`, and they are the only schemes `openAuthSession` accepts as a callback."
+            },
+            {
+              "kind": "property",
+              "name": "browserLinks",
+              "signature": "browserLinks?: boolean",
+              "doc": "`desktop.app.browser` (from {@link resolveDesktopCapabilities}): `http` / `https` links reach\nthe page's `onDeepLink` too, where the runtime delivers them (`Deno.desktop.browserLinks`)."
             },
             {
               "kind": "property",
@@ -52120,6 +52304,18 @@
             }
           ],
           "returns": "Whether the hook can fire.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SetDefaultBrowserResult",
+          "slug": "SetDefaultBrowserResult",
+          "kind": "typeAlias",
+          "signature": "type SetDefaultBrowserResult = \"set\" | \"prompted\" | \"unsupported\" | \"failed\"",
+          "doc": "What DefaultBrowserApi.setDefaultBrowser reports:",
+          "docFull": "What {@linkcode DefaultBrowserApi.setDefaultBrowser} reports:\n\n- `set`: the app is the default browser now (it already was, or the OS changed it at once).\n- `prompted`: the OS asked the user (macOS); read {@linkcode DefaultBrowserApi.isDefaultBrowser}\n  later (an app activation, a settings view) for the answer.\n- `unsupported`: this OS (Windows) or session cannot set it from the app (Linux without\n  `xdg-settings`).\n- `failed`: the OS refused (macOS: the app does not declare `http` / `https`, as an unpackaged or\n  unregistered build; Linux: `xdg-settings` failed, or the desktop kept another browser).",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -58817,6 +59013,12 @@
             },
             {
               "kind": "property",
+              "name": "browserLinks",
+              "signature": "readonly browserLinks: boolean",
+              "doc": "The runtime delivers `http` / `https` links to a `desktop.app.browser` app (`onDeepLink` in\n`denext/mobile`, cold and warm): `false` on a runtime that drops every link whose scheme is not\na declared deep link (opened `.html` files still reach `onOpenFile`)."
+            },
+            {
+              "kind": "property",
               "name": "bounce",
               "signature": "readonly bounce: boolean",
               "doc": "{@linkcode bounce} works."
@@ -59541,6 +59743,23 @@
           "denextOnly": true
         },
         {
+          "name": "getSchemeOwner",
+          "slug": "getSchemeOwner",
+          "kind": "function",
+          "signature": "getSchemeOwner(scheme: \"http\" | \"https\" | (string & Record<never, never>)): Promise<string | null>",
+          "doc": "Which app handles a URL scheme: its bundle id on macOS (LaunchServices may report it in lower case), its .desktop file id on Linux. Needs denext desktop add default-browser; rejects unsupported on Windows and validation for a malformed scheme.",
+          "docFull": "Which app handles a URL scheme: its bundle id on macOS (LaunchServices may report it in lower\ncase), its `.desktop` file id on Linux. Needs `denext desktop add default-browser`; rejects\n`unsupported` on Windows and `validation` for a malformed scheme.",
+          "params": [
+            {
+              "name": "scheme",
+              "doc": "\"http\", \"https\" or any other URL scheme, without :."
+            }
+          ],
+          "returns": "The handler's id, or null when no app handles it.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "getTray",
           "slug": "getTray",
           "kind": "function",
@@ -59563,6 +59782,18 @@
           "docFull": "Hide the backend tray's panel.",
           "params": [],
           "returns": "Whether it is showing (false). Rejects unsupported when the tray has no panel.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "isDefaultBrowser",
+          "slug": "isDefaultBrowser",
+          "kind": "function",
+          "signature": "isDefaultBrowser(): Promise<boolean>",
+          "doc": "Whether the app is the system's default web browser (macOS: it handles both http and https; Linux: xdg-settings names its .desktop file; false on Windows). Needs denext desktop add default-browser.",
+          "docFull": "Whether the app is the system's default web browser (macOS: it handles both `http` and `https`;\nLinux: `xdg-settings` names its `.desktop` file; `false` on Windows). Needs `denext desktop add\ndefault-browser`.",
+          "params": [],
+          "returns": "Whether it is.",
           "examples": [],
           "denextOnly": true
         },
@@ -59798,6 +60029,32 @@
             }
           ],
           "returns": "A promise that settles once it is shown.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "setDefaultBrowser",
+          "slug": "setDefaultBrowser",
+          "kind": "function",
+          "signature": "setDefaultBrowser(): Promise<SetDefaultBrowserResult>",
+          "doc": "Ask to become the system's default web browser (http and https). Call it from the user's action (a \"Make default\" button). Needs denext desktop add default-browser, and desktop.app.browser: true so the OS lists the app as a browser: macOS through LaunchServices (the OS confirms with its own dialog), Linux through xdg-settings; Windows resolves unsupported.",
+          "docFull": "Ask to become the system's default web browser (`http` and `https`). Call it from the user's\naction (a \"Make default\" button). Needs `denext desktop add default-browser`, and\n`desktop.app.browser: true` so the OS lists the app as a browser: macOS through LaunchServices\n(the OS confirms with its own dialog), Linux through `xdg-settings`; Windows resolves\n`unsupported`.",
+          "params": [],
+          "returns": "See SetDefaultBrowserResult.",
+          "examples": [
+            "```ts\nimport { isDefaultBrowser, setDefaultBrowser } from \"denext/desktop/app\";\n\nif (!(await isDefaultBrowser())) {\n  const result = await setDefaultBrowser();\n  if (result === \"prompted\") showHint(\"Confirm in the dialog macOS shows\");\n}\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "SetDefaultBrowserResult",
+          "slug": "SetDefaultBrowserResult",
+          "kind": "typeAlias",
+          "signature": "type SetDefaultBrowserResult = \"set\" | \"prompted\" | \"unsupported\" | \"failed\"",
+          "doc": "What setDefaultBrowser reports:",
+          "docFull": "What {@linkcode setDefaultBrowser} reports:\n\n- `set`: the app is the default browser now (it already was, or the OS changed it at once).\n- `prompted`: the OS asked the user (macOS shows its own confirmation and returns before the\n  answer); read {@linkcode isDefaultBrowser} later, when the app is active again.\n- `unsupported`: the OS cannot set it from the app (Windows; Linux without `xdg-settings`).\n- `failed`: the OS refused (the app does not declare itself a browser: set\n  `desktop.app.browser` and package it; Linux: the desktop kept another browser).",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },

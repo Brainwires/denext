@@ -8,6 +8,27 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Become the default web browser.** `desktop.app.browser: true` (with `desktop.app.identifier`)
+  declares a Deno Desktop app a web browser to the OS: on macOS packaging adds `CFBundleURLTypes` for
+  `http` and `https` and `CFBundleDocumentTypes` for `public.html`, `public.xhtml` and `public.url`
+  (`LSHandlerRank` `Alternate`) to the bundle's Info.plist, which lists the app under System
+  Settings › Default web browser; on Linux every `.desktop` entry denext writes (`.deb`, `.rpm`,
+  tarball, AppImage) claims `x-scheme-handler/http`, `x-scheme-handler/https`, `text/html` and
+  `application/xhtml+xml`, merged with `desktop.linux.desktopEntry.mimeTypes`, with an `Exec` that
+  takes the URL. `desktop.app.deepLinks` still refuses `http` / `https`. Not supported on Windows yet.
+- **`setDefaultBrowser()`, `getSchemeOwner(scheme)` and `isDefaultBrowser()`** in
+  `denext/desktop/app` (and `createDefaultBrowser({ identifier })` in `denext/desktop` for the
+  backend), behind `denext desktop add default-browser`. They run in the app's own process on any Deno
+  Desktop runtime: LaunchServices over FFI on macOS (`LSSetDefaultHandlerForURLScheme`, which macOS
+  confirms with its own dialog, so the call resolves `"prompted"`; `LSCopyDefaultHandlerForURLScheme`),
+  baked as `--allow-ffi` of the CoreServices and CoreFoundation framework paths; `xdg-settings` /
+  `xdg-mime` on Linux, baked as `--allow-run=xdg-settings,xdg-mime`; `unsupported` on Windows.
+- **`appCapabilities().browserLinks`** says whether the Deno Desktop runtime delivers `http(s)` links
+  to a `desktop.app.browser` app; `onDeepLink` routes them (cold start and warm) where it does.
+  Opened `.html` / `.xhtml` files reach `onOpenFile` as any opened file does.
+
 ## [4.21.0] - 2026-11-21
 
 ### Added

@@ -998,6 +998,16 @@ export interface DesktopCapabilitiesConfig {
    */
   launchAtLogin?: boolean;
   /**
+   * Ask to become the system's default web browser and read who handles a scheme
+   * (`setDefaultBrowser` / `getSchemeOwner` / `isDefaultBrowser` in `denext/desktop/app`), in the
+   * app's own process: LaunchServices over FFI on macOS (bakes `--allow-ffi` of the CoreServices and
+   * CoreFoundation frameworks; macOS confirms the change with its own dialog), `xdg-settings` /
+   * `xdg-mime` on Linux (bakes `--allow-run=xdg-settings,xdg-mime`); not supported on Windows yet.
+   * Needs `desktop.app.identifier`; pair it with `desktop.app.browser: true`, which declares the
+   * app a browser to the OS.
+   */
+  defaultBrowser?: boolean;
+  /**
    * The machine's aggregate CPU, GPU and memory load (`system.stats` / `system.onStats` in
    * `denext/desktop/client` and `denext/desktop`) through `Deno.desktop.systemStats` in denext's Deno
    * Desktop runtime (`unsupported` on a runtime without it). Percentages only, no per-process data; it bakes no
@@ -1183,6 +1193,23 @@ export interface DesktopConfig {
      * none.
      */
     deepLinks?: string[];
+    /**
+     * Let the user choose the app as the system's default web browser (`http` / `https` links and
+     * `.html` / `.xhtml` files). {@link deepLinks} refuses `http` and `https`; this is the way to
+     * claim them. Requires {@link identifier} (the bundle id / `.desktop` file id the OS records).
+     * Packaging declares the app a browser: on macOS `CFBundleURLTypes` for `http` and `https` plus
+     * `CFBundleDocumentTypes` for `public.html`, `public.xhtml` and `public.url` (`LSHandlerRank`
+     * `Alternate`), which lists it under System Settings › Default web browser; on Linux
+     * `MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;application/xhtml+xml` in
+     * every `.desktop` entry (merged with `desktop.linux.desktopEntry.mimeTypes`). Not supported on
+     * Windows yet (a browser there needs `StartMenuInternet` / `Capabilities` registry keys).
+     *
+     * Links then reach `onDeepLink` and files `onOpenFile` (`denext/mobile`) once the Deno Desktop
+     * runtime delivers `http(s)` links (`appCapabilities().browserLinks`). Ask to become the
+     * default with `setDefaultBrowser()` (`denext/desktop/app`, `denext desktop add
+     * default-browser`). Default `false`.
+     */
+    browser?: boolean;
     /**
      * Keep one running instance per identifier: a second launch hands its arguments (deep links,
      * files) to the first — which the webview backend brings to the front — and exits. Written to

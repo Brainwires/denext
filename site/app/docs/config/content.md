@@ -457,7 +457,7 @@ See [Writing a plugin](/docs/plugins).
   capability allowlist (default deny): `secureStore`, `fs`
   (`true` or `{ read, write }` folder tokens), `sqlite`, `contextMenu`, `shell`
   (`true` or per-action options), `authSession`, `dialogs`, `notifications`,
-  `globalShortcuts`, `launchAtLogin`, `systemStats`, `keepAwake`, `clipboard`, `device`, `passkeys`,
+  `globalShortcuts`, `launchAtLogin`, `defaultBrowser`, `systemStats`, `keepAwake`, `clipboard`, `device`, `passkeys`,
   `updates`, `pty` (`true` or `{ onWindowClose, replayBytes, shells }`), `microphone` and `camera`
   (`true` or `{ usageDescription }`; the microphone also takes
   `speechRecognitionUsageDescription`, macOS's `NSSpeechRecognitionUsageDescription`), and
@@ -481,7 +481,12 @@ See [Writing a plugin](/docs/plugins).
   ([Updates everywhere](/docs/updates)).
   `desktop.app` names the bundle (`name`, `identifier`, `icons`) and sets its
   [stable origin](/docs/desktop#desktop-app-origin) (`origin`, `bridgeOrigins`),
-  `deepLinks`, `singleInstance`, and `allowedNavigationOrigins` (the exact origins
+  `deepLinks`, `singleInstance`, `browser` (`true` declares the app a web browser
+  the user may make the default: the macOS `http` / `https` URL types and HTML
+  document types, the Linux `x-scheme-handler/http(s)` / HTML `MimeType`s; needs
+  `identifier`; not on Windows yet; see
+  [the default web browser](/docs/desktop#desktop-default-browser)), and
+  `allowedNavigationOrigins` (the exact origins
   besides the app's own the window may navigate to; any other `http(s)` navigation
   opens in the user's browser; needs the pinned runtime). The rest of `desktop`:
   `sidecars` ([backends next to the window](/docs/desktop#desktop-sidecars)),

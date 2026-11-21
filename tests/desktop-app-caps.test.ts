@@ -1440,6 +1440,7 @@ Deno.test("app: no window, dock or api — capabilities fall back and dock calls
     microphoneAccessReason: null,
     cameraAccess: "unknown",
     cameraAccessReason: null,
+    browserLinks: false,
     bounce: false,
     dockMenu: false,
     dockVisibility: false,

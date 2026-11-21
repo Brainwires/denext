@@ -12,6 +12,7 @@
 
 import { join } from "@std/path";
 import type { DesktopPackageMeta } from "./desktop-installers.ts";
+import { BROWSER_MIME_TYPES } from "../desktop/browser-config.ts";
 
 /** The Desktop Entry keys a package writes, resolved ({@linkcode linuxEntryKeys}). */
 export interface LinuxEntryKeys {
@@ -20,7 +21,10 @@ export interface LinuxEntryKeys {
   readonly keywords: readonly string[];
   readonly genericName?: string;
   readonly startupWMClass?: string;
-  /** File types the app opens (after any deep-link scheme handlers). */
+  /**
+   * File types the app opens (after any deep-link scheme handlers): a `desktop.app.browser` app's
+   * `http` / `https` handlers and HTML types first, then `desktop.linux.desktopEntry.mimeTypes`.
+   */
   readonly mimeTypes: readonly string[];
 }
 
@@ -41,8 +45,9 @@ function str(v: unknown): string | undefined {
 
 /**
  * The Desktop Entry keys of `meta.desktopEntry` (`desktop.linux.desktopEntry`), with the defaults:
- * `Categories=Utility;` and nothing else. A category or MIME type that could break the line is
- * dropped (the config validation refuses it first).
+ * `Categories=Utility;` and nothing else; a browser (`meta.browser`) claims
+ * {@linkcode BROWSER_MIME_TYPES} ahead of the configured MIME types (each once). A category or MIME
+ * type that could break the line is dropped (the config validation refuses it first).
  *
  * @param meta The package metadata.
  * @returns The keys.
@@ -55,7 +60,12 @@ export function linuxEntryKeys(meta: DesktopPackageMeta): LinuxEntryKeys {
     keywords: strings(e.keywords),
     genericName: str(e.genericName),
     startupWMClass: str(e.startupWMClass),
-    mimeTypes: strings(e.mimeTypes).filter((m) => MIME.test(m)),
+    mimeTypes: [
+      ...new Set([
+        ...(meta.browser === true ? BROWSER_MIME_TYPES : []),
+        ...strings(e.mimeTypes).filter((m) => MIME.test(m)),
+      ]),
+    ],
   };
 }
 
@@ -209,7 +219,8 @@ export async function bundleDesktopEntryName(bundleDir: string): Promise<string 
  * (`desktop.app.name`, not the bundle directory's `<name>-<arch>`), `Comment` the description,
  * `Icon` the entry's own id with the bundle's `AppIcon.png` / `AppIcon.svg` copied beside it as
  * `<id>.png` / `<id>.svg` (no icon: no `Icon=`), and the `desktop.linux.desktopEntry` keys;
- * `MimeType` gains the configured file types (and `Exec` a `%F` when it had no field code). Every
+ * `MimeType` gains the configured file types and a browser's `http` / `https` handlers and HTML types
+ * (and `Exec` a `%F`, a browser's a `%u`, when it had no field code). Every
  * other line stays as the runtime wrote it.
  *
  * @param bundleDir The finished Linux bundle directory.
@@ -244,7 +255,9 @@ export async function finishLinuxBundleEntry(
     const merged = [...new Set([...have, ...keys.mimeTypes])];
     updates.MimeType = merged.map((m) => `${m};`).join("");
     const exec = entryValue(text, "Exec");
-    if (exec !== undefined && !/%[fFuU]/.test(exec)) updates.Exec = `${exec} %F`;
+    // A browser takes a URL (`%u`: an opened HTML file arrives as a path or a `file:` URL too).
+    const code = meta.browser === true ? "%u" : "%F";
+    if (exec !== undefined && !/%[fFuU]/.test(exec)) updates.Exec = `${exec} ${code}`;
   }
   await Deno.writeTextFile(path, rewriteDesktopEntry(text, updates));
   return path;

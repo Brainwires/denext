@@ -2,7 +2,7 @@
  * The app's own chrome and system integration in a Deno Desktop window (`denext/desktop/app`):
  * the application menu with keyboard accelerators, tray icons with their menus, the Dock /
  * taskbar badge and attention request, system-wide keyboard shortcuts, starting the app at
- * login, and Handoff / Spotlight user activities (macOS).
+ * login, becoming the default web browser, and Handoff / Spotlight user activities (macOS).
  *
  * - The menu, tray, badge and attention calls go to the runtime's `app` capability, which
  *   `runDesktop` registers for every app (no `denext desktop add`). They work under the stock
@@ -14,6 +14,9 @@
  * - {@linkcode registerShortcut} needs `denext desktop add global-shortcuts`, and
  *   {@linkcode setLaunchAtLogin} `denext desktop add launch-at-login`; both need denext's pinned
  *   runtime (elsewhere they reject `unavailable`).
+ * - {@linkcode setDefaultBrowser}, {@linkcode getSchemeOwner} and {@linkcode isDefaultBrowser}
+ *   need `denext desktop add default-browser` (and `desktop.app.browser` for the OS to list the
+ *   app as a browser); they run in the app's own process on any Deno Desktop runtime.
  *
  * The Dock menu (macOS) is `setQuickActions` / `onQuickAction` in `denext/mobile`, the same calls
  * that set an iOS / Android app's home-screen quick actions.
@@ -265,6 +268,12 @@ export interface AppCapabilities {
   readonly cameraAccess: "allowed" | "denied" | PlatformUnknown | null;
   /** Windows, when `cameraAccess` is `"denied"`: which switch refuses and where it is. */
   readonly cameraAccessReason: string | null;
+  /**
+   * The runtime delivers `http` / `https` links to a `desktop.app.browser` app (`onDeepLink` in
+   * `denext/mobile`, cold and warm): `false` on a runtime that drops every link whose scheme is not
+   * a declared deep link (opened `.html` files still reach `onOpenFile`).
+   */
+  readonly browserLinks: boolean;
   /** {@linkcode bounce} works. */
   readonly bounce: boolean;
   /** `setQuickActions` (in `denext/mobile`) sets the Dock menu (macOS). */
@@ -367,6 +376,7 @@ export async function appCapabilities(): Promise<AppCapabilities> {
     microphoneAccessReason: text(raw, "microphoneAccessReason"),
     cameraAccess: oneOf(raw, "cameraAccess", ["allowed", "denied", null] as const),
     cameraAccessReason: text(raw, "cameraAccessReason"),
+    browserLinks: flag("browserLinks"),
     bounce: flag("bounce"),
     dockMenu: flag("dockMenu"),
     dockVisibility: flag("dockVisibility"),
@@ -1011,6 +1021,71 @@ export async function getLaunchAtLogin(): Promise<LaunchAtLoginState> {
  */
 export async function setLaunchAtLogin(enabled: boolean): Promise<LaunchAtLoginState> {
   return loginState(await desktopRpc<{ state?: unknown }>("launchAtLogin", "set", { enabled }));
+}
+
+// --- default web browser (cap "defaultBrowser") ----------------------------------------------
+
+/**
+ * What {@linkcode setDefaultBrowser} reports:
+ *
+ * - `set`: the app is the default browser now (it already was, or the OS changed it at once).
+ * - `prompted`: the OS asked the user (macOS shows its own confirmation and returns before the
+ *   answer); read {@linkcode isDefaultBrowser} later, when the app is active again.
+ * - `unsupported`: the OS cannot set it from the app (Windows; Linux without `xdg-settings`).
+ * - `failed`: the OS refused (the app does not declare itself a browser: set
+ *   `desktop.app.browser` and package it; Linux: the desktop kept another browser).
+ */
+export type SetDefaultBrowserResult = "set" | "prompted" | "unsupported" | "failed";
+
+/**
+ * Ask to become the system's default web browser (`http` and `https`). Call it from the user's
+ * action (a "Make default" button). Needs `denext desktop add default-browser`, and
+ * `desktop.app.browser: true` so the OS lists the app as a browser: macOS through LaunchServices
+ * (the OS confirms with its own dialog), Linux through `xdg-settings`; Windows resolves
+ * `unsupported`.
+ *
+ * @returns See {@linkcode SetDefaultBrowserResult}.
+ * @example
+ * ```ts
+ * import { isDefaultBrowser, setDefaultBrowser } from "denext/desktop/app";
+ *
+ * if (!(await isDefaultBrowser())) {
+ *   const result = await setDefaultBrowser();
+ *   if (result === "prompted") showHint("Confirm in the dialog macOS shows");
+ * }
+ * ```
+ */
+export async function setDefaultBrowser(): Promise<SetDefaultBrowserResult> {
+  const out = await desktopRpc<{ result?: unknown }>("defaultBrowser", "set", {});
+  const r = out?.result;
+  return r === "set" || r === "prompted" || r === "unsupported" ? r : "failed";
+}
+
+/**
+ * Which app handles a URL scheme: its bundle id on macOS (LaunchServices may report it in lower
+ * case), its `.desktop` file id on Linux. Needs `denext desktop add default-browser`; rejects
+ * `unsupported` on Windows and `validation` for a malformed scheme.
+ *
+ * @param scheme `"http"`, `"https"` or any other URL scheme, without `:`.
+ * @returns The handler's id, or `null` when no app handles it.
+ */
+export async function getSchemeOwner(
+  scheme: "http" | "https" | (string & Record<never, never>),
+): Promise<string | null> {
+  const out = await desktopRpc<{ owner?: unknown }>("defaultBrowser", "owner", { scheme });
+  return typeof out?.owner === "string" && out.owner !== "" ? out.owner : null;
+}
+
+/**
+ * Whether the app is the system's default web browser (macOS: it handles both `http` and `https`;
+ * Linux: `xdg-settings` names its `.desktop` file; `false` on Windows). Needs `denext desktop add
+ * default-browser`.
+ *
+ * @returns Whether it is.
+ */
+export async function isDefaultBrowser(): Promise<boolean> {
+  const out = await desktopRpc<{ isDefault?: unknown }>("defaultBrowser", "isDefault", {});
+  return out?.isDefault === true;
 }
 
 /**

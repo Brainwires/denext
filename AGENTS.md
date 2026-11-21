@@ -638,7 +638,7 @@ https://denext.dev/docs/navigation-native
 **Deno Desktop capabilities:** the same `denext/mobile` functions reach the desktop runtime when
 `runtimePlatform() === "desktop"`, once enabled with `denext desktop add <capability...>`
 (`secure-store`, `fs`, `sqlite`, `context-menu`, `shell`, `dialogs`, `notifications`,
-`keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`, `updates`, `pty`, `system-stats`, `microphone`, `camera`; written to
+`keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`, `default-browser`, `updates`, `pty`, `system-stats`, `microphone`, `camera`; written to
 `desktop.capabilities`; `microphone` / `camera` work only in a packaged app on a runtime that grants capture
 (an older one refuses `getUserMedia`; test capture UI in a browser under `denext dev`); a page that uses
 `webkitSpeechRecognition` on macOS needs `microphone: { speechRecognitionUsageDescription }`, else macOS ends the app;
@@ -736,7 +736,7 @@ exit 78 instead of running without Chromium's sandbox (a tarball / AppImage on U
 `desktop.windows.proxy: "direct"` keeps a Windows CEF window off a slow WPAD / PAC lookup (`"system"`, the
 default, warms the resolver up at launch). A window hands at most 3 refused navigations a second to the
 browser. `registerShortcut(accel, fn)`
-needs `global-shortcuts`; `setLaunchAtLogin(on)` needs `launch-at-login`. DevTools are on in
+needs `global-shortcuts`; `setLaunchAtLogin(on)` needs `launch-at-login`; `setDefaultBrowser()` / `isDefaultBrowser()` need `default-browser` plus `desktop.app.browser: true` (the macOS / Linux browser registration; `appCapabilities().browserLinks` says whether `http(s)` links reach `onDeepLink`). DevTools are on in
 `desktop dev` / `run` and off when packaged unless `desktop.inspectable: true`;
 `denext desktop dev --inspect-renderer[=<addr>]` opens the window's page to a CDP client (CEF,
 WebView2; a free loopback port by default, non-loopback refused). `denext desktop run` / `dev` build the app into a temp dir with the

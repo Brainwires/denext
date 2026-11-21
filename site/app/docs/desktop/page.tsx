@@ -2335,6 +2335,25 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
           </tr>
           <tr>
             <td>
+              <code>default-browser</code>
+            </td>
+            <td>
+              <a href="#desktop-default-browser">
+                <code>setDefaultBrowser</code>, <code>getSchemeOwner</code>,{" "}
+                <code>isDefaultBrowser</code>
+              </a>{" "}
+              (<code>denext/desktop/app</code>; <code>createDefaultBrowser</code> in{" "}
+              <code>denext/desktop</code>; LaunchServices · <code>xdg-settings</code>)
+            </td>
+            <td>
+              macOS <code>--allow-ffi</code>{" "}
+              of the CoreServices and CoreFoundation frameworks; Linux{" "}
+              <code>--allow-run=xdg-settings,xdg-mime</code>; Windows none (unsupported)
+            </td>
+            <td>full</td>
+          </tr>
+          <tr>
+            <td>
               <code>system-stats</code>
             </td>
             <td>
@@ -4858,6 +4877,78 @@ const { globalShortcuts, userBinds } = await shortcutCapabilities(); // userBind
 
 const state = await setLaunchAtLogin(true);
 if (state === "requires-approval") hint("Allow Acme in System Settings › Login Items");`}
+      </Code>
+
+      <h3 id="desktop-default-browser">The default web browser</h3>
+      <p>
+        An app that shows web pages can let the user make it the system&apos;s default browser.{" "}
+        <code>desktop.app.browser: true</code> (with{" "}
+        <code>desktop.app.identifier</code>) declares it a browser to the OS: on macOS packaging
+        adds <code>CFBundleURLTypes</code> for <code>http</code> and <code>https</code> and{" "}
+        <code>CFBundleDocumentTypes</code> for <code>public.html</code>, <code>public.xhtml</code>
+        {" "}
+        and <code>public.url</code> (<code>LSHandlerRank</code>{" "}
+        <code>Alternate</code>) to the bundle&apos;s Info.plist, which lists the app under System
+        Settings › Desktop &amp; Dock › Default web browser; on Linux every <code>.desktop</code>
+        {" "}
+        entry denext writes (the <code>.deb</code>, the{" "}
+        <code>.rpm</code>, the tarball&apos;s and the AppImage&apos;s) gains{" "}
+        <code>
+          MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;application/xhtml+xml
+        </code>, merged with <code>desktop.linux.desktopEntry.mimeTypes</code>, and an{" "}
+        <code>Exec</code> that takes the URL (<code>%u</code>). <code>desktop.app.deepLinks</code>
+        {" "}
+        still refuses <code>http</code> and <code>https</code>: <code>browser</code>{" "}
+        is the way to claim them. Windows is not supported yet (a browser registers{" "}
+        <code>StartMenuInternet</code> and <code>Capabilities</code>{" "}
+        registry keys, and only the user picks the default, in Settings).
+      </p>
+      <p>
+        Opened <code>.html</code> / <code>.xhtml</code> files reach <code>onOpenFile</code>{" "}
+        (<code>denext/mobile</code>) as any opened file does. <code>http(s)</code> links reach{" "}
+        <code>onDeepLink</code>, cold start and warm, once the Deno Desktop runtime delivers them:
+        {" "}
+        <code>appCapabilities().browserLinks</code>{" "}
+        (<code>denext/desktop/app</code>) says whether it does; a runtime without it drops every
+        link whose scheme is not a declared deep link.
+      </p>
+      <p>
+        <code>denext desktop add default-browser</code> enables <code>setDefaultBrowser()</code>,
+        {" "}
+        <code>getSchemeOwner(scheme)</code> and{" "}
+        <code>isDefaultBrowser()</code>, which run in the app&apos;s own process on any Deno Desktop
+        runtime. On macOS they call LaunchServices over FFI (<code>
+          LSSetDefaultHandlerForURLScheme
+        </code>, <code>LSCopyDefaultHandlerForURLScheme</code>), baked as <code>--allow-ffi</code>
+        {" "}
+        of the two framework paths; macOS confirms the change with its own dialog and the call
+        returns before the user answers, so it resolves <code>"prompted"</code> (read{" "}
+        <code>isDefaultBrowser()</code> again when the app is active). On Linux they run{" "}
+        <code>xdg-settings get | set default-web-browser &lt;identifier&gt;.desktop</code> and{" "}
+        <code>xdg-mime query default x-scheme-handler/&lt;scheme&gt;</code>, baked as{" "}
+        <code>--allow-run=xdg-settings,xdg-mime</code>{" "}
+        (shell scripts: full trust for any code in the app&apos;s process).{" "}
+        <code>setDefaultBrowser()</code> resolves <code>"set"</code>, <code>"prompted"</code>,{" "}
+        <code>"unsupported"</code> (Windows; Linux without <code>xdg-settings</code>) or{" "}
+        <code>"failed"</code> (the app does not declare itself a browser, as a build without{" "}
+        <code>desktop.app.browser</code>{" "}
+        or an unpackaged one). Ask from the user&apos;s action, a "Make default" button. The backend
+        has the same calls on <code>createDefaultBrowser({"{ identifier }"})</code> from{" "}
+        <code>denext/desktop</code>.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts → desktop: { app: { identifier: "com.example.browser", browser: true },
+//                              capabilities: { defaultBrowser: true } }
+import { appCapabilities, getSchemeOwner, isDefaultBrowser, setDefaultBrowser } from "denext/desktop/app";
+import { onDeepLink, onOpenFile } from "denext/mobile";
+
+if (!(await isDefaultBrowser())) {
+  console.log("current browser:", await getSchemeOwner("https")); // "com.apple.safari", "firefox.desktop"
+  const result = await setDefaultBrowser(); // from a click on "Make default"
+  if (result === "prompted") hint("Confirm in the dialog macOS shows");
+}
+if ((await appCapabilities()).browserLinks) onDeepLink(({ url }) => openTab(url));
+onOpenFile(({ handle, name }) => openFileTab(handle, name)); // .html / .xhtml`}
       </Code>
 
       <h3 id="desktop-media-capture">The microphone and camera</h3>

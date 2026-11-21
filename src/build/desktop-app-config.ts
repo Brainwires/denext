@@ -25,8 +25,9 @@
 //
 // The scaffolded `scripts/package-*.ts` call {@linkcode syncDesktopAppConfig} before `deno desktop`
 // and {@linkcode writeLaufeyLaunchConfig} on its output (before signing on macOS; there it also
-// lists `desktop.macos.userActivityTypes` as the bundle's `NSUserActivityTypes` and sets
-// `LSUIElement` for an `"accessory"` app). `denext desktop
+// lists `desktop.macos.userActivityTypes` as the bundle's `NSUserActivityTypes`, sets
+// `LSUIElement` for an `"accessory"` app and declares a `desktop.app.browser` app's http / https
+// URL types and HTML document types). `denext desktop
 // run` / `dev` sync `app.json` and pass the launch settings as `LAUFEY_*` env instead.
 
 import { dirname, fromFileUrl, join } from "@std/path";
@@ -42,6 +43,8 @@ import {
 import type { DesktopOs } from "./desktop-capabilities.ts";
 import { parsePlist, type PlistNode, renderPlist } from "./plist-value.ts";
 import { addMacosDockHelper } from "./desktop-dock-helper.ts";
+import { withBrowserHandlers } from "./desktop-browser.ts";
+import { desktopBrowserEnabled } from "../desktop/browser-config.ts";
 import { parseOtaPublicKey } from "./ota-signing.ts";
 import { isOtaManifest, OTA_MANIFEST_PATH } from "../mobile/ota-manifest.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
@@ -498,7 +501,8 @@ async function editInfoPlist(plist: string, edit: (text: string) => string): Pro
 
 /**
  * The macOS bundle's `Info.plist` keys the config sets: `NSUserActivityTypes`, the microphone /
- * camera usage descriptions and an accessory app's `LSUIElement`. Before code-signing.
+ * camera usage descriptions, an accessory app's `LSUIElement` and a browser's URL and document
+ * types (`desktop.app.browser`). Before code-signing.
  */
 async function writeMacBundleKeys(
   config: unknown,
@@ -521,6 +525,9 @@ async function writeMacBundleKeys(
   if (launch.activationPolicy === "accessory") {
     await editInfoPlist(plist, (text) => withActivationPolicy(text, "accessory"));
   }
+  // desktop.app.browser: the http / https URL types and the HTML document types that list the app
+  // under System Settings › Default web browser (`deno desktop` declares only the deep links).
+  if (desktopBrowserEnabled(config)) await editInfoPlist(plist, withBrowserHandlers);
 }
 
 /** Options for {@linkcode writeLaufeyLaunchConfig}. */

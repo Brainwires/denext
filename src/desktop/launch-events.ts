@@ -13,8 +13,9 @@
  *
  * Every link is offered first to a pending custom-scheme auth session ({@link
  * ./scheme-auth-session.ts}): its callback is consumed there and never reaches the page's routes.
- * A link is accepted only with a scheme declared in `desktop.app.deepLinks` (the runtime filters
- * launch arguments already; `openurl` is filtered again here).
+ * A link is accepted only with a scheme declared in `desktop.app.deepLinks`, or `http` / `https`
+ * for a `desktop.app.browser` app (the runtime filters launch arguments already; `openurl` is
+ * filtered again here).
  *
  * An opened file is untrusted input — any program of the same user can open any path with the app
  * — so the page never gets authority from its path: it gets a READ-ONLY picked handle
@@ -31,6 +32,7 @@
 import { basename } from "@std/path";
 import { type DesktopCapability, DesktopCapError } from "./extension.ts";
 import { PickedPaths } from "./picked-paths.ts";
+import { BROWSER_SCHEMES } from "./browser-config.ts";
 import type { DenoSystemStatsApi } from "./system-stats-shape.ts";
 
 /** Who handles a deep-link scheme, as `Deno.desktop.getSchemeOwner` reports it. */
@@ -267,6 +269,12 @@ export interface DesktopAppApi {
   getSchemeOwner?(scheme: string): Promise<SchemeOwnerInfo>;
   /** Register the app as a declared scheme's handler (`force` only on an explicit user action). */
   registerScheme?(scheme: string, options?: { force?: boolean }): Promise<RegisterSchemeResult>;
+  /**
+   * `true` when the runtime delivers `http` / `https` links to a `desktop.app.browser` app
+   * (`openurl`, `launchUrls`, `secondinstance`); absent on a runtime that drops every link whose
+   * scheme is not a declared deep link.
+   */
+  readonly browserLinks?: boolean;
   /** OS auth sessions (runtime 2.9.7-denext.6 and later). */
   readonly authSession?: DesktopAuthSessionApi;
   /** Native passkeys (`@clerk/electron-passkeys` wire format). */
@@ -389,6 +397,11 @@ const MAX_QUEUED = 64;
 export interface LaunchRouterOptions {
   /** The declared deep-link schemes (`desktop.app.deepLinks`), lower-case, no `:`. */
   readonly schemes: readonly string[];
+  /**
+   * `desktop.app.browser`: also route `http` / `https` links to the page (never to `owner` /
+   * `claim`, which stay limited to the declared deep links).
+   */
+  readonly browserLinks?: boolean;
   /** The per-launch picked-path set shared with `fs` / `shell` (opened files land here). */
   readonly picked?: PickedPaths;
   /** Push an event to the page's stream (the bridge's `emit`). */
@@ -491,6 +504,7 @@ function strings(value: unknown): string[] {
  */
 export function createLaunchRouter(options: LaunchRouterOptions): LaunchRouter {
   const schemes = options.schemes.map((s) => s.toLowerCase());
+  const accepted = options.browserLinks === true ? [...schemes, ...BROWSER_SCHEMES] : schemes;
   const picked = options.picked ?? new PickedPaths();
   const resolveFile = options.resolveFile ?? realFile;
   const api = options.api ?? desktopAppApi();
@@ -503,7 +517,7 @@ export function createLaunchRouter(options: LaunchRouterOptions): LaunchRouter {
   const acceptUrl = (url: unknown, launch: boolean): void => {
     if (typeof url !== "string" || url === "" || url.length > MAX_URL_CHARS) return;
     const scheme = schemeOf(url);
-    if (scheme === undefined || !schemes.includes(scheme)) return;
+    if (scheme === undefined || !accepted.includes(scheme)) return;
     if (options.claimAuthCallback?.(url) === true) return;
     enqueue(links, { url, launch });
     options.emit("deepLinks", "available", null);

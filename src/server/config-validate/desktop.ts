@@ -201,11 +201,12 @@ function validateDesktopApp(app: unknown, fail: Fail): void {
   validateDeepLinks(a.deepLinks, fail);
   validateBridgeOrigins(a.bridgeOrigins, fail);
   validateNavigationOrigins(a.allowedNavigationOrigins, fail);
-  for (const key of ["singleInstance", "keepAlive", "restoreWindows"]) {
+  for (const key of ["singleInstance", "keepAlive", "restoreWindows", "browser"]) {
     if (a[key] !== undefined && typeof a[key] !== "boolean") {
       fail(`desktop.app.${key}`, "must be a boolean");
     }
   }
+  validateBrowser(a, fail);
   validateDock(a, fail);
   if (a.maxWindows !== undefined) {
     const problem = maxWindowsProblem(a.maxWindows);
@@ -216,6 +217,21 @@ function validateDesktopApp(app: unknown, fail: Fail): void {
   }
   validateActivationPolicy(a, fail);
   validateDesktopIcons(a.icons, fail);
+}
+
+/**
+ * `desktop.app.browser: true` needs `desktop.app.identifier`: the OS records the default browser by
+ * the bundle id (macOS) or the `.desktop` file id (Linux), which the identifier names.
+ */
+function validateBrowser(a: Record<string, unknown>, fail: Fail): void {
+  if (a.browser !== true) return;
+  if (typeof a.identifier !== "string" || a.identifier.trim() === "") {
+    fail(
+      "desktop.app.browser",
+      "requires desktop.app.identifier (a reverse-DNS id): the OS records the default browser by " +
+        "the bundle id (macOS) or the .desktop file id (Linux)",
+    );
+  }
 }
 
 /**

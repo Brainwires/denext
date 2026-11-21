@@ -195,6 +195,11 @@ export interface DesktopPackageMeta {
   readonly deepLinks: string[];
   /** Whether the launcher turns the single-instance lock on (`desktop.app.singleInstance`). */
   readonly singleInstance: boolean;
+  /**
+   * Whether the app may be the default web browser (`desktop.app.browser`): the Linux entries then
+   * claim `http` / `https` and the HTML types (absent means off).
+   */
+  readonly browser?: boolean;
   /** deno.json `license` (the `.rpm` License tag), when it is a string. */
   readonly license?: string;
   /**
@@ -336,6 +341,7 @@ export function packageMetaFrom(
     identifier,
     deepLinks: schemes(denoApp.deepLinks ?? cfgApp.deepLinks),
     singleInstance: (denoApp.singleInstance ?? cfgApp.singleInstance) === true,
+    ...(cfgApp.browser === true ? { browser: true } : {}),
     license: str((deno as Obj | undefined)?.license),
     backend: resolveDesktopBackend(cfgDesktop.backend, os) ??
       str(field(deno, "desktop").backend) ?? "webview",
@@ -942,7 +948,8 @@ function oneLine(s: string): string {
  * The `.desktop` entry an installed package puts in `/usr/share/applications/<identifier>.desktop`:
  * `Exec` runs the `/usr/bin/<package>` link with the app id (and the single-instance lock) in the
  * environment, `StartupWMClass` matches the window's app id, and each deep-link scheme is claimed as
- * `x-scheme-handler/<scheme>` with the URL passed as `%u`. Unlike Windows' `%1`, the `%u` field
+ * `x-scheme-handler/<scheme>` with the URL passed as `%u` (a `desktop.app.browser` app also claims
+ * `http` / `https` and the HTML types, merged with `desktop.linux.desktopEntry.mimeTypes`). Unlike Windows' `%1`, the `%u` field
  * code is expanded by the launcher into exactly one argv element (no shell, no re-splitting), and
  * the value is a URL that starts with its scheme, so it can never be read as an option; it stays
  * the last token, with no `--` that a runtime predating `--` handling would take as the URL.
@@ -960,8 +967,13 @@ export function linuxDesktopEntry(meta: DesktopPackageMeta, icon = true): string
   const keys = linuxEntryKeys(meta);
   const values = linuxEntryValues(keys);
   const mime = [...meta.deepLinks.map((s) => `x-scheme-handler/${s}`), ...keys.mimeTypes];
-  // One field code: a deep link's URL (`%u`), else the opened files (`%F`).
-  const code = meta.deepLinks.length > 0 ? " %u" : keys.mimeTypes.length > 0 ? " %F" : "";
+  // One field code: a deep link's or a browser's URL (`%u`; a browser gets an opened HTML file as
+  // a path or a `file:` URL there too), else the opened files (`%F`).
+  const code = meta.deepLinks.length > 0 || meta.browser === true
+    ? " %u"
+    : keys.mimeTypes.length > 0
+    ? " %F"
+    : "";
   return [
     "[Desktop Entry]",
     "Type=Application",

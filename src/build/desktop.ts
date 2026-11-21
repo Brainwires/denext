@@ -234,6 +234,17 @@ export {
   type SystemStatsOptions,
   type SystemStatsSubscribeOptions,
 } from "../desktop/system-stats.ts";
+// The system's default web browser, from the app's own process (`defaultBrowser` capability's core).
+export {
+  type CommandOutput as DefaultBrowserCommandOutput,
+  createDefaultBrowser,
+  type DefaultBrowserApi,
+  type DefaultBrowserOptions,
+  type DefaultBrowserOs,
+  type DlopenFn as DefaultBrowserDlopen,
+  type RunCommandFn as DefaultBrowserRunCommand,
+  type SetDefaultBrowserResult,
+} from "../desktop/default-browser.ts";
 // Per-window backend resources an extension owns (PTYs, watchers, subprocesses).
 export {
   createOwnedResources,
@@ -745,6 +756,11 @@ export interface RunDesktopOptions {
    * page's `onDeepLink`, and they are the only schemes `openAuthSession` accepts as a callback.
    */
   deepLinks?: readonly string[];
+  /**
+   * `desktop.app.browser` (from {@link resolveDesktopCapabilities}): `http` / `https` links reach
+   * the page's `onDeepLink` too, where the runtime delivers them (`Deno.desktop.browserLinks`).
+   */
+  browserLinks?: boolean;
   /**
    * The per-launch picked-path set the `dialogs`/`fs`/`shell` capabilities share (from {@link
    * resolveDesktopCapabilities}); files the OS opens with the app become read-only handles in it.
@@ -1766,6 +1782,7 @@ function desktopAppEvents(
     : undefined;
   const router = createLaunchRouter({
     schemes,
+    ...(options.browserLinks === true ? { browserLinks: true } : {}),
     api,
     emit,
     ...(options.pickedPaths ? { picked: options.pickedPaths } : {}),

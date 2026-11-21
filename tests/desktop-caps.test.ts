@@ -55,6 +55,7 @@ import { notificationsCapability } from "../src/desktop/caps/notifications.ts";
 import { contextMenuCapability } from "../src/desktop/caps/context-menu.ts";
 import { shortcutsCapability } from "../src/desktop/caps/shortcuts.ts";
 import { launchAtLoginCapability } from "../src/desktop/caps/launch-at-login.ts";
+import { defaultBrowserCapability } from "../src/desktop/caps/default-browser.ts";
 import { systemStatsCapability } from "../src/desktop/caps/system-stats.ts";
 import { updatesCapability } from "../src/desktop/caps/updates.ts";
 import { PickedPaths } from "../src/desktop/picked-paths.ts";
@@ -1816,6 +1817,7 @@ const DRIFT_FACTORIES: Record<string, (os: DesktopOs) => DesktopCapability> = {
   "context-menu": () => contextMenuCapability({ api: {} }),
   "global-shortcuts": () => shortcutsCapability({ api: {} }),
   "launch-at-login": () => launchAtLoginCapability({ api: {} }),
+  "default-browser": (os) => defaultBrowserCapability({ identifier: "com.example.app", os }),
   "system-stats": () => systemStatsCapability({ api: {} }),
   updates: () => updatesCapability(),
   fs: () => {

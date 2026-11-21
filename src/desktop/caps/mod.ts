@@ -49,6 +49,8 @@ import { notificationsCapability } from "./notifications.ts";
 import { contextMenuCapability } from "./context-menu.ts";
 import { shortcutsCapability } from "./shortcuts.ts";
 import { launchAtLoginCapability } from "./launch-at-login.ts";
+import { defaultBrowserCapability } from "./default-browser.ts";
+import { desktopBrowserEnabled } from "../browser-config.ts";
 import { updatesCapability } from "./updates.ts";
 import { ptyCapability } from "./pty.ts";
 import { systemStatsCapability } from "./system-stats.ts";
@@ -95,6 +97,8 @@ export interface ResolvedDesktop {
    * with these schemes to `onDeepLink` and accepts them as `openAuthSession` callback schemes.
    */
   readonly deepLinks: string[];
+  /** `desktop.app.browser`: `runDesktop` delivers `http` / `https` links to `onDeepLink` too. */
+  readonly browserLinks: boolean;
   /**
    * The per-launch picked-path set the `dialogs`, `fs` and `shell` capabilities share; `runDesktop`
    * adds files the OS opens with the app to it (read-only handles for `onOpenFile`).
@@ -218,7 +222,7 @@ async function loadExtension(spec: string, base: string | undefined): Promise<De
  *
  * The built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,
  * `secureStore`, `dialogs`, `clipboard`, `passkeys`, `notifications`, `contextMenu`,
- * `globalShortcuts`, `launchAtLogin`, `systemStats`, `updates`, `pty`, and the `echo` diagnostic), plus any `extensions` module
+ * `globalShortcuts`, `launchAtLogin`, `defaultBrowser`, `systemStats`, `updates`, `pty`, and the `echo` diagnostic), plus any `extensions` module
  * paths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets
  * `authSessionEnabled`. A capability the running Deno Desktop runtime cannot serve answers
  * `unavailable` per call (the page uses its web path), never an error. A bad extension path IS an
@@ -260,6 +264,7 @@ export async function resolveDesktopCapabilities(
     secureStore,
     dirs,
     appId,
+    explicitId,
     base: options.base,
     picked: base.pickedPaths,
     updater: base.updater,
@@ -309,6 +314,7 @@ function desktopLaunchBase(
     appSupportDir: dirs.data,
     authSessionEnabled,
     deepLinks,
+    browserLinks: desktopBrowserEnabled(config),
     pickedPaths,
     window: resolveDesktopWindowSettings(desktop),
     webViews: resolveDesktopWebViewSettings(desktop),
@@ -410,6 +416,8 @@ function assertAppIdentity(hasExplicitId: boolean, caps: DesktopCapabilitiesConf
 interface BuiltinCtx {
   readonly dirs: DesktopAppDirs;
   readonly appId: string;
+  /** `desktop.app.identifier` (or the `appId` option) when one is set; no default. */
+  readonly explicitId: string | undefined;
   readonly base: string | undefined;
   readonly picked: PickedPaths;
   /** `desktop.update.ui`, resolved. */
@@ -447,6 +455,23 @@ function appCaps(caps: DesktopCapabilitiesConfig): DesktopCapability[] {
       ? [ptyCapability({ config: resolvePtyConfig(caps.pty, Deno.build.os as PtyOs) })]
       : []),
   ];
+}
+
+/**
+ * The `defaultBrowser` capability, when it is enabled. It needs `desktop.app.identifier`: the OS
+ * records the default browser by the bundle id / `.desktop` file id, so a missing one fails fast at
+ * launch.
+ */
+function browserCaps(caps: DesktopCapabilitiesConfig, ctx: BuiltinCtx): DesktopCapability[] {
+  if (!caps.defaultBrowser) return [];
+  if (ctx.explicitId === undefined) {
+    throw new Error(
+      "desktop: desktop.capabilities.defaultBrowser needs `desktop.app.identifier` (a unique " +
+        "reverse-DNS id): the OS records the default browser by the app's bundle id (macOS) or " +
+        ".desktop file id (Linux)",
+    );
+  }
+  return [defaultBrowserCapability({ identifier: ctx.explicitId })];
 }
 
 /** The `updates` capability over `desktop.update` (`ui` and `manifestUrl`), when it is enabled. */
@@ -494,6 +519,7 @@ async function buildBuiltinCaps(
     ...dataCaps(caps, ctx),
     ...systemCaps(caps, ctx),
     ...appCaps(caps),
+    ...browserCaps(caps, ctx),
     ...updateCaps(caps, ctx),
   ];
   for (const spec of caps.extensions ?? []) capabilities.push(await loadExtension(spec, ctx.base));
