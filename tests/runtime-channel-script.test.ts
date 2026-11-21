@@ -575,7 +575,11 @@ Deno.test("floor: raises the compiled-in minimum sequence to the published index
   const w = await withKey();
   try {
     const keysModule = join(w.dir, "keys.ts");
-    const source = await Deno.readTextFile(new URL("src/build/runtime-channel-keys.ts", ROOT));
+    // The real module declares it in the shape `floor` rewrites; start from a floor of 0 whatever
+    // a past release raised it to (`deno task release` raises it at every release).
+    const real = await Deno.readTextFile(new URL("src/build/runtime-channel-keys.ts", ROOT));
+    assert(channelMinSequenceIn(real) >= 0);
+    const source = withChannelMinSequence(real, 0);
     assertEquals(channelMinSequenceIn(source), 0);
     await Deno.writeTextFile(keysModule, source);
     await main(["publish", TAG, "--out", join(w.dir, "out")], w.deps);

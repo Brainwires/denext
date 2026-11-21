@@ -51,8 +51,13 @@ import { toBase64 } from "../src/build/ota-signing.ts";
 
 const LINUX = "x86_64-unknown-linux-gnu";
 const MAC = "aarch64-apple-darwin";
-// Far ahead of the real clock, so these lists stay above the floor each release compiles in.
 const NOW = Date.parse("2036-01-01T00:00:00Z");
+/**
+ * The loader's replay floor, injected: `deno task release` raises the compiled-in
+ * {@linkcode RUNTIME_REVOCATION_MIN_SEQUENCE} to the live list's sequence at every release, so a
+ * fixture dated `NOW` must not depend on it. The tests of the floor pass their own.
+ */
+const NO_FLOOR = { minSequence: 0 } as const;
 const DAY = 24 * 3600_000;
 
 /** A fresh P-256 key pair: the private key and the base64 SPKI public key. */
@@ -306,6 +311,7 @@ Deno.test("loadRuntimeRevocations: no key or the check off → nothing read, not
   const dir = await Deno.makeTempDir();
   try {
     const none = await loadRuntimeRevocations({
+      ...NO_FLOOR,
       cacheRoot: dir,
       keys: [],
       fetch: noFetch,
@@ -313,6 +319,7 @@ Deno.test("loadRuntimeRevocations: no key or the check off → nothing read, not
     });
     assertEquals(none, { configured: false, list: null, source: "none", expired: null });
     const off = await loadRuntimeRevocations({
+      ...NO_FLOOR,
       cacheRoot: dir,
       keys: ["k"],
       env: (k) => k === REVOCATION_CHECK_ENV ? "0" : undefined,
@@ -341,6 +348,7 @@ Deno.test("loadRuntimeRevocations: fetches, caches for 12 h, re-verifies the cac
   try {
     let now = NOW + 1000;
     const base = {
+      ...NO_FLOOR,
       cacheRoot: dir,
       keys: [pub],
       urls: [srv.url],
@@ -395,6 +403,7 @@ Deno.test("loadRuntimeRevocations: a hanging server costs at most the budget; of
   try {
     let now = NOW + 1000;
     const base = {
+      ...NO_FLOOR,
       cacheRoot: dir,
       keys: [pub],
       urls: [srv.url, srv.url],
@@ -451,6 +460,7 @@ Deno.test("loadRuntimeRevocations: the mirror when the primary fails; replays, o
   try {
     let now = NOW + 1000;
     const base = {
+      ...NO_FLOOR,
       cacheRoot: dir,
       keys: [pub],
       urls: [one.url, two.url],
@@ -514,6 +524,7 @@ Deno.test("loadRuntimeRevocations: a forged bookkeeping sequence can't raise the
   try {
     let now = NOW + 1000;
     const base = {
+      ...NO_FLOOR,
       cacheRoot: dir,
       keys: [pub],
       urls: [srv.url],
@@ -564,6 +575,7 @@ Deno.test("loadRuntimeRevocations: bookkeeping written under another key set is 
       }),
     );
     const got = await loadRuntimeRevocations({
+      ...NO_FLOOR,
       cacheRoot: dir,
       keys: [pub],
       urls: [srv.url],
@@ -587,6 +599,7 @@ Deno.test("loadRuntimeRevocations: a run on the test keys file writes nothing to
   const dir = await Deno.makeTempDir();
   try {
     const got = await loadRuntimeRevocations({
+      ...NO_FLOOR,
       cacheRoot: dir,
       keys: [pub],
       urls: [srv.url],
@@ -598,6 +611,7 @@ Deno.test("loadRuntimeRevocations: a run on the test keys file writes nothing to
     assertEquals([...Deno.readDirSync(dir)], [], "no list, no bookkeeping");
     // A failed fetch on test keys records nothing either.
     await loadRuntimeRevocations({
+      ...NO_FLOOR,
       cacheRoot: dir,
       keys: [pub],
       urls: [srv.url],
@@ -627,6 +641,7 @@ Deno.test("loadRuntimeRevocations asks every source at once: a stale primary can
   const dir = await Deno.makeTempDir();
   try {
     const base = {
+      ...NO_FLOOR,
       cacheRoot: dir,
       keys: [pub],
       urls: [primary.url, mirror.url],
@@ -665,6 +680,7 @@ Deno.test("loadRuntimeRevocations: a list below the compiled-in floor is never t
   const dir = await Deno.makeTempDir();
   try {
     const base = {
+      ...NO_FLOOR,
       cacheRoot: dir,
       keys: [pub],
       urls: [srv.url],
@@ -767,6 +783,7 @@ Deno.test("assertRuntimeShippable: refuses a revoked runtime for the target, unl
     await Deno.writeTextFile(join(dir, "revocations.json"), await signed(listAt(), key));
     const opts = (env: Record<string, string> = {}) => ({
       mode: "cache-only" as const,
+      ...NO_FLOOR,
       cacheRoot: dir,
       keys: [pub],
       now: () => NOW + 1000,
