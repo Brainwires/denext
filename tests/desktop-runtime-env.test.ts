@@ -17,12 +17,11 @@ const ROOT = fromFileUrl(new URL("../", import.meta.url));
 const DYNAMIC_READS: Readonly<Record<string, number>> = {
   "src/build/code-signing.ts": 1,
   "src/build/deno-cache-dir.ts": 2,
-  "src/build/deno-toolchain.ts": 1,
   "src/build/desktop-launch-policy.ts": 1,
   "src/build/desktop-package-script.ts": 1,
   "src/build/desktop-runtime.ts": 1,
   "src/build/dev-server/dev-token.ts": 1,
-  "src/build/runtime-revocations.ts": 1,
+  "src/build/signed-envelope.ts": 1,
   "src/build/stock-deprecation.ts": 2,
   "src/build/verified-download.ts": 1,
   "src/desktop/app-dirs.ts": 1,

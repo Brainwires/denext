@@ -11,10 +11,12 @@
 # machine's default; every verb runs on it (`denext task dev`, `denext test`, `denext fmt` …).
 # When no `deno` is on your PATH it also runs `denext runtime link`, so `deno` is that runtime
 # (a link at ~/.denext/bin/deno); an existing `deno` is never replaced, shadowed or used by
-# denext. Either step failing (offline, say) is one warning, not a failed install: the binary
-# downloads its runtime on the first command that needs it instead (and a command that can't
-# get it stops with the fix, never running another Deno). This script never reads the channel
-# itself: every runtime check is the binary's.
+# denext. When `runtime upgrade` fails (the channel can't be read) it installs the runtime release
+# this denext bundles instead (`denext runtime install`), and links that. A step that still fails
+# (offline, say) is one warning, not a failed install: the binary downloads its runtime on the
+# first command that needs it instead (and a command that can't get it stops with the fix, never
+# running another Deno). This script never reads the channel itself: every runtime check is the
+# binary's.
 #
 # A release from before `denext runtime` (DENEXT_VERSION=v4.20.1, say) gets the step it knew:
 # `denext toolchain install` (+ `toolchain link`), or nothing before 4.0.
@@ -755,8 +757,10 @@ runtime_only() {
 # which also makes it this machine's default), or the --runtime=<version> asked for (`runtime
 # install` + `runtime use`); then, when this machine has no `deno`, link `deno` to it. Every check
 # (the signed channel, the release document's hash, each archive's SHA-256, the hold) is the
-# binary's. In a plain install a failure is one warning and the binary downloads its runtime on
-# the first command that needs it; with --runtime-only or --runtime=<version> it fails the run. An
+# binary's. In a plain install a failed `runtime upgrade` falls back to `runtime install` (the
+# release this denext bundles), and a failure of that too is one warning: the binary downloads its
+# runtime on the first command that needs it; with --runtime-only or --runtime=<version> a failure
+# fails the run. An
 # existing `deno` is never replaced: the link is made only when PATH has none, and `runtime link`
 # itself refuses to overwrite a file it did not create.
 install_runtime() {
@@ -781,8 +785,17 @@ install_runtime() {
   else
     echo "denext: installing the newest denext runtime this denext supports"
     if ! denext_at_home "$1" runtime upgrade; then
-      runtime_failed "denext runtime upgrade"
-      return 0
+      # --runtime-only asked for the newest runtime: nothing else stands in for it.
+      [ "$RUNTIME_ONLY" = "1" ] && runtime_failed "denext runtime upgrade"
+      # A plain install falls back to the release this denext bundles (`runtime install` with no
+      # version: the selected release, found without the channel), so a channel that can't be
+      # read (not published yet, unreachable) still leaves a runtime and the `deno` link.
+      echo "denext: the newest runtime could not be installed (see above); installing the" \
+        "runtime this denext bundles instead" >&2
+      if ! denext_at_home "$1" runtime install; then
+        runtime_failed "denext runtime install"
+        return 0
+      fi
     fi
   fi
   link_deno "$1" runtime

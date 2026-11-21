@@ -628,13 +628,31 @@ Deno.test("install.ps1: the runtime step never fails the install; DENEXT_NO_RUNT
     const run = await install(release, root, { STUB_RUNTIME_FAIL: "1", STUB_LOG: log });
     assertEquals(run.code, 0, run.out);
     assertStringIncludes(run.out, "installing the newest denext runtime this denext supports");
+    assertStringIncludes(run.out, "installing the runtime this denext bundles instead");
     assertStringIncludes(run.out, "could not be installed now");
-    assertStringIncludes(run.out, "denext runtime upgrade");
+    assertStringIncludes(run.out, "denext runtime install");
     assert(await exists(join(root, "bin", "denext.exe")));
     assertEquals(
       (await Deno.readTextFile(log)).split("\n").filter(Boolean),
-      ["runtime upgrade"],
-      "no link to a runtime that is not there",
+      ["runtime upgrade", "runtime install"],
+      "the bundled release is tried, and nothing links to a runtime that is not there",
+    );
+    // A runtime channel that can't be read: `runtime upgrade` fails, and `runtime install` (the
+    // bundled release) stands in; the link step then runs as after an upgrade (`runtime link`, or
+    // with a `deno` on Path the note naming the runtime's version).
+    const fellBack = join(dir, "fallback.log");
+    const fallback = await install(release, join(dir, "fallback"), {
+      STUB_UPGRADE_FAIL: "1",
+      STUB_LOG: fellBack,
+    });
+    assertEquals(fallback.code, 0, fallback.out);
+    assertStringIncludes(fallback.out, "installing the runtime this denext bundles instead");
+    assert(!fallback.out.includes("could not be installed now"), fallback.out);
+    const fellBackCalls = (await Deno.readTextFile(fellBack)).split("\n").filter(Boolean);
+    assertEquals(fellBackCalls.slice(0, 2), ["runtime upgrade", "runtime install"]);
+    assert(
+      ["runtime link", "runtime version --json"].includes(fellBackCalls[2]),
+      `the link step runs after the fallback: ${fellBackCalls.join(", ")}`,
     );
     const skipped = await install(release, join(dir, "other"), { DENEXT_NO_RUNTIME: "1" });
     assertEquals(skipped.code, 0, skipped.out);
@@ -723,7 +741,8 @@ else if (Deno.args[0] === "--help") {
 /**
  * A zip holding a compiled `denext.exe` stand-in with the `runtime` verb: `--help` lists it, every
  * other call but `--version` is logged to $STUB_LOG, `runtime upgrade` / `runtime install` fail when
- * STUB_RUNTIME_FAIL is set (as an offline machine's would) and `runtime use` when STUB_USE_FAIL is,
+ * STUB_RUNTIME_FAIL is set (as an offline machine's would), `runtime upgrade` alone when
+ * STUB_UPGRADE_FAIL is (a runtime channel that can't be read), `runtime use` when STUB_USE_FAIL is,
  * `runtime version --json` prints the nested answer, and everything else succeeds.
  */
 async function runtimeZip(dir: string): Promise<Uint8Array> {
@@ -739,6 +758,7 @@ else if (Deno.args[0] === "--help") {
   if ((verb === "runtime upgrade" || verb === "runtime install") && Deno.env.get("STUB_RUNTIME_FAIL")) {
     Deno.exit(1);
   }
+  if (verb === "runtime upgrade" && Deno.env.get("STUB_UPGRADE_FAIL")) Deno.exit(1);
   if (verb === "runtime use" && Deno.env.get("STUB_USE_FAIL")) Deno.exit(1);
   if (verb === "runtime version") {
     console.log(JSON.stringify({

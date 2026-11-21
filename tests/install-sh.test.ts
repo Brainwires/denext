@@ -82,6 +82,9 @@ case "$1 $2" in "runtime link" | "runtime unlink" | "toolchain link" | "toolchai
   echo "$DENEXT_INSTALL" >> "$DENEXT_STUB_LOG.install" ;; esac
 case "$1 $2" in "runtime upgrade" | "runtime install" | "toolchain install")
   [ -n "$STUB_RUNTIME_FAIL" ] && exit 1 ;; esac
+# The runtime channel can't be read (not published yet): \`runtime upgrade\` fails, the bundled
+# release still installs.
+[ "$1 $2" = "runtime upgrade" ] && [ -n "$STUB_UPGRADE_FAIL" ] && exit 1
 [ "$1 $2" = "runtime use" ] && [ -n "$STUB_USE_FAIL" ] && exit 1
 [ "$1 $2" = "runtime version" ] && printf '{\n  "runtime": {\n    "version": "3.0.0-denext.99",\n    "source": "default"\n  },\n  "toolchain": {\n    "mode": "managed",\n    "version": "3.0.0-denext.1"\n  }\n}\n'
 [ "$1 $2" = "toolchain status" ] && printf '{\n  "version": "2.9.7-denext.99",\n  "esbuild": {\n    "version": "0.25.5"\n  }\n}\n'
@@ -467,9 +470,37 @@ Deno.test("install.sh: a runtime that cannot be installed is one warning, not a 
     const run = await r.run({ STUB_RUNTIME_FAIL: "1" });
     assertEquals(run.code, 0, run.stderr);
     assert(await r.installed());
-    assertEquals(run.calls, ["runtime upgrade"], "no link to a runtime that is not there");
+    assertEquals(
+      run.calls,
+      ["runtime upgrade", "runtime install"],
+      "the bundled release is tried, and nothing links to a runtime that is not there",
+    );
+    assertStringIncludes(run.stderr, "installing the runtime this denext bundles instead");
     assertStringIncludes(run.stderr, "could not be installed now");
-    assertStringIncludes(run.stderr, "denext runtime upgrade");
+    assertStringIncludes(run.stderr, "denext runtime install");
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("install.sh: a runtime channel that can't be read falls back to the bundled release", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  try {
+    const run = await r.run({ STUB_UPGRADE_FAIL: "1" });
+    assertEquals(run.code, 0, run.stderr);
+    assert(await r.installed());
+    // `runtime upgrade` fails; `runtime install` (no version: the bundled release) stands in, and
+    // `deno` is still linked to it.
+    assertEquals(run.calls, ["runtime upgrade", "runtime install", "runtime link"]);
+    assertStringIncludes(run.stderr, "installing the runtime this denext bundles instead");
+    assert(!run.stderr.includes("could not be installed now"), run.stderr);
+    // --runtime-only asked for the newest runtime: no fallback, a failed run.
+    const only = await r.run({ STUB_UPGRADE_FAIL: "1" }, [], ["--runtime-only"]);
+    assertEquals(only.code, 1);
+    assertEquals(only.calls, ["runtime upgrade"]);
+    assertStringIncludes(only.stderr, "the runtime could not be installed");
   } finally {
     await r.remove();
   }

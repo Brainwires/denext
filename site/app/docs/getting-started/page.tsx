@@ -87,9 +87,11 @@ curl -fsSL https://denext.dev/install.sh | sh -s -- --runtime=3.0.0-denext.31
         <code>~/.denext/bin/deno</code>; on Windows <code>deno.cmd</code>). A <code>deno</code>{" "}
         you have is never replaced, and never used by denext either.{" "}
         <code>DENEXT_NO_DENO_LINK=1</code> skips the link and <code>DENEXT_NO_RUNTIME=1</code>{" "}
-        both steps; a failed download (offline) is one warning, and the binary fetches the toolchain
-        on the first command that needs it instead — a command that can&apos;t get it stops with the
-        fix rather than run another Deno. Every verb that runs Deno —{" "}
+        both steps; when the channel can&apos;t be read, the installer installs the runtime this
+        denext bundles instead (<code>denext runtime install</code>) and links that. A failed
+        download (offline) is one warning, and the binary fetches the toolchain on the first command
+        that needs it instead — a command that can&apos;t get it stops with the fix rather than run
+        another Deno. Every verb that runs Deno —{" "}
         <code>
           denext task …
         </code>, <code>denext test</code>, <code>denext fmt</code>,{" "}

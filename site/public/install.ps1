@@ -9,9 +9,10 @@
 # denext supports, verified by the binary against the signed runtime channel, and makes it this
 # machine's default; every verb runs on it (`denext task dev`, `denext test`, `denext fmt` ...).
 # When no `deno` is on your Path it also runs `denext runtime link`, so `deno` is that runtime
-# (%USERPROFILE%\.denext\bin\deno.cmd); an existing `deno` is never replaced or shadowed. Either
-# step failing (offline, say) is one warning, not a failed install: the binary downloads its
-# runtime on first need instead. This script never reads the channel itself. A release from before
+# (%USERPROFILE%\.denext\bin\deno.cmd); an existing `deno` is never replaced or shadowed. When
+# `runtime upgrade` fails (the channel can't be read) it installs the runtime release this denext
+# bundles instead (`denext runtime install`), and links that. A step that still fails (offline,
+# say) is one warning, not a failed install: the binary downloads its runtime on first need instead. This script never reads the channel itself. A release from before
 # `denext runtime` (DENEXT_VERSION=v4.20.1) gets its own `denext toolchain install` (+ link), and
 # one before 4.0 neither.
 #
@@ -418,8 +419,9 @@ function Write-DownloadProgress([long]$done, $total, [switch]$Completed) {
 # Install the runtime through the binary at $exe: the newest one it supports (`runtime upgrade`,
 # which also makes it this machine's default), or the -Runtime version asked for (`runtime install`
 # + `runtime use`); then, when this machine has no `deno`, link `deno` to it. Every check is the
-# binary's. In a plain install a failure is one warning (the binary downloads its runtime on first
-# need); with -RuntimeOnly or -Runtime it throws. An existing `deno` is never replaced: the link is
+# binary's. In a plain install a failed `runtime upgrade` falls back to `runtime install` (the
+# release this denext bundles), and a failure of that too is one warning (the binary downloads its
+# runtime on first need); with -RuntimeOnly or -Runtime a failure throws. An existing `deno` is never replaced: the link is
 # made only when Path has none, and `runtime link` itself refuses to overwrite a file it did not
 # create. A release from before `denext runtime` gets its own toolchain step.
 function Install-DenextRuntime([string]$exe, [string]$target, [string]$root) {
@@ -448,6 +450,16 @@ function Install-DenextRuntime([string]$exe, [string]$target, [string]$root) {
     Write-Host 'denext: installing the newest denext runtime this denext supports'
     $fix = 'denext runtime upgrade'
     $ok = (Invoke-Denext $exe @('runtime', 'upgrade')) -eq 0
+    # A plain install falls back to the release this denext bundles (`runtime install` with no
+    # version: the selected release, found without the channel), so a channel that can't be read
+    # (not published yet, unreachable) still leaves a runtime and the `deno` link. -RuntimeOnly
+    # asked for the newest runtime: nothing else stands in for it.
+    if (-not $ok -and -not $strict) {
+      Write-Warning ('denext: the newest runtime could not be installed (see above); installing ' +
+        'the runtime this denext bundles instead')
+      $fix = 'denext runtime install'
+      $ok = (Invoke-Denext $exe @('runtime', 'install')) -eq 0
+    }
   }
   if (-not $ok) {
     if ($strict) {

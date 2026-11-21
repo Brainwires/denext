@@ -395,7 +395,8 @@ downloaded and SHA-256-verified on first need. Four ways to get it:
 1. `curl -fsSL https://denext.dev/install.sh | sh` — the released binary for macOS and Linux
    (`~/.denext/bin`; checksum-verified; `DENEXT_VERSION` picks a release). The installer then
    runs `denext runtime upgrade` (the newest runtime this denext supports, verified by the binary
-   against the signed runtime channel) and — only when no `deno` is on your PATH — `denext
+   against the signed runtime channel; when the channel can't be read, the runtime this denext
+   bundles, `denext runtime install`) and — only when no `deno` is on your PATH — `denext
    runtime link`, so `deno` is that runtime too (`DENEXT_NO_DENO_LINK=1` skips the link,
    `DENEXT_NO_RUNTIME=1` both; an existing `deno` is never replaced). `sh -s -- --runtime-only`
    moves only the runtime of an installed denext; `--runtime=<version>` installs that release and

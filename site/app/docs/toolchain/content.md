@@ -56,14 +56,16 @@ everything it starts: `DENO_BIN` names it, and `deno` on the children's PATH is 
 `completions` never run Deno. A task that calls `deno …` therefore works on a machine with no
 Deno.
 
-The installer runs `denext runtime upgrade` right after installing the binary (the newest
-runtime this denext supports, from the [runtime channel](/docs/runtime-channel), made your default),
-and — only when no `deno` is on your PATH — `denext runtime link`, so `deno` is the runtime for your
-editor, git hooks and `.mcp.json` too (`DENEXT_NO_DENO_LINK=1` skips the link, `DENEXT_NO_RUNTIME=1`
-both steps; `--runtime-only` moves only the runtime of an installed denext, `--runtime=<version>`
-installs that release). The link goes in the `bin/` of the install directory, `$DENEXT_INSTALL` when set
-(the same variable the installers read) and `~/.denext` otherwise, so a custom-prefix install's
-`deno` sits beside its `denext`. A `deno` you already have is never replaced.
+The installer runs `denext runtime upgrade` right after installing the binary (the newest runtime
+this denext supports, from the [runtime channel](/docs/runtime-channel), made your default; when the
+channel can't be read it installs the runtime this denext bundles instead, `denext runtime
+install`), and — only when no `deno` is on your PATH — `denext runtime link`, so `deno` is the
+runtime for your editor, git hooks and `.mcp.json` too (`DENEXT_NO_DENO_LINK=1` skips the link,
+`DENEXT_NO_RUNTIME=1` both steps; `--runtime-only` moves only the runtime of an installed denext,
+`--runtime=<version>` installs that release). The link goes in the `bin/` of the install directory,
+`$DENEXT_INSTALL` when set (the same variable the installers read) and `~/.denext` otherwise, so a
+custom-prefix install's `deno` sits beside its `denext`. A `deno` you already have is never
+replaced.
 
 The CLI's entrypoint is thin: it loads only the argument parser and a generated table of every
 verb's name, flags and help, and imports a verb's own code when that verb runs, so `denext

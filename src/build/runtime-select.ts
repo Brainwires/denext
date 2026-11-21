@@ -1080,7 +1080,7 @@ async function envLockFromChannel(
 }
 
 /** The `DENEXT_RUNTIME` lock, when the release needs the channel to be found. */
-async function prefetchEnv(
+async function prefetchEnvLock(
   o: ResolveRuntimeAsyncOptions,
   s: AsyncSeams,
   entries: Map<string, RuntimeChannelRelease>,
@@ -1133,7 +1133,7 @@ export async function resolveRuntimeRelease(
   if (s.env(PIN_FILE_ENV)) return resolveRuntimeReleaseSync(options);
   const held = await heldChannel(s);
   const entries = entriesOf(held);
-  const envLock = await prefetchEnv(options, s, entries);
+  const envLock = await prefetchEnvLock(options, s, entries);
   await prefetchLocks(options, s);
   const release = resolveRuntimeReleaseSync({
     ...options,
