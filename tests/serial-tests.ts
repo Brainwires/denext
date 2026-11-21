@@ -108,6 +108,8 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/react-native-uniwind-css.test.ts",
   // Sets the variables a migrated load context reads (`process.env.*`) and runs it.
   "tests/remix-load-context.test.ts",
+  // Points DENEXT_TOOLCHAIN_PIN_FILE / DENEXT_RUNTIME_DEFAULT_FILE at missing files and stubs fetch.
+  "tests/runtime-prune.test.ts",
   "tests/scaffold-monorepo.test.ts",
   "tests/security-remediation.test.ts",
   "tests/server-misc-coverage.test.ts",
