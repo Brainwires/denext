@@ -6,7 +6,8 @@
  * on this renderer's fibers. denext itself imports no npm package for it.
  *
  * Mutations map onto the NTB1 ops: a new instance is CREATE plus its initial SET_STYLE / SET_PROP
- * / LISTEN, a text string is a RawText node with SET_TEXT, append and insert-before are INSERT,
+ * / LISTEN, emitted when it is first attached in a commit (an instance React discards never reaches
+ * the host), a text string is a RawText node with SET_TEXT, append and insert-before are INSERT,
  * a removal is REMOVE then DESTROY (the host frees the subtree; JS forgets it), and an update
  * diffs the props. Every op of a commit goes to the host in one `nativeTree.commit`, from
  * `resetAfterCommit`. Written for `react-reconciler` 0.31 (React 19); 0.29's `commitUpdate`
@@ -15,7 +16,7 @@
  * @module
  */
 
-import { applyProps, releaseSubtree, setHidden } from "./apply.ts";
+import { applyProps, materialize, releaseSubtree, setHidden } from "./apply.ts";
 import { type ContainerOptions, GpuiContainer, type NativeTreeWindow } from "./container.ts";
 import { GpuiNode, kindOf } from "./node.ts";
 import { KIND } from "./props.generated.ts";
@@ -39,13 +40,6 @@ const INSIDE_TEXT: HostContext = Object.freeze({ inText: true });
 /** The root view's style: it fills the window. */
 const ROOT_STYLE = { style: { flex: 1 } };
 
-/** A node of `kind`, with its CREATE in the pending batch. */
-function createNode(container: GpuiContainer, kind: number): GpuiNode {
-  const node = new GpuiNode(container, kind);
-  container.writer.create(node.id, kind);
-  return node;
-}
-
 /**
  * A window's tree with its root view created and set (sent with the first commit).
  *
@@ -58,8 +52,9 @@ export function createGpuiContainer(
   options: ContainerOptions = {},
 ): GpuiContainer {
   const container = new GpuiContainer(window, options);
-  const root = createNode(container, KIND.View);
-  applyProps(root, ROOT_STYLE);
+  const root = new GpuiNode(container, KIND.View);
+  root.props = ROOT_STYLE;
+  materialize(root);
   container.writer.setRoot(root.id);
   container.root = root;
   return container;
@@ -73,22 +68,37 @@ const CONTAINER_KINDS: ReadonlySet<number> = new Set([
   KIND.Pressable,
 ]);
 
-/** Attach (or move) `child` under `parent`, before `before`: INSERT. */
+/**
+ * Attach (or move) `child` under `parent`, before `before`. Under a parent the host has (a commit),
+ * `child` is materialized first and INSERTed; under a parent still being built (React's render
+ * phase, `appendInitialChild`), only the JS tree changes, and the INSERT comes with the parent's
+ * materialization.
+ */
 function attach(parent: GpuiNode, child: GpuiNode, before: GpuiNode | null): void {
-  if (!CONTAINER_KINDS.has(parent.kind)) {
-    // The host would reject the whole batch: say which element is wrong instead.
-    throw new Error(
-      "denext/gpui: only View, Text, ScrollView and Pressable take children " +
-        `(${parent.kind === KIND.Image ? "an Image" : "a TextInput"} was given one)`,
-    );
-  }
+  assertTakesChildren(parent);
+  place(parent, child, before);
+  if (!parent.materialized) return;
+  materialize(child);
+  parent.container.writer.insert(parent.id, child.id, before?.id ?? 0);
+}
+
+/** Refuse a child under a kind the host gives none (it would reject the whole batch). */
+function assertTakesChildren(parent: GpuiNode): void {
+  if (CONTAINER_KINDS.has(parent.kind)) return;
+  throw new Error(
+    "denext/gpui: only View, Text, ScrollView and Pressable take children " +
+      `(${parent.kind === KIND.Image ? "an Image" : "a TextInput"} was given one)`,
+  );
+}
+
+/** Move `child` under `parent`, before `before`, in the JS tree. */
+function place(parent: GpuiNode, child: GpuiNode, before: GpuiNode | null): void {
   const from = child.parent?.children;
   if (from) from.splice(from.indexOf(child), 1);
   child.parent = parent;
   const at = before ? parent.children.indexOf(before) : -1;
   if (at < 0) parent.children.push(child);
   else parent.children.splice(at, 0, child);
-  parent.container.writer.insert(parent.id, child.id, before?.id ?? 0);
 }
 
 /** Delete `child` from under `parent`: REMOVE, DESTROY, and forget the subtree. */
@@ -100,6 +110,12 @@ function detach(parent: GpuiNode, child: GpuiNode): void {
   writer.remove(parent.id, child.id);
   writer.destroy(child.id);
   releaseSubtree(child);
+}
+
+/** A RawText's text (shown as "" while hidden), sent when the host has the node. */
+function setText(node: GpuiNode, text: string): void {
+  node.text = text;
+  if (node.materialized) node.container.writer.setText(node.id, node.hidden ? "" : text);
 }
 
 /** The root view of `container`. */
@@ -134,25 +150,24 @@ const mutation = {
     const root = rootOf(c);
     for (const child of [...root.children]) detach(root, child);
   },
-  commitTextUpdate(node: GpuiNode, _old: string, text: string): void {
-    node.text = text;
-    node.container.writer.setText(node.id, text);
-  },
+  commitTextUpdate: (node: GpuiNode, _old: string, text: string) => setText(node, text),
   /** React 19: `(instance, type, oldProps, newProps)`; React 18: `(instance, payload, type, …)`. */
   commitUpdate(node: GpuiNode, ...args: unknown[]): void {
     const newProps = (typeof args[0] === "string" ? args[2] : args[3]) as Props;
-    applyProps(node, newProps);
+    if (node.materialized) applyProps(node, newProps);
+    else node.props = newProps;
   },
   /** React 18's update payload: always diff in `commitUpdate`. */
   prepareUpdate: () => true,
   hideInstance: (node: GpuiNode) => setHidden(node, true),
   unhideInstance: (node: GpuiNode) => setHidden(node, false),
   hideTextInstance(node: GpuiNode): void {
-    node.container.writer.setText(node.id, "");
+    node.hidden = true;
+    setText(node, node.text);
   },
   unhideTextInstance(node: GpuiNode, text: string): void {
-    node.text = text;
-    node.container.writer.setText(node.id, text);
+    node.hidden = false;
+    setText(node, text);
   },
   resetTextContent(): void {},
   commitMount(): void {},
@@ -161,8 +176,9 @@ const mutation = {
 /** Creating instances. */
 const creation = {
   createInstance(type: string, props: Props, container: GpuiContainer): GpuiNode {
-    const node = createNode(container, kindOf(type));
-    applyProps(node, props);
+    // Buffered until it is attached in a commit (`materialize`): a discarded render costs nothing.
+    const node = new GpuiNode(container, kindOf(type));
+    node.props = props;
     return node;
   },
   createTextInstance(text: string, container: GpuiContainer, context: HostContext): GpuiNode {
@@ -171,9 +187,8 @@ const creation = {
         `denext/gpui: text strings must be rendered within a <Text> component ("${text}")`,
       );
     }
-    const node = createNode(container, KIND.RawText);
+    const node = new GpuiNode(container, KIND.RawText);
     node.text = text;
-    container.writer.setText(node.id, text);
     return node;
   },
   finalizeInitialChildren: () => false,

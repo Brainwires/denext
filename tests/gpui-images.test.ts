@@ -7,6 +7,8 @@ import { toFileUrl } from "@std/path";
 import { hostConfig as hc } from "../src/gpui/host-config.ts";
 import { createGpuiContainer } from "../src/gpui/host-config.ts";
 import { imageMime } from "../src/gpui/images.ts";
+import type { GpuiContainer } from "../src/gpui/container.ts";
+import type { GpuiNode } from "../src/gpui/node.ts";
 import { fakeWindow, settle } from "./helpers/gpui-fakes.ts";
 
 /** A fetch answering every URL with `bytes` (or `status`), recording the URLs. */
@@ -22,6 +24,13 @@ function fakeFetch(status = 200, bytes = [1, 2, 3], type: string | null = "image
     } as unknown as Response);
   };
   return { urls, fetch: fn as typeof fetch };
+}
+
+/** An instance attached to the root view in a commit (only then does the host, or a fetch, see it). */
+function create(type: string, props: Record<string, unknown>, c: GpuiContainer): GpuiNode {
+  const node = hc.createInstance(type, props, c);
+  hc.appendChildToContainer(c, node);
+  return node;
 }
 
 /** A window and container with `fetch`. */
@@ -52,10 +61,14 @@ Deno.test("one fetch per source; IMAGE_DATA once, SET_IMAGE for each node; freed
     { op: "SET_IMAGE", id: one.id, image: 1 },
     { op: "SET_IMAGE", id: two.id, image: 1 },
   ]);
-  // A node showing a ready image gets it with its CREATE.
-  const three = hc.createInstance("Image", { source: A }, c);
+  // A node showing a ready image gets it with its CREATE (in the commit that attaches it).
+  const three = create("Image", { source: A }, c);
   hc.resetAfterCommit(c);
-  assertEquals(win.takeOps().at(-1), { op: "SET_IMAGE", id: three.id, image: 1 });
+  assertEquals(win.takeOps().find((o) => o.op === "SET_IMAGE"), {
+    op: "SET_IMAGE",
+    id: three.id,
+    image: 1,
+  });
   hc.removeChildFromContainer(c, one);
   hc.removeChild(c.root!, three);
   hc.resetAfterCommit(c);
@@ -68,7 +81,7 @@ Deno.test("one fetch per source; IMAGE_DATA once, SET_IMAGE for each node; freed
     { op: "IMAGE_FREE", image: 1 },
   ]);
   // Shown again later: fetched again, under a new image id.
-  hc.createInstance("Image", { source: A }, c);
+  create("Image", { source: A }, c);
   hc.resetAfterCommit(c);
   await settle();
   assertEquals(f.urls, [A, A]);
@@ -80,27 +93,31 @@ Deno.test("one fetch per source; IMAGE_DATA once, SET_IMAGE for each node; freed
   });
 });
 
-Deno.test("a node whose CREATE is still pending gets its SET_IMAGE in the pending batch", async () => {
-  const { win, c } = setup(fakeFetch().fetch);
-  const img = hc.createInstance("Image", { source: A }, c);
-  await settle(); // the bytes arrive while the commit that creates the node is still rendering
-  assertEquals(win.takeOps(), [{
-    op: "IMAGE_DATA",
-    image: 1,
-    mime: "image/png",
-    bytes: [1, 2, 3],
-  }]);
+Deno.test("an Image React discards is never fetched; one attached later is", async () => {
+  const f = fakeFetch();
+  const { win, c } = setup(f.fetch);
+  const lost = hc.createInstance("Image", { source: A }, c); // built, never attached
+  hc.commitUpdate(lost, "Image", { source: A }, { source: B });
   hc.resetAfterCommit(c);
+  await settle();
+  assertEquals(f.urls, []);
+  assertEquals(win.batches.length, 0);
+  const kept = hc.createInstance("Image", { source: A }, c);
+  hc.appendChildToContainer(c, kept);
+  hc.resetAfterCommit(c);
+  assertEquals(f.urls, [A], "fetched from the commit that attaches it");
   const ops = win.takeOps();
-  assertEquals(ops[0], { op: "CREATE", id: img.id, kind: 4 });
-  assertEquals(ops.at(-1), { op: "SET_IMAGE", id: img.id, image: 1 });
+  assertEquals(ops[0], { op: "CREATE", id: kept.id, kind: 4 });
+  assertEquals(ops.at(-1), { op: "INSERT", parent: c.root!.id, child: kept.id, before: 0 });
+  await settle();
+  assertEquals(win.takeOps().at(-1), { op: "SET_IMAGE", id: kept.id, image: 1 });
 });
 
 Deno.test("changing or dropping the source points the node away, then frees the old image", async () => {
   const f = fakeFetch();
   const { win, c } = setup(f.fetch);
   const props = { source: A };
-  const img = hc.createInstance("Image", props, c);
+  const img = create("Image", props, c);
   hc.resetAfterCommit(c);
   await settle();
   win.take();
@@ -127,7 +144,7 @@ Deno.test("changing or dropping the source points the node away, then frees the 
 Deno.test("a source released while it loads is dropped when the bytes arrive", async () => {
   const f = fakeFetch();
   const { win, c } = setup(f.fetch);
-  const img = hc.createInstance("Image", { source: A }, c);
+  const img = create("Image", { source: A }, c);
   hc.resetAfterCommit(c);
   hc.commitUpdate(img, "Image", { source: A }, { source: null });
   hc.resetAfterCommit(c);
@@ -135,7 +152,7 @@ Deno.test("a source released while it loads is dropped when the bytes arrive", a
   await settle();
   assertEquals(win.batches.length, 0);
   // Nothing is held for it: showing it again fetches it again.
-  hc.createInstance("Image", { source: A }, c);
+  create("Image", { source: A }, c);
   assertEquals(f.urls, [A, A]);
 });
 
@@ -147,11 +164,11 @@ Deno.test("a failed fetch calls onError then onLoadEnd, now and for later nodes"
     onLoadEnd: () => seen.push("end"),
   };
   const { win, c } = setup(fakeFetch(404).fetch);
-  const img = hc.createInstance("Image", props, c);
+  const img = create("Image", props, c);
   hc.resetAfterCommit(c);
   await settle();
   assertEquals(seen, [{ nativeEvent: { error: "HTTP 404" }, target: img.id }, "end"]);
-  const later = hc.createInstance("Image", props, c);
+  const later = create("Image", props, c);
   await settle();
   assertEquals(seen.slice(2), [{ nativeEvent: { error: "HTTP 404" }, target: later.id }, "end"]);
   assertEquals(win.takeOps().some((o) => o.op === "IMAGE_DATA"), false);
@@ -165,8 +182,8 @@ Deno.test("a rejected fetch and a throwing onError are reported", async () => {
     onError: (e) => void errors.push(e),
   });
   const seen: unknown[] = [];
-  hc.createInstance("Image", { source: A, onError: (e: unknown) => seen.push(e) }, c);
-  hc.createInstance("Image", {
+  create("Image", { source: A, onError: (e: unknown) => seen.push(e) }, c);
+  create("Image", {
     source: B,
     onError: () => {
       throw new Error("handler");
@@ -180,11 +197,11 @@ Deno.test("a rejected fetch and a throwing onError are reported", async () => {
 Deno.test("relative sources resolve against assetBase, else the working directory", async () => {
   const f = fakeFetch();
   const { c } = setup(f.fetch, "https://app.example/assets/");
-  hc.createInstance("Image", { source: "img/logo.png" }, c);
-  hc.createInstance("Image", { source: "http://[" }, c); // not a URL: fetched as given
-  hc.createInstance("Image", { source: "" }, c); // no source
+  create("Image", { source: "img/logo.png" }, c);
+  create("Image", { source: "http://[" }, c); // not a URL: fetched as given
+  create("Image", { source: "" }, c); // no source
   const cwd = setup(f.fetch).c;
-  hc.createInstance("Image", { source: { uri: "local.png" } }, cwd);
+  create("Image", { source: { uri: "local.png" } }, cwd);
   await settle();
   assertEquals(f.urls, [
     "https://app.example/assets/img/logo.png",

@@ -2,7 +2,8 @@
  * A node of the native tree on the JavaScript side: its id and kind, the props React gave it,
  * what the host was last sent (its style, its non-style props, its event mask), its place in the
  * tree, and the per-kind state the events need (a press state machine, a text input's event
- * count, an image's source).
+ * count, an image's source). A node reaches the host only once it is attached in a commit
+ * (`materialized`).
  *
  * @module
  */
@@ -39,7 +40,7 @@ export class GpuiNode {
   readonly kind: number;
   /** The window's tree. */
   readonly container: GpuiContainer;
-  /** The props React last committed (a text instance: none). */
+  /** The props React last gave it (a text instance: none). */
   props: Record<string, unknown> = {};
   /** The style the host has. */
   style: ResolvedStyle = new Map();
@@ -47,8 +48,13 @@ export class GpuiNode {
   sent: Map<number, NtValue> = new Map();
   /** The event mask the host has. */
   mask = 0;
-  /** Hidden by a suspended boundary (`display: none` over its style). */
+  /** Hidden by a suspended boundary (`display: none` over its style; a RawText shows ""). */
   hidden = false;
+  /**
+   * Whether the host has the node: its CREATE and initial props are emitted when it is first
+   * attached inside a commit, so an instance React discards never reaches the host.
+   */
+  materialized = false;
   /** The parent node, while attached. */
   parent: GpuiNode | null = null;
   /** The children, in order. */
@@ -72,6 +78,5 @@ export class GpuiNode {
     this.container = container;
     this.kind = kind;
     this.id = container.allocId();
-    container.nodes.set(this.id, this);
   }
 }

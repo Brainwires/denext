@@ -1,6 +1,7 @@
 /**
  * Images for the native tree. The host decodes and caches; JavaScript fetches (so the app's own
- * network rules apply), sends each unique source once (IMAGE_DATA), points every Image node
+ * network rules apply; only for Image nodes attached in a commit, never for a discarded render),
+ * sends each unique source once (IMAGE_DATA), points every Image node
  * showing it at it (SET_IMAGE), and frees it (IMAGE_FREE) when the last of them lets go.
  *
  * A source is anything React Native's `Image.resolveAssetSource` takes: a URL string (an imported
@@ -89,7 +90,7 @@ export class ImageStore {
 
   /**
    * Show `source` on `node` (an Image), releasing what it showed before. Called from the commit
-   * (and from CREATE's initial props), so its ops go in the pending batch.
+   * (and from a node's first attach), so its ops go in the commit's batch.
    *
    * @param node The Image node.
    * @param source Its `source` prop.
@@ -99,7 +100,7 @@ export class ImageStore {
     const key = uri === undefined ? undefined : this.#resolve(uri);
     if (key === node.imageKey) return;
     // Point the node away from what it showed before that image may be freed.
-    if (node.imageKey !== undefined && this.#container.isSent(node.id)) {
+    if (node.imageKey !== undefined) {
       this.#container.writer.setImage(node.id, 0);
     }
     this.release(node);
@@ -162,8 +163,9 @@ export class ImageStore {
   }
 
   /**
-   * Send a fetched image: IMAGE_DATA and the SET_IMAGE of every node the host has, in a batch of
-   * their own; a node whose CREATE is still pending gets its SET_IMAGE in the pending batch.
+   * Send a fetched image: IMAGE_DATA and the SET_IMAGE of every node showing it, in a batch of
+   * their own (each of those nodes was sent in the commit that attached it, which ended before any
+   * fetch could settle).
    */
   #deliver(entry: ImageEntry, mime: string, bytes: Uint8Array): void {
     if (entry.state !== "loading") return;
@@ -172,11 +174,8 @@ export class ImageStore {
     const nodes = [...entry.nodes];
     container.commitAside((w) => {
       w.imageData(entry.id, mime, bytes);
-      for (const node of nodes) if (container.isSent(node.id)) w.setImage(node.id, entry.id);
+      for (const node of nodes) w.setImage(node.id, entry.id);
     });
-    for (const node of nodes) {
-      if (!container.isSent(node.id)) container.writer.setImage(node.id, entry.id);
-    }
   }
 
   /** A fetch failed: every node showing it hears `onError`. */

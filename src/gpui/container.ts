@@ -5,8 +5,8 @@
  * Ops a React commit makes accumulate in {@linkcode GpuiContainer.writer} and go to the host in
  * one `nativeTree.commit` from the host config's `resetAfterCommit`. Work that finishes outside a
  * commit (an image fetched, a controlled input put back) goes in a batch of its own
- * ({@linkcode GpuiContainer.commitAside}); an op on a node whose CREATE has not been sent yet
- * joins the pending batch instead ({@linkcode GpuiContainer.isSent}).
+ * ({@linkcode GpuiContainer.commitAside}). Such work only touches nodes the host already has: a
+ * node is sent in the same commit that first attaches it.
  *
  * @module
  */
@@ -96,14 +96,12 @@ export class GpuiContainer {
   readonly options: ContainerOptions;
   /** The batch the current React commit is building. */
   readonly writer: BatchWriter = new BatchWriter();
-  /** The live nodes, by id. */
+  /** The nodes the host has (materialized and not yet destroyed), by id. */
   readonly nodes: Map<number, GpuiNode> = new Map();
   /** The root view every top-level child is inserted into (set by `createGpuiContainer`). */
   root: GpuiNode | null = null;
   /** The window's images. */
   readonly images: ImageStore = new ImageStore(this);
-  /** Nodes created since the last batch went out (their CREATE is still pending). */
-  readonly #pending = new Set<number>();
   #nextId = 1;
   #nextImageId = 1;
   #seq = 0;
@@ -119,19 +117,12 @@ export class GpuiContainer {
 
   /** A fresh node id (never reused in this window). */
   allocId(): number {
-    const id = this.#nextId++;
-    this.#pending.add(id);
-    return id;
+    return this.#nextId++;
   }
 
   /** A fresh image id (never reused in this window). */
   allocImageId(): number {
     return this.#nextImageId++;
-  }
-
-  /** Whether `id`'s CREATE has gone to the host. */
-  isSent(id: number): boolean {
-    return !this.#pending.has(id);
   }
 
   /** Report an error from a commit or a handler. */
@@ -154,7 +145,6 @@ export class GpuiContainer {
   /** Send the pending batch: the end of a React commit. */
   commit(): void {
     this.#send(this.writer);
-    this.#pending.clear();
   }
 
   /**

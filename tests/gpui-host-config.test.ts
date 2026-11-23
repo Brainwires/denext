@@ -21,6 +21,12 @@ function setup() {
   return { win, c, errors };
 }
 
+/** Attach `node` to the root view in a commit (the host gets it then), and return it. */
+function mount<T>(c: ReturnType<typeof setup>["c"], node: T): T {
+  hc.appendChildToContainer(c, node as GpuiNode);
+  return node;
+}
+
 const ROOT_CTX = hc.getRootHostContext();
 const TEXT_CTX = hc.getChildHostContext(ROOT_CTX, "Text");
 const f32 = (value: number) => ({ tag: "f32" as const, value });
@@ -78,8 +84,11 @@ Deno.test("update: changed style and props only, unset for removed ones, text up
   const { win, c } = setup();
   const old = { style: { padding: 4, opacity: 0.5 }, testID: "v" };
   const view = hc.createInstance("View", old, c);
+  const text = hc.createInstance("Text", {}, c);
   const raw = hc.createTextInstance("a", c, TEXT_CTX);
+  hc.appendInitialChild(text, raw);
   hc.appendChildToContainer(c, view);
+  hc.appendChildToContainer(c, text);
   hc.resetAfterCommit(c);
   win.take();
   hc.commitUpdate(view, "View", old, { style: { padding: 4, backgroundColor: "#fff" } });
@@ -132,6 +141,73 @@ function threeChildren() {
   ctx.win.take();
   return { ...ctx, parent, kids };
 }
+
+Deno.test("lazy CREATE: an instance React discards never reaches the host", () => {
+  const { win, c } = setup();
+  hc.resetAfterCommit(c); // the root view's batch
+  win.take();
+  // A render React throws away: instances built (a subtree, press handlers), updated and hidden,
+  // never attached in a commit. (Images: tests/gpui-images.test.ts.)
+  const parent = hc.createInstance("Pressable", { onPress: () => {}, style: { flex: 1 } }, c);
+  const text = hc.createInstance("Text", {}, c);
+  const raw = hc.createTextInstance("gone", c, TEXT_CTX);
+  hc.appendInitialChild(text, raw);
+  hc.appendInitialChild(parent, text);
+  hc.commitUpdate(parent, "Pressable", {}, { style: { flex: 2 } });
+  hc.hideInstance(parent);
+  hc.hideTextInstance(raw);
+  hc.commitTextUpdate(raw, "gone", "still gone");
+  hc.resetAfterCommit(c);
+  assertEquals(win.batches.length, 0, "no ops for a discarded render");
+  assertEquals([c.nodes.has(parent.id), c.nodes.has(raw.id)], [false, false]);
+  assertEquals(parent.pressability, null, "no press state machine (no timers) either");
+  // Its ids are never handed out again.
+  const next = hc.createInstance("View", {}, c);
+  assert(next.id > raw.id);
+});
+
+Deno.test("lazy CREATE: the first attach sends CREATE and props, then the subtree, then its INSERT", () => {
+  const { win, c } = setup();
+  const view = hc.createInstance("View", { style: { opacity: 0.5 }, onLayout: () => {} }, c);
+  const text = hc.createInstance("Text", { testID: "t" }, c);
+  const raw = hc.createTextInstance("hi", c, TEXT_CTX);
+  hc.appendInitialChild(text, raw);
+  hc.appendInitialChild(view, text);
+  // Changed before it was attached (a later render of the same pending instance): the host gets
+  // the newest props only, and a hidden one arrives hidden.
+  hc.commitUpdate(view, "View", {}, { style: { opacity: 0.25 }, onLayout: () => {} });
+  hc.hideTextInstance(raw);
+  hc.commitTextUpdate(raw, "hi", "hey");
+  hc.insertInContainerBefore(c, view, mount(c, hc.createInstance("View", {}, c)));
+  hc.resetAfterCommit(c);
+  const [batch, ...rest] = win.take();
+  assertEquals(rest, []);
+  const sibling = c.root!.children[1];
+  const ops = batch.ops.filter((o) => !("id" in o && o.id === sibling.id) && o.op !== "SET_ROOT");
+  // The root view's CREATE and style come first (this is the window's first batch).
+  assertEquals(ops.slice(2), [
+    { op: "INSERT", parent: c.root!.id, child: sibling.id, before: 0 },
+    { op: "CREATE", id: view.id, kind: KIND.View },
+    { op: "SET_STYLE", id: view.id, props: [[STYLE_PROP.opacity, f32(0.25)]] },
+    { op: "LISTEN", id: view.id, mask: LISTEN.layout },
+    { op: "CREATE", id: text.id, kind: KIND.Text },
+    { op: "SET_PROP", id: text.id, prop: PROP.testID, value: str("t") },
+    { op: "CREATE", id: raw.id, kind: KIND.RawText },
+    { op: "SET_TEXT", id: raw.id, text: "" },
+    { op: "INSERT", parent: text.id, child: raw.id, before: 0 },
+    { op: "INSERT", parent: view.id, child: text.id, before: 0 },
+    { op: "INSERT", parent: c.root!.id, child: view.id, before: sibling.id },
+  ]);
+  assertEquals([c.nodes.has(view.id), c.nodes.has(raw.id)], [true, true]);
+  // Attached again (a move): only the INSERT.
+  hc.appendChildToContainer(c, view);
+  hc.unhideTextInstance(raw, "hey");
+  hc.resetAfterCommit(c);
+  assertEquals(win.takeOps(), [
+    { op: "INSERT", parent: c.root!.id, child: view.id, before: 0 },
+    { op: "SET_TEXT", id: raw.id, text: "hey" },
+  ]);
+});
 
 Deno.test("reorder: insertBefore and appendChild of an attached child are INSERTs (moves)", () => {
   const { win, c, parent, kids: [a, b, k] } = threeChildren();
@@ -211,8 +287,11 @@ Deno.test("only View, Text, ScrollView and Pressable take children (the host's o
 
 Deno.test("Suspense hides with display: none over the node's style, and text with empty text", () => {
   const { win, c } = setup();
-  const view = hc.createInstance("View", { style: { flex: 2 } }, c);
+  const view = mount(c, hc.createInstance("View", { style: { flex: 2 } }, c));
+  const text = hc.createInstance("Text", {}, c);
   const raw = hc.createTextInstance("t", c, TEXT_CTX);
+  hc.appendInitialChild(text, raw);
+  mount(c, text);
   hc.resetAfterCommit(c);
   win.take();
   hc.hideInstance(view);
@@ -245,22 +324,31 @@ function propsOf(ops: DecodedOp[]): Record<number, unknown> {
 
 Deno.test("non-style props per kind, with React Native's aliases", () => {
   const { win, c } = setup();
-  hc.createInstance("TextInput", {
-    placeholder: "Name",
-    placeholderTextColor: "#888",
-    editable: false,
-    secureTextEntry: true,
-    multiline: "yes", // not a boolean: left out
-    "aria-label": "name",
-    role: "search",
-  }, c);
-  hc.createInstance(
-    "ScrollView",
-    { horizontal: true, scrollEnabled: false, accessibilityLabel: 7 },
+  mount(
     c,
+    hc.createInstance("TextInput", {
+      placeholder: "Name",
+      placeholderTextColor: "#888",
+      editable: false,
+      secureTextEntry: true,
+      multiline: "yes", // not a boolean: left out
+      "aria-label": "name",
+      role: "search",
+    }, c),
   );
-  hc.createInstance("Image", { resizeMode: "contain" }, c);
-  hc.createInstance("Pressable", { disabled: true, placeholder: "ignored on a Pressable" }, c);
+  mount(
+    c,
+    hc.createInstance("ScrollView", {
+      horizontal: true,
+      scrollEnabled: false,
+      accessibilityLabel: 7,
+    }, c),
+  );
+  mount(c, hc.createInstance("Image", { resizeMode: "contain" }, c));
+  mount(
+    c,
+    hc.createInstance("Pressable", { disabled: true, placeholder: "not a Pressable prop" }, c),
+  );
   hc.resetAfterCommit(c);
   const ops = win.takeOps();
   const byNode = (kind: number) => {
@@ -306,7 +394,7 @@ Deno.test("LISTEN: only for the handlers present, and only when the mask changes
   assertEquals(listenMask(KIND.Image, { onPress: "not a function" }), 0);
 
   const { win, c } = setup();
-  const p = hc.createInstance("Pressable", { onPress: fn }, c);
+  const p = mount(c, hc.createInstance("Pressable", { onPress: fn }, c));
   hc.resetAfterCommit(c);
   assertEquals(win.takeOps().filter((o) => o.op === "LISTEN"), [
     { op: "LISTEN", id: p.id, mask: LISTEN.press },

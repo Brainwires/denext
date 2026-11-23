@@ -1,5 +1,6 @@
 /**
- * React props to native tree ops for one node. {@linkcode applyProps} diffs what the host has
+ * React props to native tree ops for one node. {@linkcode materialize} sends a node the first
+ * time it is attached in a commit; {@linkcode applyProps} diffs what the host has
  * against the new props and appends SET_STYLE (changed style props, `unset` for removed ones),
  * SET_PROP (the non-style props this kind takes), LISTEN (only when the mask of handlers present
  * changed), and the per-kind work: an Image's source, a TextInput's controlled value with React
@@ -185,7 +186,28 @@ export function applyProps(node: GpuiNode, props: Record<string, unknown>): void
 export function setHidden(node: GpuiNode, hidden: boolean): void {
   if (node.hidden === hidden) return;
   node.hidden = hidden;
-  syncStyle(node);
+  if (node.materialized) syncStyle(node);
+}
+
+/**
+ * Send `node` and its subtree to the host, the first time it is attached inside a commit: CREATE
+ * and the initial props of each node (its image fetch and press state machine start here), then
+ * the INSERTs that build the subtree. A node already there is left as it is.
+ *
+ * @param node The subtree's root.
+ */
+export function materialize(node: GpuiNode): void {
+  if (node.materialized) return;
+  node.materialized = true;
+  const { container } = node;
+  container.nodes.set(node.id, node);
+  container.writer.create(node.id, node.kind);
+  if (node.kind === KIND.RawText) container.writer.setText(node.id, node.hidden ? "" : node.text);
+  else applyProps(node, node.props);
+  for (const child of node.children) {
+    materialize(child);
+    container.writer.insert(node.id, child.id, 0);
+  }
 }
 
 /**

@@ -15,10 +15,17 @@ import {
   setCurrentUpdatePriority,
 } from "../src/gpui/priority.ts";
 import type { GpuiNode } from "../src/gpui/node.ts";
-import { NativeTreeBatchError } from "../src/gpui/container.ts";
+import { type GpuiContainer, NativeTreeBatchError } from "../src/gpui/container.ts";
 import { PROP } from "../src/gpui/props.generated.ts";
 import { fakeWindow, settle } from "./helpers/gpui-fakes.ts";
 import { fakeTimers } from "./helpers/mobile-fakes.ts";
+
+/** A host instance attached to the root view, so the host has it (and its events route). */
+function create(type: string, props: Record<string, unknown>, c: GpuiContainer): GpuiNode {
+  const node = hc.createInstance(type, props, c);
+  hc.appendChildToContainer(c, node);
+  return node;
+}
 
 /** A window, its container, the errors reported, and a dispatch helper. */
 function setup() {
@@ -53,19 +60,19 @@ Deno.test("routes: layout, scroll, focus, blur, key, selection, submit, image ev
   const { c, send, commit } = setup();
   const seen: Array<[string, unknown, number]> = [];
   const on = (name: string) => (e: unknown) => seen.push([name, e, resolveUpdatePriority()]);
-  const view = hc.createInstance("View", {
+  const view = create("View", {
     onLayout: on("layout"),
     onFocus: on("focus"),
     onBlur: on("blur"),
     onKeyPress: on("key"),
   }, c);
-  const scroll = hc.createInstance("ScrollView", { onScroll: on("scroll") }, c);
-  const input = hc.createInstance("TextInput", {
+  const scroll = create("ScrollView", { onScroll: on("scroll") }, c);
+  const input = create("TextInput", {
     onSubmitEditing: on("submit"),
     onSelectionChange: on("selection"),
   }, c);
-  const image = hc.createInstance("Image", { onLoad: on("load"), onLoadEnd: on("end") }, c);
-  const broken = hc.createInstance("Image", { onError: on("error") }, c);
+  const image = create("Image", { onLoad: on("load"), onLoadEnd: on("end") }, c);
+  const broken = create("Image", { onError: on("error") }, c);
   commit();
   send(view, "layout", { x: 1, y: 2, width: 3, height: 4 });
   send(scroll, "scroll", { x: 0, y: 10, contentWidth: 100, contentHeight: 500 });
@@ -122,7 +129,7 @@ Deno.test("routes: layout, scroll, focus, blur, key, selection, submit, image ev
 
 Deno.test("dispatch drops unknown nodes and types, and reports a throwing handler", () => {
   const { c, errors, send, commit } = setup();
-  const view = hc.createInstance("View", {
+  const view = create("View", {
     onLayout: () => {
       throw new Error("handler failed");
     },
@@ -157,7 +164,7 @@ Deno.test("presses go through pressability: in, out + press, the trailing press,
   const { send, c, commit } = setup();
   const seen: string[] = [];
   let pressIn: unknown;
-  const p = hc.createInstance("Pressable", {
+  const p = create("Pressable", {
     onPressIn: (e: unknown) => {
       pressIn = e;
       seen.push("in");
@@ -183,12 +190,12 @@ Deno.test("presses go through pressability: in, out + press, the trailing press,
 Deno.test("presses: a disabled Pressable ignores the press-in; a View has no pressability", () => {
   const { send, c, commit } = setup();
   const seen: string[] = [];
-  const p = hc.createInstance("Pressable", {
+  const p = create("Pressable", {
     disabled: true,
     onPressIn: () => seen.push("in"),
     onPress: () => seen.push("press"),
   }, c);
-  const v = hc.createInstance("View", { onPress: () => seen.push("view") }, c);
+  const v = create("View", { onPress: () => seen.push("view") }, c);
   commit();
   send(p, "pressIn");
   send(p, "pressOut");
@@ -202,7 +209,7 @@ Deno.test("presses: onLongPress after delayLongPress, and then no onPress", () =
   try {
     const { send, c, commit } = setup();
     const seen: string[] = [];
-    const t = hc.createInstance("Text", {
+    const t = create("Text", {
       onLongPress: () => seen.push("long"),
       onPress: () => seen.push("press"),
       onPressOut: () => seen.push("out"),
@@ -229,7 +236,7 @@ Deno.test("presses: onLongPress after delayLongPress, and then no onPress", () =
 Deno.test("TextInput: a change the props refuse is put back, with the event count", async () => {
   const { win, c, send } = setup();
   const seen: unknown[] = [];
-  const input = hc.createInstance("TextInput", {
+  const input = create("TextInput", {
     value: "",
     onChange: (e: unknown) => seen.push(e),
     onChangeText: (t: string) => seen.push(t),
@@ -271,7 +278,7 @@ Deno.test("TextInput: an accepted change sends nothing back; a transformed one s
       hc.resetAfterCommit(c);
     },
   };
-  const input = hc.createInstance("TextInput", props, c);
+  const input = create("TextInput", props, c);
   hc.resetAfterCommit(c);
   win.take();
   send(input, "changeText", { text: "a", eventCount: 1 });
@@ -290,7 +297,7 @@ Deno.test("TextInput: an accepted change sends nothing back; a transformed one s
 Deno.test("TextInput: defaultValue is sent once; an uncontrolled change is left alone", async () => {
   const { win, c, send } = setup();
   const props = { defaultValue: "d", onChangeText: () => {} };
-  const input = hc.createInstance("TextInput", props, c);
+  const input = create("TextInput", props, c);
   hc.resetAfterCommit(c);
   assertEquals(
     win.takeOps().filter((o) => o.op === "SET_PROP" && o.prop === PROP.value).length,
