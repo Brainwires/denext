@@ -16798,25 +16798,25 @@
             {
               "kind": "property",
               "name": "macos",
-              "signature": "macos?: \"webview\" | \"cef\"",
+              "signature": "macos?: \"webview\" | \"cef\" | \"gpui\"",
               "doc": "The macOS app's engine (`\"webview\"`: WKWebView)."
             },
             {
               "kind": "property",
               "name": "windows",
-              "signature": "windows?: \"webview\" | \"cef\"",
+              "signature": "windows?: \"webview\" | \"cef\" | \"gpui\"",
               "doc": "The Windows app's engine (`\"webview\"`: WebView2)."
             },
             {
               "kind": "property",
               "name": "linux",
-              "signature": "linux?: \"webview\" | \"cef\"",
+              "signature": "linux?: \"webview\" | \"cef\" | \"gpui\"",
               "doc": "The Linux app's engine (`\"webview\"`: WebKitGTK, which has no WebRTC)."
             },
             {
               "kind": "property",
               "name": "default",
-              "signature": "default?: \"webview\" | \"cef\"",
+              "signature": "default?: \"webview\" | \"cef\" | \"gpui\"",
               "doc": "The engine of every OS not named here."
             }
           ]
@@ -17212,8 +17212,8 @@
             {
               "kind": "property",
               "name": "backend",
-              "signature": "backend?: \"webview\" | \"cef\" | DesktopBackendConfig",
-              "doc": "The window engine `deno desktop` builds the app with: `\"webview\"` (the system WebView:\nWKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux) or `\"cef\"` (Chromium, bundled).\nOne engine for every target, or one per OS (`{ linux: \"cef\" }`: Chromium on Linux, where\nWebKitGTK has no WebRTC, and the system WebView elsewhere). The package scripts, `desktop run` /\n`dev`, the runtime download and both doctors resolve it for the OS they build or run for. It\ntakes precedence over deno.json's `desktop.backend`, which `deno desktop` reads as one engine\nand which stays the fallback. Default `\"webview\"`."
+              "signature": "backend?: \"webview\" | \"cef\" | \"gpui\" | DesktopBackendConfig",
+              "doc": "The window engine `deno desktop` builds the app with: `\"webview\"` (the system WebView:\nWKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux), `\"cef\"` (Chromium, bundled) or\n`\"gpui\"` (no web view: the app renders React Native primitives into the window's native tree\nwith `denext/gpui`; in development, no pinned runtime archive yet). One engine for every target, or one per OS (`{ linux: \"cef\" }`: Chromium on Linux, where\nWebKitGTK has no WebRTC, and the system WebView elsewhere). The package scripts, `desktop run` /\n`dev`, the runtime download and both doctors resolve it for the OS they build or run for. It\ntakes precedence over deno.json's `desktop.backend`, which `deno desktop` reads as one engine\nand which stays the fallback. Default `\"webview\"`."
             },
             {
               "kind": "property",
@@ -46606,7 +46606,7 @@
               "doc": "The target OS."
             }
           ],
-          "returns": "[\"--backend\", \"webview\" | \"cef\"].",
+          "returns": "[\"--backend\", \"webview\" | \"cef\" | \"gpui\"].",
           "examples": [],
           "denextOnly": true
         },
@@ -51181,7 +51181,7 @@
           "params": [
             {
               "name": "backend",
-              "doc": "The deno desktop backend (meta.backend: \"webview\" or \"cef\")."
+              "doc": "The deno desktop backend (meta.backend: \"webview\", \"cef\" or \"gpui\")."
             },
             {
               "name": "noVcRuntime",
@@ -76341,6 +76341,1528 @@
               "doc": "Optional reconciliation key for this node."
             }
           ]
+        }
+      ]
+    },
+    {
+      "module": "denext/gpui",
+      "symbols": [
+        {
+          "name": "AppRegistry",
+          "slug": "AppRegistry",
+          "kind": "variable",
+          "signature": "AppRegistry: GpuiAppRegistry",
+          "doc": "React Native's AppRegistry for the native tree: registerComponent in the app's entry, runApplication with the window as the root tag.",
+          "docFull": "React Native's `AppRegistry` for the native tree: `registerComponent` in the app's entry,\n`runApplication` with the window as the root tag.",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "```ts ignore\nimport createReconciler from \"react-reconciler\";\nimport { AppRegistry } from \"denext/gpui\";\nimport App from \"./App.ts\";\n\nAppRegistry.registerComponent(\"main\", () => App);\nAppRegistry.runApplication(\"main\", {\n  rootTag: new Deno.BrowserWindow({ title: \"App\" }),\n  reconciler: createReconciler,\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "ContainerOptions",
+          "slug": "ContainerOptions",
+          "kind": "interface",
+          "signature": "interface ContainerOptions",
+          "doc": "What a container needs from its root.",
+          "docFull": "What a container needs from its root.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "onError",
+              "signature": "readonly onError?: (error: unknown) => void",
+              "doc": "Called with an error a commit or an event handler raised (default: `console.error`)."
+            },
+            {
+              "kind": "property",
+              "name": "fetch",
+              "signature": "readonly fetch?: typeof fetch",
+              "doc": "The `fetch` images are loaded with (default: the global one)."
+            },
+            {
+              "kind": "property",
+              "name": "assetBase",
+              "signature": "readonly assetBase?: string | URL",
+              "doc": "The base relative image URIs resolve against."
+            }
+          ]
+        },
+        {
+          "name": "DesktopOS",
+          "slug": "DesktopOS",
+          "kind": "typeAlias",
+          "signature": "type DesktopOS = \"macos\" | \"windows\" | \"linux\"",
+          "doc": "A Deno Desktop host OS, as PlatformConstants's os names it.",
+          "docFull": "A Deno Desktop host OS, as {@linkcode PlatformConstants}'s `os` names it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "FocusEvent",
+          "slug": "FocusEvent",
+          "kind": "interface",
+          "signature": "interface FocusEvent",
+          "doc": "onFocus / onBlur's event.",
+          "docFull": "`onFocus` / `onBlur`'s event.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "nativeEvent",
+              "signature": "readonly nativeEvent: { readonly target: number }",
+              "doc": "The node."
+            }
+          ]
+        },
+        {
+          "name": "GpuiAppParameters",
+          "slug": "GpuiAppParameters",
+          "kind": "interface",
+          "signature": "interface GpuiAppParameters extends Omit<GpuiRenderOptions, \"window\">",
+          "doc": "What AppRegistry.runApplication takes.",
+          "docFull": "What {@linkcode AppRegistry.runApplication} takes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "rootTag",
+              "signature": "readonly rootTag: NativeTreeWindow",
+              "doc": "The window to run the app in (React Native's root tag)."
+            },
+            {
+              "kind": "property",
+              "name": "initialProps",
+              "signature": "readonly initialProps?: Record<string, unknown>",
+              "doc": "The root component's props."
+            }
+          ],
+          "extends": [
+            {
+              "type": "Omit<GpuiRenderOptions, \"window\">",
+              "ref": "denext-gpui/GpuiRenderOptions",
+              "refName": "GpuiRenderOptions"
+            }
+          ]
+        },
+        {
+          "name": "GpuiAppRegistry",
+          "slug": "GpuiAppRegistry",
+          "kind": "interface",
+          "signature": "interface GpuiAppRegistry",
+          "doc": "React Native's AppRegistry, over native tree windows.",
+          "docFull": "React Native's `AppRegistry`, over native tree windows.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "method",
+              "name": "registerComponent",
+              "signature": "registerComponent(appKey: string, provider: GpuiComponentProvider): string",
+              "doc": "Register an app's root component under `appKey`."
+            },
+            {
+              "kind": "method",
+              "name": "getAppKeys",
+              "signature": "getAppKeys(): string[]",
+              "doc": "The registered app keys."
+            },
+            {
+              "kind": "method",
+              "name": "runApplication",
+              "signature": "runApplication(appKey: string, parameters: GpuiAppParameters): GpuiRoot",
+              "doc": "Render the app `appKey` into `parameters.rootTag`."
+            },
+            {
+              "kind": "method",
+              "name": "unmountApplicationComponentAtRootTag",
+              "signature": "unmountApplicationComponentAtRootTag(rootTag: NativeTreeWindow): void",
+              "doc": "Unmount whatever runs in `rootTag`."
+            }
+          ]
+        },
+        {
+          "name": "GpuiComponent",
+          "slug": "GpuiComponent",
+          "kind": "typeAlias",
+          "signature": "type GpuiComponent<P> = (props: P) => VNode",
+          "doc": "A primitive as TypeScript sees it (at run time the host ones are element type names).",
+          "docFull": "A primitive as TypeScript sees it (at run time the host ones are element type names).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GpuiComponentProvider",
+          "slug": "GpuiComponentProvider",
+          "kind": "typeAlias",
+          "signature": "type GpuiComponentProvider = () => VNodeType",
+          "doc": "What registerComponent takes: a function returning the root component.",
+          "docFull": "What `registerComponent` takes: a function returning the root component.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GpuiDesktopApi",
+          "slug": "GpuiDesktopApi",
+          "kind": "interface",
+          "signature": "interface GpuiDesktopApi",
+          "doc": "The slice of Deno.desktop the probe reads.",
+          "docFull": "The slice of `Deno.desktop` the probe reads.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "method",
+              "name": "windowCapabilities",
+              "signature": "windowCapabilities?(): Record<string, unknown>",
+              "doc": "What window features this backend supports (`nativeTree: { version }` on `gpui`)."
+            }
+          ]
+        },
+        {
+          "name": "GpuiImageProps",
+          "slug": "GpuiImageProps",
+          "kind": "interface",
+          "signature": "interface GpuiImageProps extends GpuiViewProps",
+          "doc": "Image's props.",
+          "docFull": "`Image`'s props.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "source",
+              "signature": "readonly source?: string | { readonly uri: string } | ReadonlyArray<{ readonly uri: string }>",
+              "doc": "A URL (an imported image is one) or `{ uri }`."
+            },
+            {
+              "kind": "property",
+              "name": "resizeMode",
+              "signature": "readonly resizeMode?: \"cover\" | \"contain\" | \"stretch\" | \"repeat\" | \"center\"",
+              "doc": "How the image fits its frame."
+            },
+            {
+              "kind": "property",
+              "name": "onLoad",
+              "signature": "readonly onLoad?: (event: { readonly nativeEvent: { readonly source: { readonly uri?: string } } }) => void",
+              "doc": "The host decoded the image."
+            },
+            {
+              "kind": "property",
+              "name": "onError",
+              "signature": "readonly onError?: (event: { readonly nativeEvent: { readonly error: string } }) => void",
+              "doc": "The image could not be fetched or decoded."
+            },
+            {
+              "kind": "property",
+              "name": "onLoadEnd",
+              "signature": "readonly onLoadEnd?: () => void",
+              "doc": "After `onLoad` or `onError`."
+            }
+          ],
+          "extends": [
+            {
+              "type": "GpuiViewProps",
+              "ref": "denext-gpui/GpuiViewProps"
+            }
+          ]
+        },
+        {
+          "name": "GpuiPressableProps",
+          "slug": "GpuiPressableProps",
+          "kind": "interface",
+          "signature": "interface GpuiPressableProps extends Omit<GpuiViewProps, \"style\" | \"children\">, GpuiPressProps",
+          "doc": "Pressable's props.",
+          "docFull": "`Pressable`'s props.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "style",
+              "signature": "readonly style?: GpuiStyle | ((state: PressableState) => GpuiStyle)",
+              "doc": "The style, or a function of the pressed state."
+            },
+            {
+              "kind": "property",
+              "name": "children",
+              "signature": "readonly children?: VNodeChildren | ((state: PressableState) => VNodeChildren)",
+              "doc": "The children, or a function of the pressed state."
+            },
+            {
+              "kind": "property",
+              "name": "disabled",
+              "signature": "readonly disabled?: boolean",
+              "doc": "Ignore presses."
+            }
+          ],
+          "extends": [
+            {
+              "type": "Omit<GpuiViewProps, \"style\" | \"children\">",
+              "ref": "denext-gpui/GpuiViewProps",
+              "refName": "GpuiViewProps"
+            },
+            {
+              "type": "GpuiPressProps",
+              "ref": "denext-gpui/GpuiPressProps"
+            }
+          ]
+        },
+        {
+          "name": "GpuiPressProps",
+          "slug": "GpuiPressProps",
+          "kind": "typeAlias",
+          "signature": "type GpuiPressProps = Pick<PressabilityConfig, \"onPress\" | \"onPressIn\" | \"onPressOut\" | \"onLongPress\" | \"delayLongPress\" | \"delayPressIn\" | \"delayPressOut\" | \"minPressDuration\" | \"cancelable\">",
+          "doc": "The press callbacks and timings Text and Pressable take (React Native's pressability).",
+          "docFull": "The press callbacks and timings `Text` and `Pressable` take (React Native's pressability).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GpuiRenderOptions",
+          "slug": "GpuiRenderOptions",
+          "kind": "interface",
+          "signature": "interface GpuiRenderOptions extends ContainerOptions",
+          "doc": "What render takes.",
+          "docFull": "What {@linkcode render} takes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "window",
+              "signature": "readonly window: NativeTreeWindow",
+              "doc": "The Deno Desktop window to render into."
+            },
+            {
+              "kind": "property",
+              "name": "reconciler",
+              "signature": "readonly reconciler: ReactReconcilerFactory",
+              "doc": "`react-reconciler`'s default export (0.31, for React 19), loaded against denext's `react`\n(map `react` to `denext/react` in the app's import map)."
+            },
+            {
+              "kind": "property",
+              "name": "desktop",
+              "signature": "readonly desktop?: GpuiDesktopApi",
+              "doc": "`Deno.desktop` (default: the runtime's; tests pass a fake)."
+            }
+          ],
+          "extends": [
+            {
+              "type": "ContainerOptions",
+              "ref": "denext-gpui/ContainerOptions"
+            }
+          ]
+        },
+        {
+          "name": "GpuiRoot",
+          "slug": "GpuiRoot",
+          "kind": "interface",
+          "signature": "interface GpuiRoot",
+          "doc": "A window's mounted React root.",
+          "docFull": "A window's mounted React root.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "window",
+              "signature": "readonly window: NativeTreeWindow",
+              "doc": "The window."
+            },
+            {
+              "kind": "method",
+              "name": "render",
+              "signature": "render(element: unknown): void",
+              "doc": "Render `element` in place of what the root shows."
+            },
+            {
+              "kind": "method",
+              "name": "unmount",
+              "signature": "unmount(): void",
+              "doc": "Unmount the tree, clear the window's root view and stop listening for its events."
+            }
+          ]
+        },
+        {
+          "name": "GpuiScrollViewProps",
+          "slug": "GpuiScrollViewProps",
+          "kind": "interface",
+          "signature": "interface GpuiScrollViewProps extends GpuiViewProps",
+          "doc": "ScrollView's props.",
+          "docFull": "`ScrollView`'s props.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "horizontal",
+              "signature": "readonly horizontal?: boolean",
+              "doc": "Scroll sideways (its content lays out in a row)."
+            },
+            {
+              "kind": "property",
+              "name": "scrollEnabled",
+              "signature": "readonly scrollEnabled?: boolean",
+              "doc": "Whether the user can scroll it (default true)."
+            },
+            {
+              "kind": "property",
+              "name": "contentContainerStyle",
+              "signature": "readonly contentContainerStyle?: GpuiStyle",
+              "doc": "The content view's style."
+            },
+            {
+              "kind": "property",
+              "name": "onScroll",
+              "signature": "readonly onScroll?: (event: ScrollEvent) => void",
+              "doc": "Called as it scrolls (at most once a frame)."
+            }
+          ],
+          "extends": [
+            {
+              "type": "GpuiViewProps",
+              "ref": "denext-gpui/GpuiViewProps"
+            }
+          ]
+        },
+        {
+          "name": "GpuiStyle",
+          "slug": "GpuiStyle",
+          "kind": "typeAlias",
+          "signature": "type GpuiStyle = StyleProp<Record<string, unknown>>",
+          "doc": "A style prop: an object, a registered id, an array of styles, or a falsy value.",
+          "docFull": "A style prop: an object, a registered id, an array of styles, or a falsy value.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GpuiStyleSheet",
+          "slug": "GpuiStyleSheet",
+          "kind": "interface",
+          "signature": "interface GpuiStyleSheet",
+          "doc": "The StyleSheet statics denext/gpui provides.",
+          "docFull": "The `StyleSheet` statics `denext/gpui` provides.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "hairlineWidth",
+              "signature": "readonly hairlineWidth: number",
+              "doc": "The thinnest line: 1 logical pixel here."
+            },
+            {
+              "kind": "property",
+              "name": "absoluteFill",
+              "signature": "readonly absoluteFill: Readonly<Record<string, unknown>>",
+              "doc": "`position: absolute` with every edge at 0."
+            },
+            {
+              "kind": "property",
+              "name": "absoluteFillObject",
+              "signature": "readonly absoluteFillObject: Readonly<Record<string, unknown>>",
+              "doc": "The same as an object to spread."
+            },
+            {
+              "kind": "method",
+              "name": "create",
+              "signature": "create<T>(styles: T): Readonly<T>",
+              "doc": "Return `styles` unchanged (frozen), as React Native 0.66+ does."
+            },
+            {
+              "kind": "method",
+              "name": "flatten",
+              "signature": "flatten(style: StyleProp): Record<string, unknown> | undefined",
+              "doc": "Merge a style array into one object (later entries win)."
+            },
+            {
+              "kind": "method",
+              "name": "compose",
+              "signature": "compose(a: StyleProp, b: StyleProp): StyleProp",
+              "doc": "`[a, b]`, or the one that is set."
+            },
+            {
+              "kind": "method",
+              "name": "registerStyle",
+              "signature": "registerStyle(style: Readonly<Record<string, unknown>>): number",
+              "doc": "Register a style under a numeric id `flatten` resolves (React Native's prop registry)."
+            }
+          ]
+        },
+        {
+          "name": "gpuiSupport",
+          "slug": "gpuiSupport-fn",
+          "kind": "function",
+          "signature": "gpuiSupport(window?: NativeTreeWindow, desktop?: GpuiDesktopApi | undefined): GpuiSupport",
+          "doc": "Whether this runtime (and window, when given) can host a native tree.",
+          "docFull": "Whether this runtime (and `window`, when given) can host a native tree.",
+          "params": [
+            {
+              "name": "window",
+              "doc": "The window to render into."
+            },
+            {
+              "name": "desktop",
+              "doc": "Deno.desktop (default: the runtime's)."
+            }
+          ],
+          "returns": "{ supported: true, version }, or { supported: false, reason }.",
+          "examples": [
+            "```ts\nimport { gpuiSupport } from \"denext/gpui\";\n\nconst support = gpuiSupport();\nif (!support.supported) console.log(support.reason);\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "GpuiSupport",
+          "slug": "GpuiSupport-type",
+          "kind": "typeAlias",
+          "signature": "type GpuiSupport = { readonly supported: true; readonly version: number } | { readonly supported: false; readonly reason: string }",
+          "doc": "What gpuiSupport found.",
+          "docFull": "What {@linkcode gpuiSupport} found.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "GpuiTextInputProps",
+          "slug": "GpuiTextInputProps",
+          "kind": "interface",
+          "signature": "interface GpuiTextInputProps extends GpuiViewProps",
+          "doc": "TextInput's props.",
+          "docFull": "`TextInput`'s props.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "value",
+              "signature": "readonly value?: string",
+              "doc": "The text (controlled)."
+            },
+            {
+              "kind": "property",
+              "name": "defaultValue",
+              "signature": "readonly defaultValue?: string",
+              "doc": "The first text (uncontrolled)."
+            },
+            {
+              "kind": "property",
+              "name": "placeholder",
+              "signature": "readonly placeholder?: string",
+              "doc": "Shown while empty."
+            },
+            {
+              "kind": "property",
+              "name": "placeholderTextColor",
+              "signature": "readonly placeholderTextColor?: string",
+              "doc": "The placeholder's colour."
+            },
+            {
+              "kind": "property",
+              "name": "editable",
+              "signature": "readonly editable?: boolean",
+              "doc": "Whether the user can edit it (default true)."
+            },
+            {
+              "kind": "property",
+              "name": "secureTextEntry",
+              "signature": "readonly secureTextEntry?: boolean",
+              "doc": "Mask the text (a password)."
+            },
+            {
+              "kind": "property",
+              "name": "multiline",
+              "signature": "readonly multiline?: boolean",
+              "doc": "More than one line."
+            },
+            {
+              "kind": "property",
+              "name": "onChangeText",
+              "signature": "readonly onChangeText?: (text: string) => void",
+              "doc": "The text changed."
+            },
+            {
+              "kind": "property",
+              "name": "onChange",
+              "signature": "readonly onChange?: (event: { readonly nativeEvent: { readonly text: string; readonly eventCount: number; readonly target: number } }) => void",
+              "doc": "The text changed (React Native's event, with the native event count)."
+            },
+            {
+              "kind": "property",
+              "name": "onSubmitEditing",
+              "signature": "readonly onSubmitEditing?: (event: { readonly nativeEvent: { readonly text: string } }) => void",
+              "doc": "The user submitted (Return in a single-line input)."
+            },
+            {
+              "kind": "property",
+              "name": "onSelectionChange",
+              "signature": "readonly onSelectionChange?: (event: { readonly nativeEvent: { readonly selection: { readonly start: number; readonly end: number } } }) => void",
+              "doc": "The selection moved."
+            }
+          ],
+          "extends": [
+            {
+              "type": "GpuiViewProps",
+              "ref": "denext-gpui/GpuiViewProps"
+            }
+          ]
+        },
+        {
+          "name": "GpuiTextProps",
+          "slug": "GpuiTextProps",
+          "kind": "interface",
+          "signature": "interface GpuiTextProps extends GpuiViewProps, GpuiPressProps",
+          "doc": "Text's props: a View's, plus presses (nested Text elements are spans).",
+          "docFull": "`Text`'s props: a View's, plus presses (nested `Text` elements are spans).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "extends": [
+            {
+              "type": "GpuiViewProps",
+              "ref": "denext-gpui/GpuiViewProps"
+            },
+            {
+              "type": "GpuiPressProps",
+              "ref": "denext-gpui/GpuiPressProps"
+            }
+          ]
+        },
+        {
+          "name": "GpuiUnsupportedError",
+          "slug": "GpuiUnsupportedError",
+          "kind": "class",
+          "signature": "class GpuiUnsupportedError extends Error",
+          "doc": "The runtime or window has no native tree (code: \"unsupported\").",
+          "docFull": "The runtime or window has no native tree (`code: \"unsupported\"`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "constructor",
+              "name": "constructor",
+              "signature": "constructor(reason: string)",
+              "doc": "An error saying the native tree is unsupported, and why.",
+              "params": [
+                {
+                  "name": "reason",
+                  "doc": "Which part is missing."
+                }
+              ]
+            },
+            {
+              "kind": "property",
+              "name": "code",
+              "signature": "readonly code: \"unsupported\"",
+              "doc": "Always `\"unsupported\"`."
+            }
+          ],
+          "extends": [
+            {
+              "type": "Error"
+            }
+          ]
+        },
+        {
+          "name": "GpuiViewProps",
+          "slug": "GpuiViewProps",
+          "kind": "interface",
+          "signature": "interface GpuiViewProps",
+          "doc": "The props every primitive takes.",
+          "docFull": "The props every primitive takes.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "style",
+              "signature": "readonly style?: GpuiStyle",
+              "doc": "The style."
+            },
+            {
+              "kind": "property",
+              "name": "children",
+              "signature": "readonly children?: VNodeChildren",
+              "doc": "The children."
+            },
+            {
+              "kind": "property",
+              "name": "accessibilityLabel",
+              "signature": "readonly accessibilityLabel?: string",
+              "doc": "The accessibility label (`aria-label` is read too)."
+            },
+            {
+              "kind": "property",
+              "name": "aria-label",
+              "signature": "readonly \"aria-label\"?: string",
+              "doc": "React Native's `aria-label`."
+            },
+            {
+              "kind": "property",
+              "name": "accessibilityRole",
+              "signature": "readonly accessibilityRole?: string",
+              "doc": "The accessibility role (`role` is read too)."
+            },
+            {
+              "kind": "property",
+              "name": "role",
+              "signature": "readonly role?: string",
+              "doc": "React Native's `role`."
+            },
+            {
+              "kind": "property",
+              "name": "testID",
+              "signature": "readonly testID?: string",
+              "doc": "A test id."
+            },
+            {
+              "kind": "property",
+              "name": "onLayout",
+              "signature": "readonly onLayout?: (event: LayoutEvent) => void",
+              "doc": "Called with the node's frame after layout, when it changed."
+            },
+            {
+              "kind": "property",
+              "name": "onFocus",
+              "signature": "readonly onFocus?: (event: FocusEvent) => void",
+              "doc": "The node gained focus."
+            },
+            {
+              "kind": "property",
+              "name": "onBlur",
+              "signature": "readonly onBlur?: (event: FocusEvent) => void",
+              "doc": "The node lost focus."
+            },
+            {
+              "kind": "property",
+              "name": "onKeyPress",
+              "signature": "readonly onKeyPress?: (event: KeyPressEvent) => void",
+              "doc": "A key was pressed while the node had focus."
+            }
+          ]
+        },
+        {
+          "name": "Image",
+          "slug": "Image",
+          "kind": "variable",
+          "signature": "Image: GpuiComponent<GpuiImageProps>",
+          "doc": "React Native's Image.",
+          "docFull": "React Native's `Image`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "KeyPressEvent",
+          "slug": "KeyPressEvent",
+          "kind": "interface",
+          "signature": "interface KeyPressEvent",
+          "doc": "onKeyPress's event.",
+          "docFull": "`onKeyPress`'s event.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "nativeEvent",
+              "signature": "readonly nativeEvent: { readonly key: string; readonly modifiers: unknown; readonly target: number }",
+              "doc": "The key and the modifiers held."
+            }
+          ]
+        },
+        {
+          "name": "LayoutEvent",
+          "slug": "LayoutEvent",
+          "kind": "interface",
+          "signature": "interface LayoutEvent",
+          "doc": "onLayout's event: the node's frame after layout, when it changed.",
+          "docFull": "`onLayout`'s event: the node's frame after layout, when it changed.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "nativeEvent",
+              "signature": "readonly nativeEvent: { readonly layout: { readonly x: number; readonly y: number; readonly width: number; readonly height: number }; readonly target: number }",
+              "doc": "The frame."
+            }
+          ]
+        },
+        {
+          "name": "NATIVE_TREE_EVENT",
+          "slug": "NATIVE_TREE_EVENT",
+          "kind": "variable",
+          "signature": "NATIVE_TREE_EVENT: \"nativetree\"",
+          "doc": "The window event the native tree's events arrive as.",
+          "docFull": "The window event the native tree's events arrive as.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "NativeTreeApi",
+          "slug": "NativeTreeApi",
+          "kind": "interface",
+          "signature": "interface NativeTreeApi",
+          "doc": "A window's native tree API (Deno.BrowserWindow#nativeTree on a runtime that has it).",
+          "docFull": "A window's native tree API (`Deno.BrowserWindow#nativeTree` on a runtime that has it).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "method",
+              "name": "commit",
+              "signature": "commit(batch: Uint8Array): number | void",
+              "doc": "Apply one NTB1 batch. 0 is ok, -1 unsupported, -2 a malformed batch (the host keeps the last\ngood tree)."
+            }
+          ]
+        },
+        {
+          "name": "NativeTreeCommitError",
+          "slug": "NativeTreeCommitError",
+          "kind": "class",
+          "signature": "class NativeTreeCommitError extends Error",
+          "doc": "A commit the host refused.",
+          "docFull": "A commit the host refused.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "constructor",
+              "name": "constructor",
+              "signature": "constructor(code: number)",
+              "doc": "An error for a refused batch.",
+              "params": [
+                {
+                  "name": "code",
+                  "doc": "The host's return code."
+                }
+              ]
+            },
+            {
+              "kind": "property",
+              "name": "code",
+              "signature": "readonly code: number",
+              "doc": "The host's return code (-1 unsupported, -2 malformed)."
+            }
+          ],
+          "extends": [
+            {
+              "type": "Error"
+            }
+          ]
+        },
+        {
+          "name": "NativeTreeWindow",
+          "slug": "NativeTreeWindow",
+          "kind": "interface",
+          "signature": "interface NativeTreeWindow",
+          "doc": "The slice of a Deno Desktop window the renderer uses.",
+          "docFull": "The slice of a Deno Desktop window the renderer uses.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "nativeTree",
+              "signature": "readonly nativeTree?: NativeTreeApi",
+              "doc": "The native tree, on a backend that hosts one (the `gpui` backend)."
+            },
+            {
+              "kind": "method",
+              "name": "addEventListener",
+              "signature": "addEventListener(type: string, listener: (event: Event) => void): void",
+              "doc": "Subscribe to a window event (the native tree's events arrive as one)."
+            },
+            {
+              "kind": "method",
+              "name": "removeEventListener",
+              "signature": "removeEventListener?(type: string, listener: (event: Event) => void): void",
+              "doc": "Unsubscribe."
+            }
+          ]
+        },
+        {
+          "name": "parseColor",
+          "slug": "parseColor",
+          "kind": "function",
+          "signature": "parseColor(value: unknown): number | null",
+          "doc": "A colour string as NTB1's u32 RGBA (red in the high byte, straight alpha), or null when it is not one this encoder understands.",
+          "docFull": "A colour string as NTB1's `u32` RGBA (red in the high byte, straight alpha), or null when it is\nnot one this encoder understands.",
+          "params": [
+            {
+              "name": "value",
+              "doc": "A React Native colour (\"tomato\", \"#0af\", \"rgba(0, 0, 0, 0.5)\", …)."
+            }
+          ],
+          "returns": "The packed colour, or null.",
+          "examples": [
+            "```ts\nimport { parseColor } from \"denext/gpui\";\n\nparseColor(\"#ff000080\"); // 0xff000080\nparseColor(\"rgb(0 0 255 / 50%)\"); // 0x0000ff80\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "Platform",
+          "slug": "Platform",
+          "kind": "variable",
+          "signature": "Platform: PlatformStatic",
+          "doc": "React Native's Platform in React Native mode.",
+          "docFull": "React Native's `Platform` in React Native mode.\n\n`OS` is `\"web\"` in a browser and inside the Capacitor shell alike. Reporting `\"ios\"` / `\"android\"` inside the\nshell would send code down native-only paths that do not exist in a web view:\nreact-native-web itself reads `Platform.OS` to pick native modules (its vendored\n`NativeAnimatedHelper` and `NativeEventEmitter` require a native module on `\"ios\"` /\n`\"android\"`), and so do the libraries React Native apps depend on (Reanimated's `IS_WEB`,\nGesture Handler's `findNodeHandle`, `Platform.OS === \"web\"` guards around DOM code). Use\n`Platform.constants.denextShell` (or `runtimePlatform()` from `denext/mobile`) to tell the\nshell apart.\n\n`select(spec)` picks, in order:\n\n1. `spec.web`, everywhere (as react-native-web does: `web` code is DOM code, and the shell is\n   a DOM);\n2. inside the iOS / Android shell, the shell's own key, `spec.ios` / `spec.android` (as React\n   Native on that device would), so `Platform.select({ ios: 44, android: 56 })` is not\n   `undefined` in the shell; in Deno Desktop, the host OS's key, `spec.macos` /\n   `spec.windows` / `spec.linux` (as `react-native-macos` / `-windows` would), when the\n   runtime reports the OS (`Platform.constants.os`);\n3. `spec.default`.\n\n`spec.native` is never picked (it means React Native's native renderer), a browser picks\nneither shell nor desktop keys, and Deno Desktop never picks `ios` / `android`.\n\nOn top of react-native-web's `Platform`, inside the shell `Version` is the OS version read\nfrom the user agent (iOS: a string like `\"17.4\"`; Android: the API level, a number), and\n`isPad` is true on an iPad (also in iPadOS Safari).",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "```ts\nimport { Platform } from \"react-native\";\nimport { runtimePlatform } from \"denext/mobile\";\n\nconst pad = Platform.select({ web: 12, default: 16 });\n// 44 in the iOS shell, 56 in the Android shell, undefined in a browser (no `default`).\nconst header = Platform.select({ ios: 44, android: 56 });\nconst inIosShell = Platform.constants.denextShell === \"ios\"; // or runtimePlatform() === \"ios\"\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "PlatformConstants",
+          "slug": "PlatformConstants",
+          "kind": "interface",
+          "signature": "interface PlatformConstants",
+          "doc": "Platform.constants in React Native mode: the fields React Native's iOS and Android constants share, filled from the device where the shell tells, plus denextShell.",
+          "docFull": "`Platform.constants` in React Native mode: the fields React Native's iOS and Android\nconstants share, filled from the device where the shell tells, plus `denextShell`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "reactNativeVersion",
+              "signature": "readonly reactNativeVersion: ReactNativeVersion",
+              "doc": "The React Native API level React Native mode implements (its parity target)."
+            },
+            {
+              "kind": "property",
+              "name": "isTesting",
+              "signature": "readonly isTesting: boolean",
+              "doc": "Whether `NODE_ENV` is `\"test\"`."
+            },
+            {
+              "kind": "property",
+              "name": "isDisableAnimations",
+              "signature": "readonly isDisableAnimations: boolean",
+              "doc": "Whether the user asked for reduced motion (`prefers-reduced-motion: reduce`)."
+            },
+            {
+              "kind": "property",
+              "name": "osVersion",
+              "signature": "readonly osVersion: string",
+              "doc": "The OS version: iOS's `\"17.4\"` in the iOS shell, Android's release (`\"14\"`) in the\nAndroid shell, else `\"0.0.0\"`."
+            },
+            {
+              "kind": "property",
+              "name": "systemName",
+              "signature": "readonly systemName: \"iOS\" | \"Android\" | \"web\"",
+              "doc": "`\"iOS\"`, `\"Android\"`, or `\"web\"` (a browser or Deno Desktop)."
+            },
+            {
+              "kind": "property",
+              "name": "interfaceIdiom",
+              "signature": "readonly interfaceIdiom: \"phone\" | \"pad\" | \"unknown\"",
+              "doc": "iOS's `interfaceIdiom`: `\"pad\"` on an iPad, `\"phone\"` on a phone, else `\"unknown\"`."
+            },
+            {
+              "kind": "property",
+              "name": "forceTouchAvailable",
+              "signature": "readonly forceTouchAvailable: boolean",
+              "doc": "Always `false` (a web view has no 3D Touch API)."
+            },
+            {
+              "kind": "property",
+              "name": "Version",
+              "signature": "readonly Version?: number",
+              "doc": "Android's API level in the Android shell (as `Platform.Version`), else `undefined`."
+            },
+            {
+              "kind": "property",
+              "name": "Release",
+              "signature": "readonly Release?: string",
+              "doc": "Android's release (`\"14\"`) in the Android shell, else `undefined`."
+            },
+            {
+              "kind": "property",
+              "name": "denextShell",
+              "signature": "readonly denextShell: RuntimePlatform | \"gpui\"",
+              "doc": "The runtime the page runs in, as `denext/mobile`'s `runtimePlatform()` reports it: `\"ios\"`\nor `\"android\"` inside the Capacitor shell, `\"desktop\"` inside Deno Desktop, else `\"web\"`.\n`Platform.OS` is `\"web\"` in all four; this is how React Native code tells them apart. While\n`denext/gpui` renders a window's native tree (no web view), it is `\"gpui\"`."
+            },
+            {
+              "kind": "property",
+              "name": "denextDesktop",
+              "signature": "readonly denextDesktop: boolean",
+              "doc": "Whether the app runs in a Deno Desktop window (`denextShell` is `\"desktop\"`, or `\"gpui\"`:\na native tree window is a Deno Desktop window too)."
+            },
+            {
+              "kind": "property",
+              "name": "os",
+              "signature": "readonly os?: DesktopOS",
+              "doc": "In Deno Desktop, the host OS (`\"macos\"`, `\"windows\"` or `\"linux\"`) as the desktop runtime\nreports it, else `undefined` (a runtime that does not report it too)."
+            }
+          ]
+        },
+        {
+          "name": "PlatformSelectSpec",
+          "slug": "PlatformSelectSpec",
+          "kind": "typeAlias",
+          "signature": "type PlatformSelectSpec<T> = { readonly [platform: string]: T | undefined; readonly web?: T; readonly default?: T; readonly ios?: T; readonly android?: T; readonly native?: T; readonly macos?: T; readonly windows?: T }",
+          "doc": "What Platform.select picks from.",
+          "docFull": "What `Platform.select` picks from.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PlatformStatic",
+          "slug": "PlatformStatic",
+          "kind": "interface",
+          "signature": "interface PlatformStatic",
+          "doc": "React Native's Platform module, as React Native mode provides it.",
+          "docFull": "React Native's `Platform` module, as React Native mode provides it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "OS",
+              "signature": "readonly OS: \"web\"",
+              "doc": "Always `\"web\"`: the code runs on react-native-web, in a browser or the shell's WebView."
+            },
+            {
+              "kind": "property",
+              "name": "Version",
+              "signature": "readonly Version: string | number",
+              "doc": "The OS version inside the shell (iOS: `\"17.4\"`; Android: the API level), else `\"0.0.0\"`."
+            },
+            {
+              "kind": "property",
+              "name": "isPad",
+              "signature": "readonly isPad: boolean",
+              "doc": "Whether the device is an iPad (the iOS shell, or iPadOS Safari)."
+            },
+            {
+              "kind": "property",
+              "name": "isTV",
+              "signature": "readonly isTV: boolean",
+              "doc": "Always `false`."
+            },
+            {
+              "kind": "property",
+              "name": "isTesting",
+              "signature": "readonly isTesting: boolean",
+              "doc": "Whether `NODE_ENV` is `\"test\"`."
+            },
+            {
+              "kind": "property",
+              "name": "isDisableAnimations",
+              "signature": "readonly isDisableAnimations: boolean",
+              "doc": "Whether animations are off: React Native's `constants.isDisableAnimations ?? isTesting`;\nthe constant is always set here (the user's reduced-motion preference), so it decides."
+            },
+            {
+              "kind": "property",
+              "name": "constants",
+              "signature": "readonly constants: PlatformConstants",
+              "doc": "The device's constants and `denextShell` (see {@linkcode PlatformConstants})."
+            },
+            {
+              "kind": "method",
+              "name": "select",
+              "signature": "select<T>(spec: PlatformSelectSpec<T>): T | undefined",
+              "doc": "The value for this platform: `spec.web` when present; else, inside the iOS / Android\nshell, `spec.ios` / `spec.android`; else `spec.default` (see {@linkcode Platform})."
+            }
+          ]
+        },
+        {
+          "name": "PressabilityConfig",
+          "slug": "PressabilityConfig",
+          "kind": "interface",
+          "signature": "interface PressabilityConfig",
+          "doc": "React Native's PressabilityConfig.",
+          "docFull": "React Native's `PressabilityConfig`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "cancelable",
+              "signature": "readonly cancelable?: boolean | null",
+              "doc": "Whether a parent responder may take the gesture over (default `true`)."
+            },
+            {
+              "kind": "property",
+              "name": "disabled",
+              "signature": "readonly disabled?: boolean | null",
+              "doc": "Ignore presses."
+            },
+            {
+              "kind": "property",
+              "name": "delayPressIn",
+              "signature": "readonly delayPressIn?: number | null",
+              "doc": "Ms before `onPressIn` (default 0)."
+            },
+            {
+              "kind": "property",
+              "name": "delayPressOut",
+              "signature": "readonly delayPressOut?: number | null",
+              "doc": "Ms before `onPressOut` (default 0)."
+            },
+            {
+              "kind": "property",
+              "name": "delayLongPress",
+              "signature": "readonly delayLongPress?: number | null",
+              "doc": "Ms from the press in to `onLongPress` (default 500 − `delayPressIn`, at least 10)."
+            },
+            {
+              "kind": "property",
+              "name": "minPressDuration",
+              "signature": "readonly minPressDuration?: number | null",
+              "doc": "The least ms between `onPressIn` and `onPressOut` (default 130)."
+            },
+            {
+              "kind": "property",
+              "name": "delayHoverIn",
+              "signature": "readonly delayHoverIn?: number | null",
+              "doc": "Ms before `onHoverIn`."
+            },
+            {
+              "kind": "property",
+              "name": "delayHoverOut",
+              "signature": "readonly delayHoverOut?: number | null",
+              "doc": "Ms before `onHoverOut`."
+            },
+            {
+              "kind": "property",
+              "name": "onFocus",
+              "signature": "readonly onFocus?: ((event: PressEvent) => unknown) | null",
+              "doc": "Called on focus."
+            },
+            {
+              "kind": "property",
+              "name": "onBlur",
+              "signature": "readonly onBlur?: ((event: PressEvent) => unknown) | null",
+              "doc": "Called on blur."
+            },
+            {
+              "kind": "property",
+              "name": "onHoverIn",
+              "signature": "readonly onHoverIn?: ((event: PressEvent) => unknown) | null",
+              "doc": "The pointer entered."
+            },
+            {
+              "kind": "property",
+              "name": "onHoverOut",
+              "signature": "readonly onHoverOut?: ((event: PressEvent) => unknown) | null",
+              "doc": "The pointer left."
+            },
+            {
+              "kind": "property",
+              "name": "onLongPress",
+              "signature": "readonly onLongPress?: ((event: PressEvent) => unknown) | null",
+              "doc": "A long press."
+            },
+            {
+              "kind": "property",
+              "name": "onPress",
+              "signature": "readonly onPress?: ((event: PressEvent) => unknown) | null",
+              "doc": "A press."
+            },
+            {
+              "kind": "property",
+              "name": "onPressIn",
+              "signature": "readonly onPressIn?: ((event: PressEvent) => unknown) | null",
+              "doc": "The press began."
+            },
+            {
+              "kind": "property",
+              "name": "onPressMove",
+              "signature": "readonly onPressMove?: ((event: PressEvent) => unknown) | null",
+              "doc": "The touch moved while pressed."
+            },
+            {
+              "kind": "property",
+              "name": "onPressOut",
+              "signature": "readonly onPressOut?: ((event: PressEvent) => unknown) | null",
+              "doc": "The press ended."
+            },
+            {
+              "kind": "property",
+              "name": "blockNativeResponder",
+              "signature": "readonly blockNativeResponder?: boolean | null",
+              "doc": "Accepted (the web has no native responder to block)."
+            },
+            {
+              "kind": "property",
+              "name": "android_disableSound",
+              "signature": "readonly android_disableSound?: boolean | null",
+              "doc": "Accepted (no touch sound on the web)."
+            },
+            {
+              "kind": "property",
+              "name": "hitSlop",
+              "signature": "readonly hitSlop?: unknown",
+              "doc": "Accepted."
+            },
+            {
+              "kind": "property",
+              "name": "pressRectOffset",
+              "signature": "readonly pressRectOffset?: unknown",
+              "doc": "Accepted."
+            }
+          ]
+        },
+        {
+          "name": "Pressable",
+          "slug": "Pressable",
+          "kind": "function",
+          "signature": "Pressable(props: GpuiPressableProps): VNode",
+          "doc": "React Native's Pressable: press callbacks through denext's pressability, and a function style or children called with { pressed }.",
+          "docFull": "React Native's `Pressable`: press callbacks through denext's pressability, and a function\n`style` or `children` called with `{ pressed }`.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The pressable's props."
+            }
+          ],
+          "returns": "The element.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PressableState",
+          "slug": "PressableState",
+          "kind": "interface",
+          "signature": "interface PressableState",
+          "doc": "A Pressable's state, which a function style or children is called with.",
+          "docFull": "A `Pressable`'s state, which a function `style` or `children` is called with.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "pressed",
+              "signature": "readonly pressed: boolean",
+              "doc": "Whether it is pressed now."
+            }
+          ]
+        },
+        {
+          "name": "PressEvent",
+          "slug": "PressEvent",
+          "kind": "interface",
+          "signature": "interface PressEvent",
+          "doc": "An event the handlers receive (react-native-web's synthetic responder / DOM event).",
+          "docFull": "An event the handlers receive (react-native-web's synthetic responder / DOM event).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "nativeEvent",
+              "signature": "readonly nativeEvent?: unknown",
+              "doc": "The native event."
+            },
+            {
+              "kind": "property",
+              "name": "currentTarget",
+              "signature": "readonly currentTarget?: unknown",
+              "doc": "The element the handler is on."
+            },
+            {
+              "kind": "property",
+              "name": "target",
+              "signature": "readonly target?: unknown",
+              "doc": "The element the event started at."
+            },
+            {
+              "kind": "method",
+              "name": "persist",
+              "signature": "persist?(): void",
+              "doc": "Keep the event (React Native's pooling; harmless here)."
+            },
+            {
+              "kind": "method",
+              "name": "stopPropagation",
+              "signature": "stopPropagation?(): void",
+              "doc": "Stop the event bubbling."
+            }
+          ]
+        },
+        {
+          "name": "ReactNativeVersion",
+          "slug": "ReactNativeVersion",
+          "kind": "interface",
+          "signature": "interface ReactNativeVersion",
+          "doc": "React Native's Platform.constants.reactNativeVersion.",
+          "docFull": "React Native's `Platform.constants.reactNativeVersion`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "major",
+              "signature": "readonly major: number",
+              "doc": "The major version (0)."
+            },
+            {
+              "kind": "property",
+              "name": "minor",
+              "signature": "readonly minor: number",
+              "doc": "The minor version."
+            },
+            {
+              "kind": "property",
+              "name": "patch",
+              "signature": "readonly patch: number",
+              "doc": "The patch version."
+            },
+            {
+              "kind": "property",
+              "name": "prerelease",
+              "signature": "readonly prerelease: string | null",
+              "doc": "The prerelease tag, or `null`."
+            }
+          ]
+        },
+        {
+          "name": "ReactReconcilerFactory",
+          "slug": "ReactReconcilerFactory",
+          "kind": "typeAlias",
+          "signature": "type ReactReconcilerFactory = (hostConfig: any) => ReactReconcilerInstance",
+          "doc": "react-reconciler's default export: builds a renderer from a host config (any: the app's react-reconciler types its own HostConfig).",
+          "docFull": "`react-reconciler`'s default export: builds a renderer from a host config (`any`: the app's\n`react-reconciler` types its own `HostConfig`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "ReactReconcilerInstance",
+          "slug": "ReactReconcilerInstance",
+          "kind": "interface",
+          "signature": "interface ReactReconcilerInstance",
+          "doc": "The slice of a react-reconciler renderer denext/gpui drives.",
+          "docFull": "The slice of a `react-reconciler` renderer `denext/gpui` drives.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "method",
+              "name": "createContainer",
+              "signature": "createContainer(...args: unknown[]): unknown",
+              "doc": "`createContainer(containerInfo, tag, …)`: a new fiber root."
+            },
+            {
+              "kind": "method",
+              "name": "updateContainer",
+              "signature": "updateContainer(element: unknown, root: unknown, parentComponent: unknown, callback: (() => void) | null): unknown",
+              "doc": "Render `element` into the root (`null` unmounts)."
+            },
+            {
+              "kind": "method",
+              "name": "updateContainerSync",
+              "signature": "updateContainerSync?(element: unknown, root: unknown, parentComponent: unknown, callback: (() => void) | null): unknown",
+              "doc": "React 19: render synchronously."
+            },
+            {
+              "kind": "method",
+              "name": "flushSyncWork",
+              "signature": "flushSyncWork?(): unknown",
+              "doc": "React 19: flush the synchronous work queued."
+            }
+          ]
+        },
+        {
+          "name": "render",
+          "slug": "render",
+          "kind": "function",
+          "signature": "render(element: unknown, options: GpuiRenderOptions): GpuiRoot",
+          "doc": "Render element into options.window's native tree, or update the root already there (as React DOM's root.render). Ops of each React commit go to the host in one batch.",
+          "docFull": "Render `element` into `options.window`'s native tree, or update the root already there (as\nReact DOM's `root.render`). Ops of each React commit go to the host in one batch.",
+          "params": [
+            {
+              "name": "element",
+              "doc": "The element (made with h / JSX)."
+            },
+            {
+              "name": "options",
+              "doc": "The window and react-reconciler."
+            }
+          ],
+          "returns": "The window's root.",
+          "examples": [
+            "```ts ignore\nimport createReconciler from \"react-reconciler\";\nimport { h } from \"denext\";\nimport { render, Text, View } from \"denext/gpui\";\n\nconst win = new Deno.BrowserWindow({ title: \"Hello\" });\nrender(h(View, { style: { padding: 16 } }, h(Text, null, \"Hello\")), {\n  window: win,\n  reconciler: createReconciler,\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "ScrollEvent",
+          "slug": "ScrollEvent",
+          "kind": "interface",
+          "signature": "interface ScrollEvent",
+          "doc": "onScroll's event.",
+          "docFull": "`onScroll`'s event.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "nativeEvent",
+              "signature": "readonly nativeEvent: { readonly contentOffset: { readonly x: number; readonly y: number }; readonly contentSize: { readonly width: number; readonly height: number }; readonly target: number }",
+              "doc": "The offset and the content's size."
+            }
+          ]
+        },
+        {
+          "name": "ScrollView",
+          "slug": "ScrollView",
+          "kind": "function",
+          "signature": "ScrollView(props: GpuiScrollViewProps): VNode",
+          "doc": "React Native's ScrollView: a scroll node whose content view takes contentContainerStyle.",
+          "docFull": "React Native's `ScrollView`: a scroll node whose content view takes `contentContainerStyle`.",
+          "params": [
+            {
+              "name": "props",
+              "doc": "The scroll view's props."
+            }
+          ],
+          "returns": "The element.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "StyleProp",
+          "slug": "StyleProp",
+          "kind": "typeAlias",
+          "signature": "type StyleProp<T> = T | number | false | null | undefined | ReadonlyArray<StyleProp<T>>",
+          "doc": "A React Native style: an object, a registered id, an array of styles, or a falsy value.",
+          "docFull": "A React Native style: an object, a registered id, an array of styles, or a falsy value.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "StyleSheet",
+          "slug": "StyleSheet",
+          "kind": "variable",
+          "signature": "StyleSheet: GpuiStyleSheet",
+          "doc": "React Native's StyleSheet (see the module docs).",
+          "docFull": "React Native's `StyleSheet` (see the module docs).",
+          "params": [],
+          "returns": "",
+          "examples": [
+            "```ts\nimport { StyleSheet } from \"denext/gpui\";\n\nconst styles = StyleSheet.create({ box: { padding: 8, backgroundColor: \"tomato\" } });\nStyleSheet.flatten([styles.box, { padding: 4 }]); // { padding: 4, backgroundColor: \"tomato\" }\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "Text",
+          "slug": "Text",
+          "kind": "variable",
+          "signature": "Text: GpuiComponent<GpuiTextProps>",
+          "doc": "React Native's Text: text, with nested Text elements as styled spans.",
+          "docFull": "React Native's `Text`: text, with nested `Text` elements as styled spans.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TextInput",
+          "slug": "TextInput",
+          "kind": "variable",
+          "signature": "TextInput: GpuiComponent<GpuiTextInputProps>",
+          "doc": "React Native's TextInput: controlled through value, with React Native's event count.",
+          "docFull": "React Native's `TextInput`: controlled through `value`, with React Native's event count.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "View",
+          "slug": "View",
+          "kind": "variable",
+          "signature": "View: GpuiComponent<GpuiViewProps>",
+          "doc": "React Native's View: a layout box.",
+          "docFull": "React Native's `View`: a layout box.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         }
       ]
     },

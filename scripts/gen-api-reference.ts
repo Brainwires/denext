@@ -61,6 +61,7 @@ const ENTRIES: { module: string; file: string }[] = [
   { module: "denext/mobile/clerk", file: `${ROOT}src/mobile/clerk.ts` },
   { module: "denext/updates", file: `${ROOT}src/updates/mod.ts` },
   { module: "denext/navigation", file: `${ROOT}src/navigation/mod.ts` },
+  { module: "denext/gpui", file: `${ROOT}src/gpui/mod.ts` },
   { module: "denext/virtual-masonry", file: `${ROOT}src/virtual-masonry.ts` },
   { module: "denext/mvu", file: `${ROOT}src/mvu.ts` },
   { module: "denext/feature", file: `${ROOT}src/feature.ts` },

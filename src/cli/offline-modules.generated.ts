@@ -269,6 +269,7 @@ import "../expo/web-browser.ts";
 import "../expo/widgets.ts";
 import "../feature.ts";
 import "../gleam.ts";
+import "../gpui/mod.ts";
 import "../iso-island.ts";
 import "../jsx-directives.ts";
 import "../jsx/jsx-runtime.ts";

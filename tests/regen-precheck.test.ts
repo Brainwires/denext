@@ -41,6 +41,7 @@ Deno.test("regen: the drift tests' generators are all steps", () => {
       "gen:native-templates",
       "gen:config-schema",
       "gen:plugin-catalog",
+      "gen:gpui-props",
       "docs:mcp",
       "docs:cli",
       "docs:examples",

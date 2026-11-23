@@ -4173,6 +4173,59 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type VNodeType = string | Component<any> | typeof FRAGMENT` — The type field of a VNode: an intrinsic tag name, a component fn, or a fragment marker.
 - `interface VProps` — Props passed to a virtual node. children is normalized separately.
 
+### `denext/gpui`
+
+- `AppRegistry: GpuiAppRegistry` — React Native's AppRegistry for the native tree: registerComponent in the app's entry, runApplication with the window as the root tag.
+- `interface ContainerOptions` — What a container needs from its root.
+- `type DesktopOS = "macos" | "windows" | "linux"` — A Deno Desktop host OS, as PlatformConstants's os names it.
+- `interface FocusEvent` — onFocus / onBlur's event.
+- `interface GpuiAppParameters extends Omit<GpuiRenderOptions, "window">` — What AppRegistry.runApplication takes.
+- `interface GpuiAppRegistry` — React Native's AppRegistry, over native tree windows.
+- `type GpuiComponent<P> = (props: P) => VNode` — A primitive as TypeScript sees it (at run time the host ones are element type names).
+- `type GpuiComponentProvider = () => VNodeType` — What registerComponent takes: a function returning the root component.
+- `interface GpuiDesktopApi` — The slice of Deno.desktop the probe reads.
+- `interface GpuiImageProps extends GpuiViewProps` — Image's props.
+- `interface GpuiPressableProps extends Omit<GpuiViewProps, "style" | "children">, GpuiPressProps` — Pressable's props.
+- `type GpuiPressProps = Pick<PressabilityConfig, "onPress" | "onPressIn" | "onPressOut" | "onLongPress" | "delayLongPress" | "delayPressIn" | "delayPressOut" | "minPressDuration" | "cancelable">` — The press callbacks and timings Text and Pressable take (React Native's pressability).
+- `interface GpuiRenderOptions extends ContainerOptions` — What render takes.
+- `interface GpuiRoot` — A window's mounted React root.
+- `interface GpuiScrollViewProps extends GpuiViewProps` — ScrollView's props.
+- `type GpuiStyle = StyleProp<Record<string, unknown>>` — A style prop: an object, a registered id, an array of styles, or a falsy value.
+- `interface GpuiStyleSheet` — The StyleSheet statics denext/gpui provides.
+- `gpuiSupport(window?: NativeTreeWindow, desktop?: GpuiDesktopApi | undefined): GpuiSupport` — Whether this runtime (and window, when given) can host a native tree.
+- `type GpuiSupport = { readonly supported: true; readonly version: number } | { readonly supported: false; readonly reason: string }` — What gpuiSupport found.
+- `interface GpuiTextInputProps extends GpuiViewProps` — TextInput's props.
+- `interface GpuiTextProps extends GpuiViewProps, GpuiPressProps` — Text's props: a View's, plus presses (nested Text elements are spans).
+- `class GpuiUnsupportedError extends Error` — The runtime or window has no native tree (code: "unsupported").
+- `interface GpuiViewProps` — The props every primitive takes.
+- `Image: GpuiComponent<GpuiImageProps>` — React Native's Image.
+- `interface KeyPressEvent` — onKeyPress's event.
+- `interface LayoutEvent` — onLayout's event: the node's frame after layout, when it changed.
+- `NATIVE_TREE_EVENT: "nativetree"` — The window event the native tree's events arrive as.
+- `interface NativeTreeApi` — A window's native tree API (Deno.BrowserWindow#nativeTree on a runtime that has it).
+- `class NativeTreeCommitError extends Error` — A commit the host refused.
+- `interface NativeTreeWindow` — The slice of a Deno Desktop window the renderer uses.
+- `parseColor(value: unknown): number | null` — A colour string as NTB1's u32 RGBA (red in the high byte, straight alpha), or null when it is not one this encoder understands.
+- `Platform: PlatformStatic` — React Native's Platform in React Native mode.
+- `interface PlatformConstants` — Platform.constants in React Native mode: the fields React Native's iOS and Android constants share, filled from the device where the shell tells, plus denextShell.
+- `type PlatformSelectSpec<T> = { readonly [platform: string]: T | undefined; readonly web?: T; readonly default?: T; readonly ios?: T; readonly android?: T; readonly native?: T; readonly macos?: T; readonly windows?: T }` — What Platform.select picks from.
+- `interface PlatformStatic` — React Native's Platform module, as React Native mode provides it.
+- `interface PressabilityConfig` — React Native's PressabilityConfig.
+- `Pressable(props: GpuiPressableProps): VNode` — React Native's Pressable: press callbacks through denext's pressability, and a function style or children called with { pressed }.
+- `interface PressableState` — A Pressable's state, which a function style or children is called with.
+- `interface PressEvent` — An event the handlers receive (react-native-web's synthetic responder / DOM event).
+- `interface ReactNativeVersion` — React Native's Platform.constants.reactNativeVersion.
+- `type ReactReconcilerFactory = (hostConfig: any) => ReactReconcilerInstance` — react-reconciler's default export: builds a renderer from a host config (any: the app's react-reconciler types its own HostConfig).
+- `interface ReactReconcilerInstance` — The slice of a react-reconciler renderer denext/gpui drives.
+- `render(element: unknown, options: GpuiRenderOptions): GpuiRoot` — Render element into options.window's native tree, or update the root already there (as React DOM's root.render). Ops of each React commit go to the host in one batch.
+- `interface ScrollEvent` — onScroll's event.
+- `ScrollView(props: GpuiScrollViewProps): VNode` — React Native's ScrollView: a scroll node whose content view takes contentContainerStyle.
+- `type StyleProp<T> = T | number | false | null | undefined | ReadonlyArray<StyleProp<T>>` — A React Native style: an object, a registered id, an array of styles, or a falsy value.
+- `StyleSheet: GpuiStyleSheet` — React Native's StyleSheet (see the module docs).
+- `Text: GpuiComponent<GpuiTextProps>` — React Native's Text: text, with nested Text elements as styled spans.
+- `TextInput: GpuiComponent<GpuiTextInputProps>` — React Native's TextInput: controlled through value, with React Native's event count.
+- `View: GpuiComponent<GpuiViewProps>` — React Native's View: a layout box.
+
 ### `denext/virtual-masonry`
 
 - `class MasonryLayout` — A masonry layout over count items.

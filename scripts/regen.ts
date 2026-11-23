@@ -143,6 +143,12 @@ export const STEPS: readonly RegenStep[] = [
     phase: 1,
   },
   {
+    name: "deno task gen:gpui-props",
+    script: ["scripts/gen-gpui-props.ts"],
+    outputs: ["src/gpui/props.generated.ts"],
+    phase: 1,
+  },
+  {
     name: "deno task gen:plugin-catalog",
     script: ["scripts/gen-plugin-catalog.ts"],
     outputs: ["src/plugin/catalog.json", "src/plugin/catalog.packed.ts"],

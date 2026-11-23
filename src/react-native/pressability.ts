@@ -105,8 +105,11 @@ function delay(value: number | null | undefined, min = 0, fallback = 0): number 
 /** Where the press is. */
 type PressState = "idle" | "pending" | "active" | "long";
 
-/** One press target's state machine (React Native's `Pressability`, the touch part). */
-class Pressability {
+/**
+ * One press target's state machine (React Native's `Pressability`, the touch part). Exported for
+ * renderers that drive it from their own events without a hook (`denext/gpui`).
+ */
+export class Pressability {
   config: PressabilityConfig;
   #state: PressState = "idle";
   #activatedAt = 0;

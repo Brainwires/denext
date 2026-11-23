@@ -64,10 +64,14 @@ export interface PlatformConstants {
   /**
    * The runtime the page runs in, as `denext/mobile`'s `runtimePlatform()` reports it: `"ios"`
    * or `"android"` inside the Capacitor shell, `"desktop"` inside Deno Desktop, else `"web"`.
-   * `Platform.OS` is `"web"` in all four; this is how React Native code tells them apart.
+   * `Platform.OS` is `"web"` in all four; this is how React Native code tells them apart. While
+   * `denext/gpui` renders a window's native tree (no web view), it is `"gpui"`.
    */
-  readonly denextShell: RuntimePlatform;
-  /** Whether the page runs in a Deno Desktop window (`denextShell === "desktop"`). */
+  readonly denextShell: RuntimePlatform | "gpui";
+  /**
+   * Whether the app runs in a Deno Desktop window (`denextShell` is `"desktop"`, or `"gpui"`:
+   * a native tree window is a Deno Desktop window too).
+   */
   readonly denextDesktop: boolean;
   /**
    * In Deno Desktop, the host OS (`"macos"`, `"windows"` or `"linux"`) as the desktop runtime
@@ -201,6 +205,22 @@ function reducedMotion(): boolean {
     match("(prefers-reduced-motion: reduce)")?.matches === true;
 }
 
+/** The global flag `denext/gpui` sets while it renders a native tree (a registry symbol, so
+ * every copy of either module agrees). */
+const GPUI_SHELL: unique symbol = Symbol.for("denext.gpuiShell");
+
+/** Whether `denext/gpui` is rendering a window's native tree in this process. */
+function gpuiShell(): boolean {
+  return (globalThis as { [GPUI_SHELL]?: unknown })[GPUI_SHELL] === true;
+}
+
+/** `denextShell` and `denextDesktop`, read now. */
+function shellFields(): Pick<PlatformConstants, "denextShell" | "denextDesktop"> {
+  if (gpuiShell()) return { denextShell: "gpui", denextDesktop: true };
+  const shell = runtimePlatform();
+  return { denextShell: shell, denextDesktop: shell === "desktop" };
+}
+
 /** `Platform.constants`, read now. */
 function platformConstants(): PlatformConstants {
   const shell = nativePlatform();
@@ -210,8 +230,7 @@ function platformConstants(): PlatformConstants {
     isTesting: isTestEnv(),
     isDisableAnimations: reducedMotion(),
     forceTouchAvailable: false,
-    denextShell: runtimePlatform(),
-    denextDesktop: runtimePlatform() === "desktop",
+    ...shellFields(),
     ...(desktopOS() ? { os: desktopOS() } : {}),
   };
   if (shell === "ios") {

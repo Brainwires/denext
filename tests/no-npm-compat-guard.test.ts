@@ -1,10 +1,10 @@
 // Guard: denext's runtime must depend only on Deno built-ins, JSR (@std, @denext/*,
 // @astral), and node: built-ins — never an npm package. This is the CI teeth behind
 // the "zero runtime npm dependencies" claim. It scans the whole runtime (jsx,
-// runtime, client, server, compat) — not just the compat layer — and resolves each
-// import specifier against deno.json's import map, so an npm dependency hidden
-// behind an alias (e.g. "@cf-wasm/photon" → "npm:…") is caught, not only a literal
-// `npm:` specifier.
+// runtime, client, server, compat, plugin, and the gpui renderer) — not just the compat
+// layer — and resolves each import specifier against deno.json's import map, so an npm
+// dependency hidden behind an alias (e.g. "@cf-wasm/photon" → "npm:…") is caught, not only
+// a literal `npm:` specifier.
 //
 // It ALSO scans each first-party workspace package under `packages/*` — the shipped
 // `@denext/photon`/`@denext/avif`/`@denext/og`/`@denext/sqlite`/`@denext/pages-router`
@@ -31,7 +31,7 @@
 import { assert } from "@std/assert";
 import { walk } from "@std/fs";
 
-const RUNTIME_DIRS = ["jsx", "runtime", "client", "server", "compat", "plugin"] as const;
+const RUNTIME_DIRS = ["jsx", "runtime", "client", "server", "compat", "plugin", "gpui"] as const;
 
 // Workspace members that are intentional npm bridges (see the header note): excluded
 // from the "shipped packages must be zero-npm" scan because depending on npm is their

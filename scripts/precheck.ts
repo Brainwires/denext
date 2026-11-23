@@ -80,6 +80,7 @@ export const DRIFT_TESTS: readonly string[] = [
   "tests/docs-tutorial.test.ts",
   "tests/expo-shims-docs.test.ts",
   "tests/generated-files-hook.test.ts",
+  "tests/gpui-props.test.ts",
   "tests/mcp-docs-corpus.test.ts",
   "tests/mcp-search.test.ts",
   "tests/native-templates-packed.test.ts",

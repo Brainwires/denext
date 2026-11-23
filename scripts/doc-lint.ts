@@ -38,6 +38,7 @@ export const DOC_LINT_MODULES: readonly string[] = [
   "src/mvu.ts",
   "src/mobile/mod.ts",
   "src/navigation/mod.ts",
+  "src/gpui/mod.ts",
   "src/build/desktop.ts",
   "src/desktop/updater.ts",
   "src/desktop/client.ts",
