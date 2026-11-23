@@ -311,7 +311,23 @@ at all.
   list that was ignored because it expired). `doctor` warns about a revoked pin, an expired list and
   a list with fewer than 7 days left before it expires (it is ignored from then on, until the
   maintainers re-sign it).
-- `runtime prune` keeps the rollback release's cache, so the fallback works offline.
+- `runtime prune` keeps the rollback release's cache, so the fallback works offline, and removes
+  every cached release the list revokes for this host: a Deno toolchain the list revokes as `cli`,
+  a Deno Desktop runtime it revokes as `desktop`. A revoked release goes even while it is in use
+  (pinned, selected or a rollback), with no `--force`, because denext no longer runs it; the output
+  says so. The exception is a revoked pin with no safe fallback (its rollback is missing or revoked
+  too): denext still runs it, so `prune` keeps it ("revoked, but it is the only release this pin
+  can run; kept"; in `--json`, a `note` on the kept entry) rather than have the next command
+  download it again. A release revoked only on other targets stays. `prune` reads the list as
+  `runtime version` does (fetched now, 5 seconds at most, else the cached copy); when there is
+  none to be had it prunes as before and says the list could not be read. `--dry-run` lists what
+  it would remove, and `--json` marks each revoked entry `"reason": "revoked"` (with
+  `"revocation"`, the advisory and `"inUse": true` when it was in use) and reports the list as
+  `revocations`: `read` with its sequence, `unavailable` with why, or `off`.
+- `runtime list` marks an installed release the list revokes for this host (`REVOKED for this
+  host (<reason>)`, with `denext runtime prune` as the fix; in `--json`, the row's `revoked`), and
+  `denext doctor` warns about every revoked Deno toolchain or Deno Desktop runtime still cached,
+  naming `denext runtime prune` as the fix.
 - The toolchain marker denext hands the processes it starts (`DENEXT_TOOLCHAIN_ACTIVE`) never
   skips the check or picks the fallback on its own, so a value leaked from a parent shell or a
   copied CI environment changes nothing: a process running the fallback asks again and moves to the
@@ -498,7 +514,9 @@ esbuild, TypeScript compiler and `denort` live inside it) and the Deno Desktop r
 version. `prune` keeps only what is in use: the selected release, your default, the release this denext
 bundles and its rollback, the project's pin, the Gleam and fastlane this denext pins, and — inside
 a project that pins another denext — the ones that version pins (read from its published pin
-files; offline, `prune` removes nothing unless `--force`). A release in use is refused by
+files; offline, `prune` removes nothing unless `--force`). `prune` also removes every release the
+revoked-runtimes list revokes for this host, in use or not and even when the project's pins can't
+be read ([Revoked runtimes](#revoked-runtimes)). A release in use is refused by
 `uninstall` unless you pass `--force`. Each prints what it removed and the
 space freed; `--dry-run` only lists it, and `--json` reports it for scripts. They hold the cache
 lock, so they never delete a download in progress.

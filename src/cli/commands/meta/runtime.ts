@@ -18,7 +18,8 @@ export const runtimeMeta: CommandMeta = {
     "  denext runtime version        What runs here and why, the bundled pin, the channel, Gleam,\n" +
     "                                fastlane (alias: info; --verify re-hashes the cache)\n" +
     "  denext runtime list           Installed releases; with the channel: available, held,\n" +
-    "                                yanked, incompatible (--all: every listed release)\n" +
+    "                                yanked, incompatible (--all: every listed release); marks\n" +
+    "                                one the revoked-runtimes list revokes here\n" +
     "  denext runtime install [<version>]   Download + verify a release (default: the selected one)\n" +
     "  denext runtime install --with gleam,fastlane   …and the pinned Gleam / managed fastlane\n" +
     "  denext runtime upgrade        The newest compatible release past your dependency-age hold:\n" +
@@ -35,7 +36,8 @@ export const runtimeMeta: CommandMeta = {
     "  denext runtime uninstall --all       Remove every cached release but those in use\n" +
     "  denext runtime prune          Keep only what is in use here (the selected release, your\n" +
     "                                default, the bundled pin and its rollback, the project's\n" +
-    "                                pins), Gleam and fastlane included\n" +
+    "                                pins), Gleam and fastlane included; also removes every\n" +
+    "                                release the revoked-runtimes list revokes here, in use or not\n" +
     "  (--json for scripts; uninstall and prune show the space freed, --dry-run lists it)",
   positionals: [{
     name: "action",

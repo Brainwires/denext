@@ -43,7 +43,10 @@ import {
   type ReexecToolchainDeps,
   revocationCheckFor,
 } from "../src/cli/self-exec.ts";
-import { runtimeRevocationsCheck } from "../src/cli/commands/doctor.ts";
+import {
+  revokedRuntimesInstalledCheck,
+  runtimeRevocationsCheck,
+} from "../src/cli/commands/doctor.ts";
 import {
   main as pinMain,
   type PinFile,
@@ -866,4 +869,60 @@ Deno.test("the checked-in pins name one earlier release as their rollback, unnes
   }
   for (const triple of Object.keys(rt.targets)) assert(rt.rollback!.targets[triple], triple);
   assertEquals(rollbackToolchainPin(tc)?.repository, tc.repository);
+});
+
+Deno.test("doctor: installed releases the list revokes here are flagged, with `denext runtime prune`", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-doctor-revoked-installed-" });
+  try {
+    const roots = { deno: join(dir, "denext-deno"), desktop: join(dir, "denext-desktop-runtime") };
+    for (const v of [PINNED, ROLLBACK]) await Deno.mkdir(join(roots.deno, v), { recursive: true });
+    await Deno.mkdir(join(roots.desktop, PINNED), { recursive: true });
+    await Deno.mkdir(join(roots.deno, "gleam", PINNED), { recursive: true });
+    const list = freshRevocationList([
+      revoke(),
+      // Revoked only on another host: not flagged.
+      revoke({ version: ROLLBACK, targets: ["aarch64-apple-darwin"] }),
+      revoke({ component: "desktop", targets: undefined, reason: "leaks handles" }),
+    ], new Date());
+    const read = () => Promise.resolve({ state: "read" as const, list });
+    const check = await revokedRuntimesInstalledCheck({ revocations: read, roots, triple: TRIPLE });
+    assertEquals(
+      [check?.name, check?.ok, check?.critical],
+      ["revoked runtimes installed", false, false],
+    );
+    assertEquals(
+      check!.detail,
+      `Deno toolchain ${PINNED} (crashes on start), Deno Desktop runtime ${PINNED} (leaks handles): ` +
+        "revoked for this host and no longer run; `denext runtime prune` removes them",
+    );
+    // Another host: only the all-target desktop revocation applies.
+    const other = await revokedRuntimesInstalledCheck({
+      revocations: read,
+      roots,
+      triple: "aarch64-unknown-linux-gnu",
+    });
+    assertStringIncludes(other!.detail, `Deno Desktop runtime ${PINNED} (leaks handles): `);
+    assertStringIncludes(other!.detail, "removes it");
+    // Nothing revoked installed, the list unavailable or off, or unreadable: no check.
+    const none = () =>
+      Promise.resolve({ state: "read" as const, list: freshRevocationList([], new Date()) });
+    assertEquals(
+      await revokedRuntimesInstalledCheck({ revocations: none, roots, triple: TRIPLE }),
+      null,
+    );
+    for (
+      const state of [
+        () => Promise.resolve({ state: "unavailable" as const, reason: "offline" }),
+        () => Promise.resolve({ state: "off" as const }),
+        () => Promise.reject(new Error("boom")),
+      ]
+    ) {
+      assertEquals(
+        await revokedRuntimesInstalledCheck({ revocations: state, roots, triple: TRIPLE }),
+        null,
+      );
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

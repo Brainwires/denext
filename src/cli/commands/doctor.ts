@@ -84,6 +84,15 @@ import {
 } from "../../build/runtime-select.ts";
 import { revocationStatusLine } from "../../build/runtime-revocations.ts";
 import {
+  cachedRevocation,
+  type CacheRevocations,
+  cacheRevocations,
+  listToolchainCache,
+  type ToolchainCacheRoots,
+  toolchainCacheRoots,
+} from "../../build/toolchain-prune.ts";
+import { hostRuntimeTriple } from "./runtime-prune.ts";
+import {
   type LinuxLibc,
   linuxLibcProblem,
   minGlibcFor,
@@ -1107,6 +1116,49 @@ export async function runtimeRevocationsCheck(
   return { name: "runtime revocations", ok: line.ok, detail: line.detail, critical: false };
 }
 
+/** The seams of {@linkcode revokedRuntimesInstalledCheck}. */
+export interface RevokedInstalledOptions {
+  /** The list (default: read in `fetch` mode, the copy `runtimeRevocationsCheck` just fetched). */
+  readonly revocations?: () => Promise<CacheRevocations>;
+  /** The cache roots (default: under `DENO_DIR`). */
+  readonly roots?: ToolchainCacheRoots;
+  /** The host's Rust target triple (default this machine's). */
+  readonly triple?: string;
+}
+
+/**
+ * The cached runtime releases (Deno toolchains, Deno Desktop runtimes) the revoked-runtimes list
+ * revokes for this host: still installed although denext no longer runs them, with
+ * `denext runtime prune` as the fix. `null` when none is, or there is no list to tell by (the
+ * `runtime revocations` check reports that). Advisory.
+ *
+ * @param options Seams for tests.
+ * @returns The check, or `null`.
+ */
+export async function revokedRuntimesInstalledCheck(
+  options: RevokedInstalledOptions = {},
+): Promise<Check | null> {
+  const read = options.revocations ?? (() => cacheRevocations({ mode: "fetch" }));
+  const revocations = await read().catch(() => null);
+  if (revocations?.state !== "read") return null;
+  const triple = options.triple ?? hostRuntimeTriple();
+  const listing = await listToolchainCache(options.roots ?? toolchainCacheRoots());
+  const found = listing.flatMap((e) => {
+    const hit = cachedRevocation(e, revocations.list, triple);
+    const name = e.kind === "deno" ? "Deno toolchain" : "Deno Desktop runtime";
+    return hit ? [`${name} ${e.version} (${hit.reason})`] : [];
+  });
+  if (found.length === 0) return null;
+  const them = found.length === 1 ? "it" : "them";
+  return {
+    name: "revoked runtimes installed",
+    ok: false,
+    detail: `${found.join(", ")}: revoked for this host and no longer run; ` +
+      `\`denext runtime prune\` removes ${them}`,
+    critical: false,
+  };
+}
+
 /** The toolchain pin of the release this project runs on, else the bundled one. */
 function selectedToolchainPin() {
   try {
@@ -1222,6 +1274,7 @@ export async function collectDoctorReport(
     await denoToolchainCheck(dir),
     ...[
       await runtimeRevocationsCheck(),
+      await revokedRuntimesInstalledCheck(),
       await linuxLibcCheck(),
       crashReportCheck(safeEnv, currentDenoIdentity().denext),
     ].filter((c): c is Check => c !== null),

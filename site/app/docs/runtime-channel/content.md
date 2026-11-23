@@ -89,7 +89,9 @@ denext runtime prune [--dry-run] [--json]
 - `list` shows the installed releases and the ones in use (the one that runs is starred), the
   release `upgrade` would take and the one the hold keeps out, each with the channel's verdict:
   `available`, `held`, `yanked` (with the reason), `incompatible` (with why) or `unlisted`. `--all`
-  adds every release the channel lists. Offline, the channel is shown as unavailable.
+  adds every release the channel lists. Offline, the channel is shown as unavailable. An installed
+  release the revoked-runtimes list revokes for this host is marked `REVOKED`, with
+  `denext runtime prune` as the fix ([Revoked runtimes](/docs/toolchain#revoked-runtimes)).
 - `upgrade` takes the newest release this denext supports that the hold lets in, installs it and
   makes it your default (or the project pin with `--project`). A default `upgrade` writes gives way
   to a newer denext's bundled runtime; one you chose with `use` does not. It says when a newer
