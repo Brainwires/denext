@@ -315,7 +315,10 @@ at all.
   every cached release the list revokes for this host: a Deno toolchain the list revokes as `cli`,
   a Deno Desktop runtime it revokes as `desktop`. A revoked release goes even while it is in use
   (pinned, selected or a rollback), with no `--force`, because denext no longer runs it; the output
-  says so. A release revoked only on other targets stays. `prune` reads the list as
+  says so. The exception is a revoked pin with no safe fallback (its rollback is missing or revoked
+  too): denext still runs it, so `prune` keeps it ("revoked, but it is the only release this pin
+  can run; kept"; in `--json`, a `note` on the kept entry) rather than have the next command
+  download it again. A release revoked only on other targets stays. `prune` reads the list as
   `runtime version` does (fetched now, 5 seconds at most, else the cached copy); when there is
   none to be had it prunes as before and says the list could not be read. `--dry-run` lists what
   it would remove, and `--json` marks each revoked entry `"reason": "revoked"` (with

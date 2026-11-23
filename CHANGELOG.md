@@ -13,7 +13,8 @@ and this project adheres to
 - **`denext runtime prune` removes revoked runtimes.** Every cached Deno toolchain and Deno Desktop
   runtime the signed revoked-runtimes list revokes for this host is removed, even one in use
   (pinned, selected or a rollback) and with no `--force`, since denext no longer runs it; a
-  release revoked only on other targets stays. The list is read as `runtime version` reads it;
+  revoked pin with no safe rollback, which denext still runs, is kept with a note, and a release
+  revoked only on other targets stays. The list is read as `runtime version` reads it;
   when none can be had, `prune` behaves as before and says so. `--dry-run` lists the removals, and
   `--json` marks each `"reason": "revoked"` (with `"inUse": true` when it was in use) and reports
   the list's state as `revocations`. `denext runtime list` marks an installed release the list

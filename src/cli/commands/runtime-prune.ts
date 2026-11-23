@@ -5,7 +5,8 @@
 // releases selected here (src/build/runtime-select.ts): the project's, its pin's and the user
 // default's. `prune` also removes every cached release the revoked-runtimes list revokes for this
 // host (src/build/runtime-revocations.ts), in use or not: denext no longer runs a revoked release
-// it has a fallback for, so keeping it only holds the bytes.
+// it has a fallback for, so keeping it only holds the bytes. A revoked pin with no safe rollback
+// still runs (with a warning), so prune keeps it.
 
 import { dirname, join, resolve } from "@std/path";
 import type { CommandContext } from "../command.ts";
@@ -20,7 +21,13 @@ import {
   staleToolchainLink,
   toolchainTargetTriple,
 } from "../../build/deno-toolchain.ts";
-import type { LoadRevocationsOptions, RuntimeRevocation } from "../../build/runtime-revocations.ts";
+import {
+  decideRevocation,
+  type LoadRevocationsOptions,
+  type RuntimeComponent,
+  type RuntimeRevocation,
+  type RuntimeRevocationList,
+} from "../../build/runtime-revocations.ts";
 import {
   readProjectRuntimePin,
   readUserRuntimeDefaultFile,
@@ -222,7 +229,9 @@ function selectedOf(deps: ToolchainPruneDeps): (dir: string) => string[] {
 async function versionsInUse(
   dir: string,
   deps: ToolchainPruneDeps,
-): Promise<{ inUse: ToolchainVersionsInUse; unknownProject: string | null }> {
+): Promise<
+  { inUse: ToolchainVersionsInUse; pins: DenextPins[]; unknownProject: string | null }
+> {
   const own = (deps.ownPins ?? ownPins)();
   const all: DenextPins[] = [own];
   let unknownProject: string | null = null;
@@ -248,8 +257,41 @@ async function versionsInUse(
       gleam: pick("gleam"),
       fastlane: pick("fastlane"),
     },
+    pins: all,
     unknownProject,
   };
+}
+
+/** What prune says about a revoked release it keeps because denext still runs it. */
+const STILL_RUNS_NOTE = "revoked, but it is the only release this pin can run; kept";
+
+/**
+ * The pinned releases denext still runs although the list revokes them here: a pin revoked for
+ * `triple` whose rollback is missing or revoked too ({@linkcode decideRevocation} answers
+ * `useRollback: false`), so it runs as pinned, with a warning. Removing one would only make the
+ * next command download it again. Keyed `<cache kind> <version>`.
+ */
+function revokedButRunning(
+  pins: readonly DenextPins[],
+  list: RuntimeRevocationList | null,
+  triple: string,
+): Set<string> {
+  const out = new Set<string>();
+  if (list === null) return out;
+  const parts: [RuntimeComponent, ToolchainCacheEntry["kind"], "deno" | "desktopRuntime"][] = [
+    ["cli", "deno", "deno"],
+    ["desktop", "desktop-runtime", "desktopRuntime"],
+  ];
+  for (const p of pins) {
+    for (const [component, kind, key] of parts) {
+      const version = p[key];
+      if (!version) continue;
+      const rollback = p.rollback?.[key] ?? null;
+      const d = decideRevocation(list, [{ component, version, rollback, triple }]);
+      if (d.hit && !d.useRollback) out.add(`${kind} ${version}`);
+    }
+  }
+  return out;
 }
 
 /** What a cache entry is called in a message. */
@@ -260,9 +302,13 @@ const KIND_LABEL: Record<ToolchainCacheEntry["kind"], string> = {
   fastlane: "fastlane",
 };
 
-/** An entry for `--json`: a revoked one carries `reason: "revoked"`, and `inUse` when it was. */
+/**
+ * An entry for `--json`: a revoked one carries `reason: "revoked"`, `inUse` when it was, and a
+ * `note` when it is kept because denext still runs it.
+ */
 function entryJson(e: ToolchainCacheEntry, error?: string, r?: RemovalRun) {
   const hit = r?.revoked.get(e);
+  const running = r?.revokedRunning.has(e) ?? false;
   return {
     kind: e.kind,
     version: e.version,
@@ -273,7 +319,8 @@ function entryJson(e: ToolchainCacheEntry, error?: string, r?: RemovalRun) {
         reason: "revoked",
         revocation: hit.reason,
         ...(hit.advisory ? { advisory: hit.advisory } : {}),
-        ...(r!.revokedInUse.has(e) ? { inUse: true } : {}),
+        ...(r!.revokedInUse.has(e) || running ? { inUse: true } : {}),
+        ...(running ? { note: STILL_RUNS_NOTE } : {}),
       }
       : {}),
     ...(error ? { error } : {}),
@@ -341,6 +388,8 @@ interface RemovalRun {
   readonly revoked: Map<ToolchainCacheEntry, RuntimeRevocation>;
   /** The revoked entries removed although in use. */
   readonly revokedInUse: Set<ToolchainCacheEntry>;
+  /** The revoked entries kept because a pin still runs them (no safe rollback). */
+  readonly revokedRunning: Set<ToolchainCacheEntry>;
   /** The list as `prune` read it (`off` for the other actions). */
   readonly revocations: CacheRevocations;
   /** A prune that kept everything because the project's pins are unknown. */
@@ -353,6 +402,30 @@ interface RemovalRun {
   readonly freed: number;
 }
 
+/**
+ * What the revoked-runtimes list changes in a prune: the cached entries it revokes here, the ones
+ * a pin still runs (no safe rollback: kept), and the in-use ones that go anyway — denext no longer
+ * runs them.
+ */
+function revokedPlan(
+  listing: readonly ToolchainCacheEntry[],
+  plan: ToolchainRemovalPlan,
+  pins: readonly DenextPins[],
+  revocations: CacheRevocations,
+  triple: string,
+): Pick<RemovalRun, "revoked" | "revokedRunning" | "revokedInUse"> {
+  const revoked = revokedEntries(listing, revocations, triple);
+  const list = revocations.state === "read" ? revocations.list : null;
+  const running = revokedButRunning(pins, list, triple);
+  const inUse = plan.inUse.filter((e) => revoked.has(e));
+  const runs = (e: ToolchainCacheEntry) => running.has(`${e.kind} ${e.version}`);
+  return {
+    revoked,
+    revokedRunning: new Set(inUse.filter(runs)),
+    revokedInUse: new Set(inUse.filter((e) => !runs(e))),
+  };
+}
+
 /** Plan the removal and, unless `--dry-run`, carry it out. */
 async function runRemoval(
   ctx: CommandContext,
@@ -362,7 +435,7 @@ async function runRemoval(
   const force = ctx.flags.force === true;
   const dryRun = ctx.flags["dry-run"] === true;
   const roots = deps.roots ?? toolchainCacheRoots();
-  const { inUse, unknownProject } = await versionsInUse(commandCwd(ctx), deps);
+  const { inUse, pins, unknownProject } = await versionsInUse(commandCwd(ctx), deps);
   const listing = await listToolchainCache(roots);
   const plan = planToolchainRemoval(listing, request, inUse, force);
   // A prune that can't tell what the project here needs removes nothing (unless --force).
@@ -370,9 +443,13 @@ async function runRemoval(
   const revocations: CacheRevocations = request.action === "prune"
     ? await revocationsOf(deps)
     : { state: "off" };
-  const revoked = revokedEntries(listing, revocations, deps.triple ?? hostRuntimeTriple());
-  // A revoked release goes even in use (denext no longer runs it) and even from a blind prune.
-  const revokedInUse = new Set(plan.inUse.filter((e) => revoked.has(e)));
+  const { revoked, revokedRunning, revokedInUse } = revokedPlan(
+    listing,
+    plan,
+    pins,
+    revocations,
+    deps.triple ?? hostRuntimeTriple(),
+  );
   const removing = new Set([
     ...(blind ? plan.remove.filter((e) => revoked.has(e)) : plan.remove),
     ...revokedInUse,
@@ -390,6 +467,7 @@ async function runRemoval(
     kept,
     revoked,
     revokedInUse,
+    revokedRunning,
     revocations,
     blind,
     unknownProject,
@@ -435,7 +513,7 @@ function printJson(r: RemovalRun): void {
       action: r.request.action,
       dryRun: r.dryRun,
       removed: r.outcomes.map((o) => entryJson(o.entry, o.error, r)),
-      kept: r.kept.map((e) => entryJson(e)),
+      kept: r.kept.map((e) => entryJson(e, undefined, r)),
       notCached: r.plan.notCached,
       freedBytes: r.freed,
       ...revocationsJson(r),
@@ -453,23 +531,36 @@ const nameOf = (e: ToolchainCacheEntry) => `${KIND_LABEL[e.kind]} ${e.version}`;
 function report(r: RemovalRun): void {
   console.log("");
   for (const o of r.outcomes) console.log(outcomeLine(o, r.dryRun) + revokedNote(o.entry, r));
-  const why = r.request.action === "prune" ? "in use" : "in use; --force removes it";
-  for (const e of r.plan.inUse) {
-    if (!r.revokedInUse.has(e)) console.log(`  kept ${nameOf(e).padEnd(38)} (${why})`);
-  }
+  for (const line of keptLines(r)) console.log(line);
   for (const v of r.plan.notCached) console.log(`  ✖ ${v} is not cached`);
+  for (const line of warningLines(r)) console.log(line);
+  console.log(totalLine(r));
+  console.log("");
+}
+
+/** The lines of the entries kept because they are in use (a revoked one still run: its note). */
+function keptLines(r: RemovalRun): string[] {
+  const why = r.request.action === "prune" ? "in use" : "in use; --force removes it";
+  return r.plan.inUse.filter((e) => !r.revokedInUse.has(e)).map((e) => {
+    const note = r.revokedRunning.has(e) ? STILL_RUNS_NOTE : why;
+    return `  kept ${nameOf(e).padEnd(38)} (${note})`;
+  });
+}
+
+/** The `!` lines: the project's pins unknown, the revoked-runtimes list unreadable. */
+function warningLines(r: RemovalRun): string[] {
+  const out: string[] = [];
   if (r.unknownProject) {
     const kept = r.blind ? "; kept every version not revoked (--force prunes anyway)" : "";
-    console.log(`  ! ${r.unknownProject}${kept}`);
+    out.push(`  ! ${r.unknownProject}${kept}`);
   }
   if (r.revocations.state === "unavailable") {
-    console.log(
+    out.push(
       `  ! the revoked-runtimes list could not be read (${r.revocations.reason}); ` +
         "revoked releases were not looked for",
     );
   }
-  console.log(totalLine(r));
-  console.log("");
+  return out;
 }
 
 /** Why a removed entry was revoked, after its line ("" when it was not). */
