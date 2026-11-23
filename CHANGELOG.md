@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.22.0] - 2026-11-23
+
 ### Added
 
 - **Embedded web views: app-decided downloads and permission requests.** `createWebView({ downloads:
@@ -23104,7 +23106,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.21.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.22.0...development
+[4.22.0]: https://jsr.io/@denext/denext@4.22.0
 [4.21.0]: https://jsr.io/@denext/denext@4.21.0
 [4.20.1]: https://jsr.io/@denext/denext@4.20.1
 [4.20.0]: https://jsr.io/@denext/denext@4.20.0
