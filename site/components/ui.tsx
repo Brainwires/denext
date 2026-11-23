@@ -104,6 +104,7 @@ export const NAV: {
       { slug: "multi-instance", label: "Multi-instance" },
       { slug: "desktop", label: "Desktop apps" },
       { slug: "desktop-runtime", label: "Deno Desktop runtime" },
+      { slug: "gpui", label: "Native tree (gpui)" },
       { slug: "mobile", label: "Mobile (Capacitor)" },
       { slug: "mobile-build", label: "Mobile builds & submit" },
       { slug: "platform-files", label: "Platform-specific files" },

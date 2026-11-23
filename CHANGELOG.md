@@ -10,6 +10,23 @@ and this project adheres to
 
 ### Added
 
+- **`denext/gpui`: React Native primitives in a native tree window (B1, in development).** On the
+  new `gpui` desktop backend a window has no web view: it hosts a retained tree of native
+  primitives, and `render(element, { window, reconciler })` (or `AppRegistry.runApplication`)
+  renders `View`, `Text` (nested as spans), `Image`, `ScrollView`, `TextInput` and `Pressable`
+  into it through the app's `react-reconciler`, loaded against denext's React core (denext imports
+  no npm package for it). Each React commit is one NTB1 batch for the window's
+  `nativeTree.commit`. Styles are React Native's StyleSheet subset: arrays flattened, shorthands
+  expanded per side and corner, colours parsed to RGBA. Events reach React Native's handlers;
+  presses go through denext's pressability, and `TextInput` keeps React Native's controlled-input
+  event count. Images are fetched in JavaScript, sent once per source and freed with their last
+  `Image`. `gpuiSupport()` probes `Deno.desktop` and `windowCapabilities().nativeTree`, `render`
+  throws `GpuiUnsupportedError` (`code: "unsupported"`) without them, and
+  `Platform.constants.denextShell` is `"gpui"` while a root is mounted. `desktop.backend` takes
+  `"gpui"` (alone or per OS) in the config schema, the validator, `denext desktop doctor` (which
+  points at a local runtime build: the backend has no pinned archive yet) and the package scripts'
+  `--backend`. No VirtualList, navigation, animation, transforms or shadows yet. See
+  [Native tree windows](https://denext.dev/docs/gpui).
 - **Embedded web views: app-decided downloads and permission requests.** `createWebView({ downloads:
   "app" })` hands each download to the view's `will-download` event as an item (`id`, `url`,
   `filename`, `mimeType`, `totalBytes`, live `receivedBytes` / `state` / `path` / `paused` /
