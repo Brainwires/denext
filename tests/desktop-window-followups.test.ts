@@ -308,6 +308,16 @@ Deno.test("second instance: no handler with a window showing opens nothing more"
   assertEquals(main.calls.filter((c) => c === "show"), []);
 });
 
+Deno.test("second instance: a window that is closing (its isVisible throws) is not showing", () => {
+  const { main, desktop } = setup();
+  main.isVisible = () => {
+    throw new Error("closing");
+  };
+  secondLaunch(desktop, []);
+  // Nothing keyed was closed: the main window is shown again, as the Dock's reopen does.
+  assertEquals(main.calls.slice(-2), ["show", "focus"]);
+});
+
 Deno.test("second instance: runDesktop({ onSecondInstance }) gets args and cwd on every launch", () => {
   const seen: DesktopSecondInstanceEvent[] = [];
   let answer: { url: string; key: string } | undefined = undefined;

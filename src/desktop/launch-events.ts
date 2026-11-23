@@ -130,6 +130,8 @@ export interface DesktopMenuCapabilities {
   readonly tooltips?: boolean;
   /** Destructive items are drawn as such (runtime 2.9.7-denext.20). */
   readonly destructive?: boolean;
+  /** The native menus read back (`getApplicationMenu`, `Deno.dock.getMenu`). */
+  readonly snapshot?: boolean;
 }
 
 /** A click on one of the app's notifications that no live `Notification` owns. */
@@ -259,6 +261,8 @@ export interface DesktopAppApi {
    * while the key window has no menu of its own; on Windows and Linux it is set on every window.
    */
   setApplicationMenu?(menu: DesktopMenuItem[] | null): void;
+  /** The macOS menu bar as it is now, read back from the OS (`null` elsewhere). */
+  getApplicationMenu?(): unknown;
   /** DevTools control: `enabled` is false when the app launched with DevTools off. */
   readonly devtools?: { readonly enabled?: boolean };
   /** `openurl` / `openfile` / `secondinstance`. */
@@ -277,6 +281,17 @@ export interface DesktopAppApi {
   };
   /** The connected displays, primary first. */
   screens?(): DesktopScreen[];
+  /**
+   * The runtime ids (`BrowserWindow.windowId`) of the app's on-screen windows as the OS stacks
+   * them, front to back; `null` where the OS does not tell (a Wayland session). Absent on a
+   * runtime without the call.
+   */
+  windowOrder?(): readonly number[] | null;
+  /**
+   * The pointer on the screen, the buttons held and the runtime id of the app window under it,
+   * asked of the OS; `null` where the OS does not tell. Absent on a runtime without the call.
+   */
+  pointer?(): { x: number; y: number; buttons: number; windowId: number | null } | null;
   /** What window features this backend supports (`fileDialogs`, `state`, `fileDragOut`, …). */
   windowCapabilities?(): Record<string, boolean>;
   /**

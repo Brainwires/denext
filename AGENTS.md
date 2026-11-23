@@ -647,7 +647,7 @@ WebRTC (`RTCPeerConnection`; use `desktop.backend: { linux: "cef" }`)), plus des
 `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
 (`desktopOs()` there returns the window's OS — `"darwin"` / `"windows"` / `"linux"` — with no capability).
-`pty` (where the runtime has `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `ptyInfo` / `attachPty` / `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`; each terminal is its window's (`pty: { onWindowClose: "kill" | "detach", replayBytes, shells }`), and only `shells` (absolute paths, baked as the app's `--allow-run`) can start.
+`pty` (where the runtime has `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `ptyInfo` / `attachPty` / `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`; each terminal is its window's (`pty: { onWindowClose: "kill" | "detach", replayBytes, shells }`), and only `shells` (absolute paths, baked as the app's `--allow-run`) can start. `ptyInfo(id)` → `{ pid, tty?, process?, argv?, cwd?, foregroundPid?, foregroundGroup? }`: the terminal's foreground process, asked of the OS (where the runtime's `Deno.Pty` has `foreground()`; Windows: found in the process tree, no group, no `tty`).
 `system-stats` (where the runtime has `Deno.desktop.systemStats`; no Deno permission): `system.stats({ perCore })` / `system.onStats(cb, { intervalMs })` (≥ 1000) from `denext/desktop/client` and `denext/desktop` give aggregate CPU / GPU / memory percent (`SystemStats`), CPU since the caller's previous sample (a sampler per window and per subscription).
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
 (macOS Keychain, written by the app's own process so another program gets macOS's prompt, not the
@@ -678,7 +678,7 @@ is the native menu (submenus, `destructive` items in red, an item's `iconPng`, `
 `denext/desktop/window` shares picked / app-folder files). Embedded web views: `createWebView({ url, bounds, partition?, allowPopups?, downloads?, permissions? })`
 from `denext/desktop/window` (or `win.createWebView` in `desktop.ts`) puts another http(s) site in a native view over the page (no bridge, own storage;
 `attachWebView(view, element)` follows an element's visible part; it draws above all HTML, so swap in `capture({ format: "jpeg", scale: 1 })` as an `<img>` + `setVisible(false)` under an overlay;
-`raise`/`lower`/`setZOrder`, `setZoom`, `find`, `print`, `openDevTools` (dev / `desktop.inspectable` only); app-menu accelerators win while a view has the keyboard, `forwardKeys: ["CmdOrCtrl+1"]` / `setForwardKeys` + the `keydown` event (`forwarded`) hand keys back; `desktop.webViews: { limit, allowedOrigins }`; gate on `webViewCapabilities()`). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
+`raise`/`lower`/`setZOrder`, `setZoom`, `find`, `print`, `openDevTools` (dev / `desktop.inspectable` only); app-menu accelerators win while a view has the keyboard, `forwardKeys: ["CmdOrCtrl+1"]` / `setForwardKeys` + the `keydown` event (`forwarded`) hand keys back; `downloads: "app"` hands each download to `view.on("will-download", item => …)` (`item.save({ directory: "documents", path })` or a writable picked handle from a page, never an absolute path; an absolute path in `desktop.ts`; `saveAs`/`cancel`/`pause`/`resume`, `item.on("updated" | "done")`, `reveal()`; with no listener it is cancelled), `permissions: "app"` asks `view.setPermissionRequestHandler(req => boolean)` (a throw or 5 minutes without an answer refuses; none set refuses all); `desktop.webViews: { limit, allowedOrigins }`; gate on `webViewCapabilities()`, `downloadEvents` / `downloadPause` / `permissionRequests` included). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
 `onAppMenuItem(id => …)` with accelerators, roles, PNG `icon`s and `destructive` items, `createTray({ icon, tooltip, menu })`
 (or the backend-owned `desktop.tray` with a `panel`, `getTray()`; `tray.on("contextmenu" | "auxclick" |
 "mouseenter" | …, detail => …)` with button / modifiers / position and `tray.popUpMenu()` where
@@ -687,14 +687,19 @@ icon from the first frame; `desktop.app.dock: "while-window-open"`: a tray app s
 helper app copied out of its bundle holds a Dock icon / Cmd-Tab entry only while a window shows, never a
 tile in the Dock's recent apps — never toggle to `"regular"` for that), `openWindow({ url, overlay,
 focusable: false, … })` (`macosHiddenMode: "orderOut"` really removes a hidden macOS window; the
-default keeps it in, invisible, at full timer rate) and the overlay calls
+default keeps it in, invisible, at full timer rate; on macOS an `overlay: true, focusable: false` panel shown again never takes the
+keyboard, `focusWindow()` makes it key without activating the app, `setVisibleOnAllWorkspaces(false)` keeps it on one Space) and the overlay calls
 (`setHitRegion`, `setIgnoreMouseEvents`, `setVisibleOnAllWorkspaces`) in `denext/desktop/window`,
 `setBadge(n)`, `bounce()`, Handoff / Spotlight on macOS (`setUserActivity({ type, title, url, userInfo,
 searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.userActivityTypes`);
-`setQuickActions` sets the macOS Dock menu. More windows: `windows.open({ url, key, width, height })` in
+`setQuickActions` sets the macOS Dock menu (separators, `{ title, submenu }`, `checked` / `enabled` there; a click reaches one listening page);
+the backend's own Dock items come first: `runDesktop({ dockMenu, onDockMenuItem })` / `app.setDockMenu([{ id, label }, { type: "separator" }, { label, submenu }])`
+/ `host.onDockMenuItem(fn)` (every Dock click once, `(id, { keyWindow })`, no window open too; ids unique across both), `app.windows.closed()`
+(the reopen list), and for self-tests `getApplicationMenu(window?)` / `getDockMenu()` (host, result) and `getAppMenu()` / `getDockMenu()`
+in `denext/desktop/app` read the native menus back (`appCapabilities().menuSnapshot`). More windows: `windows.open({ url, key, width, height })` in
 `desktop.ts` (`openWindow({ key })` in a page) names a window with an app-chosen key (unique among the open
 windows), found again with `windows.byKey(key)` (`getWindows()` from `denext/desktop/window` lists every window as
-`{ id, kind, visible, key?, title? }`); a keyed window's frame is saved to `windows.json` in the app
+`{ id, kind, visible, key?, title? }`), `getWindowOrder()` → `{ ids, source: "os" | "focus" }` is the real z-order front to back where the OS tells (macOS, Windows, X11; else focus order), `getPointer()` the pointer on the screen + the app window under it (`null` on Wayland), and `startDragSession({ data, onMove })` / `onDragSession(e => …)` follow a drag across the app's windows from the OS (`enter` / `over` / `leave` / `drop` with the target page's `clientX` / `clientY`; `unsupported` on Wayland); `windows.order()` / `windows.pointer()` in `desktop.ts`; a keyed window's frame is saved to `windows.json` in the app
 support folder and restored the next time the key opens (the bounds the call leaves out, clamped onto a
 connected display; macOS Spaces are not restored; `desktop.window.key` does the same for the main window),
 `defaultWidth` / `defaultHeight` (open options, `desktop.window`) size one only without a saved frame
@@ -758,7 +763,12 @@ double-click action, colour scheme — for an app-drawn title bar), `onCloseRequ
 show / hide need the pinned runtime (`unsupported` elsewhere; ask `windowCapabilities()`). React Native desktop
 `View`'s `mouseDownCanMoveWindow`, `allowsVibrancy` and `draggedTypes` + `onDrop` work in the window. Node-API addons (an npm package's prebuilt `.node`) load in a
 packaged app on macOS, Windows and Linux: import them in a `defineDesktopExtension` module and set
-`desktop.extraPermissions: { ffi: ["*"] }` (`"*"` bakes the unscoped flag). A full-app update is
+`desktop.extraPermissions: { ffi: ["*"] }` (`"*"` bakes the unscoped flag). The app's own native
+libraries ship with `desktop.bundle.libraries` (one build per target: `"native/{target}/libx.{ext}"`
+or `{ name, files: { "darwin-arm64": … } }`): copied into each bundle (macOS `Contents/Frameworks`,
+Linux `lib/`, beside the Windows `.exe`) and signed with the app; `bundledLibraryPath(name)` from
+`denext/desktop` finds the running app's copy (the project's file in `desktop run` / `dev`), and
+`Deno.dlopen` needs the same unscoped `ffi`. A full-app update is
 confirmed automatically once the new version's window loads; `desktop.update.autoConfirm: false`
 leaves it to `confirmAppUpdate()`. Packaging bakes least-privilege guardrails: `scripts/package-*.ts` derive
 `--allow-*` from `desktop.capabilities` instead of `-A` (`clipboard`, `global-shortcuts`,
@@ -817,10 +827,22 @@ Sidecars (an Electron app's spawned backend): `desktop.sidecars` (or `runDesktop
 `ready()`, `onShutdown`); `import.meta.main` is false. A child of itself (Electron's
 `spawn(process.execPath, [script, "mcp-bridge"])`): `denextSidecar.spawnSelf(args)` (or
 `childCommand(args)` → `{ command, args, env, stdio }` with `"ipc"`) re-runs the app's executable
-headless on the same module (`denextSidecar.child` is true; the pinned runtime authorizes it without `permissions.run`, which the stock runtime and `deno run` need). `app.sidecar(name)` (`status`, `onStatus`,
+headless on the same module (`denextSidecar.child` is true; the pinned runtime authorizes it without `permissions.run`, which the stock runtime and `deno run` need). `detached: true`
+(or `{ exitAfterMs, keepAcrossUpdates }`; module sidecars only) runs it as its own process that
+OUTLIVES the app: the next launch reattaches from `<app data>/sidecars/<name>.json` over a mutually
+authenticated (HMAC both ways) loopback control connection (status `detached` / `reattached`, the
+same port and secrets), quitting leaves it running, `stop()` / `stopSidecars()` / a full-app update
+end it, another app version's instance is replaced; it ends itself once its record is gone; in it
+`denextSidecar.detached.attached` / `onAttachedChange(fn)`; `detachedSidecars()` /
+`stopDetachedSidecar(name)` on `runDesktop`'s result list and stop leftovers (show the user it keeps
+running). `app.sidecar(name)` (`status`, `onStatus`,
 `restart`, `stop`), `stopSidecars()`; page: `sidecarStatus` / `onSidecarStatus` / `restartSidecar` /
 `sidecarInfo` from `denext/desktop/client`. `denext desktop add sidecar --name --entry
---node-modules` writes one. Docs: https://denext.dev/docs/desktop#desktop-sidecars
+--node-modules [--detached]` writes one. Docs: https://denext.dev/docs/desktop#desktop-sidecars
+Local IPC with no loopback port (app, sidecar, CLI): `localIpcPath(name)` / `listenLocalIpc(path, onConnection)` /
+`connectLocalIpc(path, { timeoutMs })` from `denext/desktop` (a `0600` Unix socket in `<app data>/ipc`, a
+`\\.\pipe\<appId>.<user hash>.<name>` pipe on Windows; web-stream connections; a packaged app grants
+`netListen` / `netConnect: ["*"]`, as a `unix:` grant cannot name a per-user path): https://denext.dev/docs/desktop#desktop-local-ipc
 Under the pinned runtime: `desktop.preload` (Electron's preload: bundled and inlined first into every
 top-level page; trusted, same world as the page); `desktop.app.deepLinks` / `singleInstance` deliver
 links to `onDeepLink` and opened files to `onOpenFile` (read-only handles); `openAuthSession` takes a

@@ -79,6 +79,12 @@ import {
 export { MAX_WINDOWS_LIMIT } from "./window-config.ts";
 import { createWindowLifecycle, type WindowLifecycle } from "./window-lifecycle.ts";
 import {
+  createWindowStacking,
+  type PointerInfo,
+  type WindowOrder,
+  type WindowStacking,
+} from "./window-drag.ts";
+import {
   clampToScreens,
   openWindowStore,
   type SessionWindow,
@@ -115,6 +121,10 @@ export interface RegistryWindow extends EventTarget {
   setBounds?(bounds: Record<string, number>): void;
   getBounds?(): { x: number; y: number; width: number; height: number };
   setTitle?(title: string): void;
+  /** The runtime's id for the window (what `Deno.desktop.windowOrder()` / `pointer()` name). */
+  readonly windowId?: number;
+  /** The top-left corner of the window's page on the screen. */
+  getInnerPosition?(): [number, number];
 }
 
 /** The runtime's window constructor, as the registry calls it. */
@@ -258,6 +268,16 @@ export interface WindowRegistry {
   resolveToken(token: string): string | undefined;
   /** The open windows. */
   list(): RegisteredWindow[];
+  /**
+   * The ids of the windows on screen, front to back: the OS's own stacking order where it tells
+   * (`source: "os"`), else the order the windows last had the focus in (`"focus"`).
+   */
+  order(): WindowOrder;
+  /**
+   * The pointer on the screen, the buttons held and the window under it, asked of the OS; `null`
+   * where it does not tell (a Wayland session, a runtime without the call).
+   */
+  pointer(): PointerInfo | null;
   /** How many windows are open (the tray panel included). */
   count(): number;
   /** Whether window `id` may call capability `cap`. */
@@ -280,6 +300,8 @@ export interface WindowRegistry {
    * one opened last; `undefined` with no app window open.
    */
   keyWindow(): RegisteredWindow | undefined;
+  /** The open windows' ids, the one that had the focus last first (those never focused left out). */
+  focusOrder(): readonly string[];
   /** Load another app path in window `id` (a keyed window's session follows); unknown id: nothing. */
   navigate(id: string, path: string): void;
   /** The open windows as the lifecycle hooks see them. */
@@ -685,6 +707,35 @@ interface RegistryState {
   anyBound: boolean;
   /** The ids of the windows that had the focus, most recent first (each once). */
   focusOrder: string[];
+  /** The stacking order, the pointer and drag sessions (made on first use). */
+  stacking?: WindowStacking;
+}
+
+/** The stacking calls over this registry's windows ({@link ./window-drag.ts}). */
+function stackingOf(st: RegistryState): WindowStacking {
+  st.stacking ??= createWindowStacking({
+    ...(st.options.api ? { api: st.options.api } : {}),
+    windows: () =>
+      [...st.windows.values()].map((w) => ({
+        id: w.id,
+        ...(typeof w.window.windowId === "number" ? { windowId: w.window.windowId } : {}),
+        visible: visibleOf(w.window),
+        innerPosition: () =>
+          typeof w.window.getInnerPosition === "function" ? w.window.getInnerPosition() : null,
+      })),
+    focusOrder: () => st.focusOrder,
+    emit: (data, target) => st.options.emit("windows", "drag", data, target, LIVE_ONLY),
+  });
+  return st.stacking;
+}
+
+/** Whether a window is showing (a runtime that cannot say counts as showing). */
+function visibleOf(window: RegistryWindow): boolean {
+  try {
+    return typeof window.isVisible === "function" ? window.isVisible() !== false : true;
+  } catch {
+    return true;
+  }
 }
 
 /** One window as the lifecycle hooks see it. */
@@ -814,6 +865,7 @@ function closed(st: RegistryState, id: string): void {
   st.windows.delete(id);
   st.tokens.delete(entry.token);
   st.focusOrder = st.focusOrder.filter((f) => f !== id);
+  st.stacking?.windowClosed(id);
   const quitting = isAppQuitting(st.options.api);
   const endsApp = appWindows(st) === 0 && !st.options.keepAlive();
   saveFrame(st, id, boundsOf(entry.window));
@@ -1173,6 +1225,17 @@ function windowsMethods(st: RegistryState): DesktopCapability["methods"] {
     open: { handler: (args) => ({ id: open(st, args).id }) },
     current: { handler: (_args, ctx: DesktopCapCtx) => ({ id: ctx?.windowId ?? "main" }) },
     list: { handler: () => [...st.windows.values()].map(info) },
+    // The stacking order, the pointer and drag sessions (./window-drag.ts).
+    order: { handler: () => stackingOf(st).order() },
+    pointer: { handler: () => stackingOf(st).pointer() },
+    dragStart: {
+      handler: (args, ctx: DesktopCapCtx) =>
+        stackingOf(st).dragStart(args, ctx?.windowId ?? "main"),
+    },
+    dragCancel: {
+      handler: (args, ctx: DesktopCapCtx) =>
+        stackingOf(st).dragCancel(args, ctx?.windowId ?? "main"),
+    },
     show: { handler: (args) => onWindow(st, args, "show") },
     hide: { handler: (args) => onWindow(st, args, "hide") },
     focus: { handler: (args) => onWindow(st, args, "focus") },
@@ -1269,7 +1332,7 @@ export function createWindowRegistry(options: WindowRegistryOptions): WindowRegi
   let router: DesktopCapability | undefined;
   const capability: DesktopCapability = {
     name: "windows",
-    events: ["opened", "closed", "focus", "blur"],
+    events: ["opened", "closed", "focus", "blur", "drag"],
     methods: windowsMethods(st),
   };
   return {
@@ -1308,6 +1371,14 @@ export function createWindowRegistry(options: WindowRegistryOptions): WindowRegi
     get: (id) => st.windows.get(id),
     resolveToken: (token) => st.tokens.get(token),
     list: () => [...st.windows.values()],
+    order: () => stackingOf(st).order(),
+    pointer: () => {
+      try {
+        return stackingOf(st).pointer();
+      } catch {
+        return null;
+      }
+    },
     count: () => st.windows.size,
     allowed: (id, cap) => {
       const subset = st.windows.get(id)?.capabilities;
@@ -1319,6 +1390,7 @@ export function createWindowRegistry(options: WindowRegistryOptions): WindowRegi
     interceptClose: (id, event) => interceptClose(st, id, event),
     byKey: (key) => byKey(st, key),
     keyWindow: () => keyWindow(st),
+    focusOrder: () => st.focusOrder.filter((id) => st.windows.has(id)),
     navigate: (id, path) => {
       const entry = st.windows.get(id);
       if (entry) navigateWindow(st, entry, path);

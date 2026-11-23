@@ -13,10 +13,16 @@
  *   string or `{ accelerator, beforeMenu? }`, sent to the runtime as strings, a before-menu one
  *   marked with a leading `!`) → `null`; `state` `{}` → `{ url, title, load, canGoBack,
  *   canGoForward }`; `capture` `{ format?, quality? }` → `{ base64, type }`; `evaluate`
- *   `{ script }` → `{ value }`.
+ *   `{ script }` → `{ value }`; `controlDownload` `{ download, action, target? }` (`target`, for
+ *   `"save"` only, a `{ directory, path }` destination resolved here, never an absolute path) and
+ *   `respondToPermissionRequest` `{ request, allow }` → `null`.
  * - Event `webview` `{ id, event, detail }` to the window's page, for each view the page made
  *   (`detail` the draft's `WebViewEventMap` shape); `closed` is the last one for an id. The
- *   runtime's `key` event is `keydown` or `keyup` by its `type`.
+ *   runtime's `key` event is `keydown` or `keyup` by its `type`. `download` and
+ *   `permission-request` (views made with `downloads: "app"` / `permissions: "app"`) go to the page
+ *   as the runtime reports them; the page's handle decides them. A page load (a reload, a
+ *   navigation) cancels its views' downloads still waiting for an answer and refuses their pending
+ *   permission requests: the page that would answer is gone.
  *
  * Checks, before the runtime is touched: every argument's type, finite numbers and enums; the URL
  * of a create or a navigate is `http:` / `https:`, never one of the app's own origins (its
@@ -33,12 +39,18 @@
  * @module
  */
 
+import { dirname, isAbsolute } from "@std/path";
 import { bytesToBase64 } from "../../mobile/base64.ts";
+import type { DesktopAppDirs } from "../app-dirs.ts";
 import { type DesktopCapability, DesktopCapError } from "../extension.ts";
+import { confineRelative, refuseReservedDataPath } from "../path-scope.ts";
+import type { PickedPaths } from "../picked-paths.ts";
+import { runShellTool, shellPathCommand } from "./shell.ts";
 import type {
   CreateWebViewOptions,
   WebViewBounds,
   WebViewCapabilities,
+  WebViewDownloadAction,
   WebViewEngine,
   WebViewEventMap,
   WebViewHandle,
@@ -62,6 +74,8 @@ const WEBVIEW_EVENTS: readonly (keyof WebViewEventMap)[] = [
   "new-window",
   "find-result",
   "context-menu",
+  "download",
+  "permission-request",
   "closed",
 ];
 
@@ -135,11 +149,14 @@ interface RuntimeWebView extends EventTarget {
   openDevTools?(): void;
   print?(): boolean;
   setForwardKeys?(keys: string[]): boolean;
+  // A runtime with app-decided downloads and permission requests.
+  controlDownload?(id: number, action: WebViewDownloadAction, path?: string): void;
+  respondToPermissionRequest?(id: number, allow: boolean): void;
 }
 
 /** The runtime's web view options (`BrowserWindow.prototype.createWebView`'s argument). */
 interface RuntimeWebViewOptions extends Omit<CreateWebViewOptions, "permissions" | "forwardKeys"> {
-  permissions?: "deny" | "ask";
+  permissions?: "deny" | "ask" | "app";
   /** Accelerator strings, a before-menu one marked with a leading `!`. */
   forwardKeys?: string[];
   clipboardRead?: boolean;
@@ -164,6 +181,9 @@ const FEATURES: ReadonlyArray<readonly [keyof WebViewCapabilities, readonly stri
   ["blur", ["blur"]],
   ["keyUp", []],
   ["forwardKeysBeforeMenu", []],
+  ["downloadEvents", ["controlDownload"]],
+  ["downloadPause", ["controlDownload"]],
+  ["permissionRequests", ["respondToPermissionRequest"]],
 ];
 
 /** The window and app API members the web views need (each feature-detected). */
@@ -180,6 +200,14 @@ export interface WebViewHostOptions {
   readonly emit: (event: string, data: unknown) => void;
   /** The runtime's `Deno.WebView` class (its prototype shows which members exist). */
   readonly webViewClass?: unknown;
+  /** The app's folders (where a page's download `save` may write). */
+  readonly dirs?: DesktopAppDirs;
+  /** The per-launch picked-path set (a page's download `save` into a picked item). */
+  readonly picked?: PickedPaths;
+  /** Show `path` in the file manager (`desktop.ts`'s `reveal()`; default the OS tool). */
+  readonly revealPath?: (path: string) => Promise<void>;
+  /** The permission handler's limit for `desktop.ts`'s views (tests shorten it). */
+  readonly answerMs?: number;
 }
 
 /** Who made a view: the page drives only its own. */
@@ -190,6 +218,10 @@ interface Entry extends WebViewListeners {
   readonly id: string;
   readonly view: RuntimeWebView;
   readonly owner: Owner;
+  /** A page's view: its downloads still waiting for the page's answer. */
+  readonly undecided: Set<number>;
+  /** A page's view: its permission requests still waiting for the page's answer. */
+  readonly unanswered: Set<number>;
 }
 
 /** What {@linkcode createWebViewHost} returns. */
@@ -202,6 +234,11 @@ export interface WebViewHost {
   count(): number;
   /** The window closed: every view is gone (`closed` to `desktop.ts`'s listeners). */
   windowClosed(): void;
+  /**
+   * The window's page loaded again: the page's views' downloads still waiting for an answer are
+   * cancelled and their pending permission requests refused (the page that would answer is gone).
+   */
+  pageLoaded(): void;
 }
 
 /** A `validation` error. */
@@ -306,7 +343,7 @@ function userAgentOf(value: unknown): string {
 /** The popup, download and permission policies, checked (only those given). */
 function policiesOf(o: Record<string, unknown>): Partial<RuntimeWebViewOptions> {
   const allowPopups = oneOf(o.allowPopups, "allowPopups", ["deny", "same-view", "browser"]);
-  const downloads = oneOf(o.downloads, "downloads", ["deny", "ask", "browser"]);
+  const downloads = oneOf(o.downloads, "downloads", ["deny", "ask", "browser", "app"]);
   const contextMenu = oneOf(o.contextMenu, "contextMenu", ["native", "app"]);
   return {
     ...(allowPopups ? { allowPopups } : {}),
@@ -367,6 +404,28 @@ function forwardKeyOf(entry: unknown, i: number): string {
   return out;
 }
 
+/**
+ * `downloads: "app"` and `permissions: "app"` need the runtime's events for them
+ * (`downloadEvents`, `permissionRequests`): elsewhere the create is `unsupported`.
+ */
+function checkAppDecides(h: HostState, options: RuntimeWebViewOptions): void {
+  const caps = capabilitiesOf(h);
+  if (options.downloads === "app" && !caps.downloadEvents) {
+    throw fail(
+      "unsupported",
+      "this Deno Desktop runtime's web views can't hand downloads to the app (downloads: \"app\", " +
+        "webViewCapabilities().downloadEvents)",
+    );
+  }
+  if (options.permissions === "app" && !caps.permissionRequests) {
+    throw fail(
+      "unsupported",
+      "this Deno Desktop runtime's web views can't hand permission requests to the app " +
+        '(permissions: "app", webViewCapabilities().permissionRequests)',
+    );
+  }
+}
+
 /** `keys` (checked) may go to this window's runtime: a before-menu entry needs the feature. */
 function checkBeforeMenu(h: HostState, keys: readonly string[] | undefined): void {
   if (!keys?.some((k) => k.startsWith(BEFORE_MENU))) return;
@@ -392,18 +451,18 @@ function optBool(o: Record<string, unknown>, key: string, name: string): boolean
 function permissionsOf(raw: unknown): Partial<RuntimeWebViewOptions> {
   if (raw === undefined) return {};
   if (typeof raw === "string") {
-    return { permissions: oneOf(raw, "permissions", ["deny", "ask"]) };
+    return { permissions: oneOf(raw, "permissions", ["deny", "ask", "app"]) };
   }
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     throw invalid(
-      'permissions must be "deny", "ask" or { prompts?, clipboardRead?, clipboardWrite? }',
+      'permissions must be "deny", "ask", "app" or { prompts?, clipboardRead?, clipboardWrite? }',
     );
   }
   const p = raw as Record<string, unknown>;
   const read = optBool(p, "clipboardRead", "permissions.clipboardRead");
   const write = optBool(p, "clipboardWrite", "permissions.clipboardWrite");
   return {
-    permissions: oneOf(p.prompts, "permissions.prompts", ["deny", "ask"]) ?? "deny",
+    permissions: oneOf(p.prompts, "permissions.prompts", ["deny", "ask", "app"]) ?? "deny",
     ...(read !== undefined ? { clipboardRead: read } : {}),
     ...(write !== undefined ? { clipboardWrite: write } : {}),
   };
@@ -520,11 +579,19 @@ function capabilitiesOf(h: HostState): WebViewCapabilities {
     blur: false,
     keyUp: false,
     forwardKeysBeforeMenu: false,
+    downloadEvents: false,
+    downloadPause: false,
+    permissionRequests: false,
   };
   if (!supported) return out;
   const engine = caps.engine;
   if (typeof engine === "string" && ENGINES.has(engine)) out.engines = [engine as WebViewEngine];
-  return { ...out, ...featuresOf(h, caps) };
+  return withPauseRule({ ...out, ...featuresOf(h, caps) });
+}
+
+/** Pausing is a download control: nothing to pause without the download events. */
+function withPauseRule(caps: WebViewCapabilities): WebViewCapabilities {
+  return { ...caps, downloadPause: caps.downloadPause && caps.downloadEvents };
 }
 
 /** Each optional feature: the runtime reports it and `Deno.WebView` has its members. */
@@ -572,11 +639,51 @@ function dropView(h: HostState, entry: Entry, tellPage: boolean): void {
   if (entry.closed) return;
   entry.closed = true;
   h.views.delete(entry.id);
+  entry.undecided.clear();
+  entry.unanswered.clear();
   if (entry.owner === "page" && tellPage) {
     h.options.emit("webview", { id: entry.id, event: "closed", detail: {} });
   }
+  // desktop.ts's view: its running downloads end (`done`), its pending requests go.
+  entry.media?.closed();
   fireListeners(entry, "closed", {});
   entry.listeners.clear();
+}
+
+/**
+ * A page's view: keep which of its downloads and permission requests wait for the page's answer
+ * (so a page load can settle them). Bounded by the runtime: each id leaves on its answer, on its
+ * next event, or with the view.
+ */
+function trackPageMedia(entry: Entry, event: string, detail: unknown): void {
+  const d = detail as { id?: unknown; state?: unknown };
+  if (typeof d.id !== "number") return;
+  const set = event === "download" ? entry.undecided : entry.unanswered;
+  if (d.state === "requested") set.add(d.id);
+  else set.delete(d.id);
+}
+
+/** The page loaded again: its views' waiting downloads are cancelled, their requests refused. */
+function settleOrphans(h: HostState): void {
+  for (const entry of h.views.values()) {
+    if (entry.owner === "page" && !entry.closed) settleEntry(entry);
+  }
+}
+
+/** Cancel `entry`'s waiting downloads and refuse its pending requests (each at most once). */
+function settleEntry(entry: Entry): void {
+  const view = entry.view;
+  for (const id of entry.undecided) quietly(() => view.controlDownload?.(id, "cancel"));
+  for (const id of entry.unanswered) quietly(() => view.respondToPermissionRequest?.(id, false));
+  entry.undecided.clear();
+  entry.unanswered.clear();
+}
+
+/** Run `fn`, ignoring a throw (a download over already, a request cancelled already). */
+function quietly(fn: () => void): void {
+  try {
+    fn();
+  } catch { /* settled meanwhile */ }
 }
 
 /** Follow `entry`'s runtime events: to the page (its own views) and `desktop.ts`'s listeners. */
@@ -584,6 +691,11 @@ function follow(h: HostState, entry: Entry): void {
   const deliver = (event: string, detail: unknown) => {
     if (entry.owner === "page") h.options.emit("webview", { id: entry.id, event, detail });
     fireListeners(entry, event, detail);
+    if (event === "download") entry.media?.download(detail);
+    else if (event === "permission-request") entry.media?.permissionRequest(detail);
+    if (entry.owner === "page" && (event === "download" || event === "permission-request")) {
+      trackPageMedia(entry, event, detail);
+    }
   };
   for (const event of WEBVIEW_EVENTS) {
     entry.view.addEventListener(event, (e) => {
@@ -624,6 +736,7 @@ function open(h: HostState, raw: unknown, owner: Owner): Entry {
   const options = createOptionsOf(raw);
   checkUrl(h, options.url);
   checkBeforeMenu(h, options.forwardKeys);
+  checkAppDecides(h, options);
   const win = h.options.window;
   if (typeof win?.createWebView !== "function") {
     throw fail(
@@ -653,6 +766,8 @@ function open(h: HostState, raw: unknown, owner: Owner): Entry {
     owner,
     listeners: new Map(),
     closed: false,
+    undecided: new Set(),
+    unanswered: new Set(),
   };
   h.views.set(entry.id, entry);
   follow(h, entry);
@@ -881,7 +996,130 @@ const VIEW_METHODS: Readonly<Record<string, ViewMethod>> = {
     checkBeforeMenu(h, keys);
     return feature("setForwardKeys", "forward keys", () => [keys])(h, entry, a);
   },
+  controlDownload: async (h, entry, a) => {
+    const id = mediaId(a.download, "download");
+    const action = downloadActionOf(a.action);
+    if (action !== "save" && a.target !== undefined) throw invalid("target is for save only");
+    const path = action === "save" ? await pageDestination(h, a.target) : undefined;
+    controlDownload(entry, id, action, path);
+    return null;
+  },
+  respondToPermissionRequest: (_h, entry, a) => {
+    const id = mediaId(a.request, "request");
+    if (typeof a.allow !== "boolean") throw invalid("allow must be a boolean");
+    respondToRequest(entry, id, a.allow);
+    return null;
+  },
 };
+
+/** The download actions. */
+const DOWNLOAD_ACTIONS: readonly WebViewDownloadAction[] = [
+  "save",
+  "saveAs",
+  "cancel",
+  "pause",
+  "resume",
+];
+
+/** A download / request id (the runtime's integer). */
+function mediaId(value: unknown, name: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw invalid(`${name} must be a download or request id`);
+  }
+  return value as number;
+}
+
+/** A download action, checked. */
+function downloadActionOf(value: unknown): WebViewDownloadAction {
+  const action = oneOf(value, "action", DOWNLOAD_ACTIONS);
+  if (!action) throw invalid(`action must be ${DOWNLOAD_ACTIONS.map((a) => `"${a}"`).join(", ")}`);
+  return action;
+}
+
+/** `mkdir -p dir` (best effort: the runtime reports a folder that still does not exist). */
+async function ensureDir(dir: string): Promise<void> {
+  try {
+    await Deno.mkdir(dir, { recursive: true });
+  } catch { /* the runtime's save refuses a missing folder */ }
+}
+
+/**
+ * Where a page's `save` writes: a `{ directory, path }` destination resolved by the `fs` /
+ * `startFileDrag` rules — an app folder (`"data"`, `"cache"`, `"documents"`) with a relative path
+ * confined to it (no `..` or symlink out, never the runtime's own folders), or a writable picked
+ * handle (a `saveFile` file itself, or a file in a `pickFolder` folder). Never an absolute path.
+ */
+function pageDestination(h: HostState, raw: unknown): Promise<string> {
+  const t = objectOf(raw);
+  if (!t || typeof t.path !== "string") {
+    throw invalid(
+      'target must be { directory: "data" | "cache" | "documents" | { picked }, path }: ' +
+        "a page saves into an app folder or a picked item, never to an absolute path",
+    );
+  }
+  const handle = objectOf(t.directory)?.picked;
+  return handle !== undefined
+    ? pickedDestination(h, handle, t.path)
+    : appFolderDestination(h, t.directory, t.path);
+}
+
+/** A page's `save` into a writable picked item: the file itself, or a file in the folder. */
+async function pickedDestination(h: HostState, handle: unknown, rel: string): Promise<string> {
+  if (!h.options.picked) throw invalid("picked items are not available");
+  const picked = await h.options.picked.resolve(handle, rel, true);
+  if (picked.single) return picked.target;
+  if (rel === "" || rel === ".") throw invalid("target.path must name a file in the picked folder");
+  await ensureDir(dirname(picked.target));
+  return picked.target;
+}
+
+/** A page's `save` into an app folder: `rel` confined to it, never the runtime's own folders. */
+async function appFolderDestination(
+  h: HostState,
+  directory: unknown,
+  rel: string,
+): Promise<string> {
+  if (directory !== "data" && directory !== "cache" && directory !== "documents") {
+    throw invalid('target.directory must be "data", "cache", "documents" or { picked }');
+  }
+  const dirs = h.options.dirs;
+  if (!dirs) throw invalid("the app folders are not available");
+  if (rel === "") throw invalid("target.path must name a file in the app folder");
+  const target = await confineRelative(dirs[directory], rel);
+  await refuseReservedDataPath(dirs.data, target);
+  await ensureDir(dirname(target));
+  return target;
+}
+
+/** `controlDownload` on the runtime view (an older one: `unsupported`); its answer settled. */
+function controlDownload(
+  entry: Entry,
+  id: number,
+  action: WebViewDownloadAction,
+  path: string | undefined,
+): void {
+  const fn = member(entry, "controlDownload", "decide a download");
+  run(
+    entry,
+    "decide the download",
+    (v) => path === undefined ? fn.call(v, id, action) : fn.call(v, id, action, path),
+  );
+  if (action === "save" || action === "saveAs" || action === "cancel") entry.undecided.delete(id);
+}
+
+/** `respondToPermissionRequest` on the runtime view (an older one: `unsupported`). */
+function respondToRequest(entry: Entry, id: number, allow: boolean): void {
+  const fn = member(entry, "respondToPermissionRequest", "answer a permission request");
+  run(entry, "answer the permission request", (v) => fn.call(v, id, allow));
+  entry.unanswered.delete(id);
+}
+
+/** Show `path` in the file manager with the OS's tool (the `shell` capability's `reveal`). */
+async function revealWithOsTool(path: string): Promise<void> {
+  const os = Deno.build.os === "darwin" || Deno.build.os === "windows" ? Deno.build.os : "linux";
+  const [cmd, args] = shellPathCommand(os, "reveal", path);
+  await runShellTool(cmd, args);
+}
 
 /** One `webViewCall` method on `entry`. */
 function callMethod(
@@ -909,6 +1147,29 @@ function backendHandle(h: HostState, entry: Entry): WebViewHandle {
     close: async () => {
       await callMethod(h, entry, "close", {});
     },
+    control: (id, action, target) => {
+      try {
+        if (action === "save" && (typeof target !== "string" || !isAbsolute(target))) {
+          throw invalid("save takes an absolute path in desktop.ts");
+        }
+        controlDownload(entry, id, action, action === "save" ? target as string : undefined);
+        return Promise.resolve();
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    },
+    respond: (id, allow) => {
+      try {
+        respondToRequest(entry, id, allow);
+        return Promise.resolve();
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    },
+    reveal: (path) => (h.options.revealPath ?? revealWithOsTool)(path),
+    fail,
+    onListenerError: (err) => console.error("desktop: a web view listener threw:", err),
+    ...(h.options.answerMs !== undefined ? { answerMs: h.options.answerMs } : {}),
   });
 }
 
@@ -949,5 +1210,6 @@ export function createWebViewHost(options: WebViewHostOptions): WebViewHost {
     windowClosed: () => {
       for (const entry of [...h.views.values()]) dropView(h, entry, false);
     },
+    pageLoaded: () => settleOrphans(h),
   };
 }

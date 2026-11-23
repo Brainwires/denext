@@ -2,6 +2,28 @@
   "revoked": [
     {
       "component": "cli",
+      "version": "3.0.0-denext.26",
+      "targets": [
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu"
+      ],
+      "reason": "Linux: a jailed lifecycle script could change the mode, owner, timestamps and xattrs of the installer's open descriptors through /proc/self/fd magic links",
+      "advisory": "https://github.com/Brainwires/denext/security/advisories/GHSA-488g-7qvv-g92h",
+      "fixedIn": "denext 4.20.1 (runtime 3.0.0-denext.27)"
+    },
+    {
+      "component": "cli",
+      "version": "3.0.0-denext.25",
+      "targets": [
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu"
+      ],
+      "reason": "Linux: a jailed lifecycle script could change the mode, owner, timestamps and xattrs of the installer's open descriptors through /proc/self/fd magic links",
+      "advisory": "https://github.com/Brainwires/denext/security/advisories/GHSA-488g-7qvv-g92h",
+      "fixedIn": "denext 4.20.1 (runtime 3.0.0-denext.27)"
+    },
+    {
+      "component": "cli",
       "version": "3.0.0-denext.8",
       "reason": "V8 lacks fixes for two High V8 CVEs and three more security merges",
       "advisory": "https://github.com/Brainwires/deno/security/advisories/GHSA-v7wx-2v39-pxcf",

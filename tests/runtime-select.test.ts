@@ -52,6 +52,7 @@ import {
   type RuntimeReleaseDocument,
 } from "../src/build/runtime-channel.ts";
 import { MIN_RUNTIME } from "../src/build/deno-version.ts";
+import { rollbackToolchainPin } from "../src/build/deno-toolchain.ts";
 import { sha256Hex } from "../src/build/signed-envelope.ts";
 import { toBase64 } from "../src/build/ota-signing.ts";
 import { freshRevocationList, signRevocationList } from "../src/build/runtime-revocations.ts";
@@ -438,6 +439,21 @@ Deno.test("resolve: a project pin is a lock — cached, the bundled release, or 
     // A pinned hash that no longer matches the cached copy is not used.
     await pinProject(project, { ...lock, integrity: releaseIntegrity("b".repeat(64)) });
     assertThrows(() => resolveRuntimeReleaseSync(o), RuntimeSelectError, "not installed");
+  });
+});
+
+Deno.test("resolve: a newer project pin runs its own release; the bundled rollback stays out of it", async () => {
+  await withDirs(async (root, project) => {
+    const before = structuredClone(BUNDLED_RUNTIME.toolchain.rollback);
+    // Even with a user default set, the project pin is chosen before the default and the bundled pins.
+    await writeUserRuntimeDefault(root, { ...await cache(root, docFor(NEWEST)), held: true });
+    await pinProject(project, await cache(root, docFor(NEWER)));
+    const r = resolveRuntimeReleaseSync({ env: envOf(), cacheRoot: root, projectDir: project });
+    assertEquals([r.source, r.version], ["project", NEWER]);
+    // A release document carries no rollback, so nothing falls back to the bundled one's.
+    assertEquals([r.toolchain.rollback, r.desktop.rollback], [undefined, undefined]);
+    assertEquals(rollbackToolchainPin(r.toolchain), null);
+    assertEquals(BUNDLED_RUNTIME.toolchain.rollback, before, "the bundled rollback is untouched");
   });
 });
 

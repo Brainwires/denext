@@ -49,6 +49,10 @@
  * restricted entitlement such as associated domains (native passkeys) needs. The profile is checked
  * against the app (App ID, team, expiry, the entitlements it grants) before anything is built.
  *
+ * `desktop.bundle.libraries` in denext.config.ts: the app's own native libraries, each arch's
+ * build copied into Contents/Frameworks and signed with the app before the bundle (a universal
+ * build lipo-merges a library both arches have, and keeps one that is already universal).
+ *
  * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
  * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
  * Deno version it was built for (`deno upgrade --version 2.9.8`).
@@ -70,6 +74,7 @@ import type { DesktopPackageArgs } from "denext/desktop";
 // come from Deno's cache whatever this project's node_modules mode is: in a pnpm workspace
 // (nodeModulesDir "manual") Deno would look for them in node_modules, fail, and rewrite the root
 // package.json from pnpm-workspace.yaml. The script re-runs itself once under that flag.
+// fallow-ignore-next-line code-duplication
 if (Deno.env.get("DENEXT_DESKTOP_NPM") !== "none") {
   const age = Deno.env.get("DENEXT_MIN_DEP_AGE");
   const { code } = await new Deno.Command(Deno.execPath(), {
@@ -87,6 +92,7 @@ if (Deno.env.get("DENEXT_DESKTOP_NPM") !== "none") {
 }
 
 const {
+  bundleDesktopLibraries,
   cefHelperEntitlements,
   desktopAppName: appName,
   desktopDenoFlagArgs,
@@ -170,6 +176,15 @@ async function buildApp(out: string, target?: string): Promise<void> {
   if (await writeLaufeyLaunchConfig(import.meta.url, "darwin", out)) {
     resealNeeded = true;
   }
+  // desktop.bundle.libraries built for this arch, copied into Contents/Frameworks: sign() signs
+  // each with the app's identity before the bundle, so the bundle's seal covers them.
+  const libraries = await bundleDesktopLibraries(
+    import.meta.url,
+    "darwin",
+    out,
+    target ?? "host",
+  );
+  if (libraries.copied.length > 0) resealNeeded = true;
 }
 
 /** Set when a bundle was modified after `deno desktop` signed it (see buildApp). */
@@ -200,7 +215,19 @@ async function* walk(
   }
 }
 
-/** Merge two same-layout .apps into one universal .app at `dest` (lipo per Mach-O). */
+/** Whether two files have the same bytes (a missing file never does). */
+async function sameBytes(a: string, b: string): Promise<boolean> {
+  try {
+    const [x, y] = await Promise.all([Deno.readFile(a), Deno.readFile(b)]);
+    return x.length === y.length && x.every((v, i) => v === y[i]);
+  } catch {
+    return false;
+  }
+}
+
+/** Merge two same-layout .apps into one universal .app at `dest` (lipo per Mach-O). A Mach-O
+ * both builds carry with the same bytes (an already-universal bundled library) is kept as it is,
+ * and one only one build has (a library bundled for that arch alone) is carried over unmerged. */
 async function mergeUniversal(
   armApp: string,
   x86App: string,
@@ -210,14 +237,24 @@ async function mergeUniversal(
   await run(["cp", "-R", armApp, dest]);
   for (const file of await machOFiles(dest)) {
     const rel = file.slice(dest.length);
+    const x86 = `${x86App}${rel}`;
+    const inX86 = await Deno.stat(x86).then(() => true, () => false);
+    if (!inX86 || await sameBytes(file, x86)) continue;
     await run([
       "lipo",
       "-create",
       `${armApp}${rel}`,
-      `${x86App}${rel}`,
+      x86,
       "-output",
       file,
     ]);
+  }
+  for (const file of await machOFiles(x86App)) {
+    const target = `${dest}${file.slice(x86App.length)}`;
+    if (await Deno.stat(target).then(() => true, () => false)) continue;
+    const dir = target.slice(0, target.lastIndexOf("/"));
+    await Deno.mkdir(dir, { recursive: true });
+    await Deno.copyFile(file, target);
   }
 }
 

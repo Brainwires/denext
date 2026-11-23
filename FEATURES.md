@@ -747,9 +747,17 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   Schema-validated methods and events, called from the page with typed
   `desktopExtension<typeof ext>()` and `onDesktopEvent`), FFI and Node-API
   addons in the packaged app (`desktop.extraPermissions`, `"*"` for the unscoped
-  flag), and `ctx.runOnMainThread` for C code on the UI thread. `runDesktop`
-  resolves to `{ window, trust, emit }` for pushing OS events to the page. —
-  `src/desktop/extension.ts`, `src/build/desktop.ts`.
+  flag), the app's own native libraries bundled per target
+  (`desktop.bundle.libraries`, signed with the app, found with
+  `bundledLibraryPath(name)`), and `ctx.runOnMainThread` for C code on the UI
+  thread. `runDesktop` resolves to `{ window, trust, emit }` for pushing OS events
+  to the page. — `src/desktop/extension.ts`, `src/build/desktop.ts`,
+  `src/desktop/bundled-libraries.ts`, `src/build/desktop-bundle-libraries.ts`.
+- **Local IPC with no loopback port** — `localIpcPath` / `listenLocalIpc` / `connectLocalIpc`
+  from `denext/desktop`: one API over a `0600` Unix-domain socket in the app's data folder
+  (macOS, Linux) and a per-user named pipe (Windows), on the runtime's `node:net`, each
+  connection a pair of web streams; for the app, its sidecars and its CLI. —
+  `src/desktop/local-ipc.ts`.
 - **Terminals in a desktop app** — the `pty` capability (where the runtime has
   `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `attachPty` /
   `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`. Each terminal belongs
@@ -776,6 +784,12 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   `desktop.menu.window` items add New Window and Reopen Closed Window, and a Dock click with no
   window showing reopens the last closed one. — `src/desktop/app-windows.ts`,
   `src/desktop/window-store.ts`.
+- **The real window order, and drags between windows** — `getWindowOrder()` is the OS's own
+  z-order of the app's windows (macOS, Windows, Linux on X11; the focus order elsewhere),
+  `getPointer()` the pointer on the screen with the app window under it, and
+  `startDragSession()` / `onDragSession()` follow a drag across the app's windows from the OS,
+  with the pointer in each target page's own coordinates. — `src/desktop/window-drag.ts`,
+  `src/desktop/window.ts`.
 - **Native message boxes for extensions** — `host.confirm({ message, detail, buttons,
   defaultId, cancelId, kind })` asks with the OS's own app-modal box (NSAlert,
   TaskDialogIndirect, GtkMessageDialog), so a quit guard or a tray app can ask with no window
@@ -805,7 +819,8 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   `src/desktop/caps/window.ts`.
 - **Embedded web views** — `createWebView` (page) / `win.createWebView` (`desktop.ts`) put another
   site in a native view inside the window, isolated from the bridge, the app's storage and its
-  navigation guard (named or ephemeral partitions; popup, download and permission policies;
+  navigation guard (named or ephemeral partitions; popup, download and permission policies, or
+  app-decided downloads (`will-download`) and permission requests (`setPermissionRequestHandler`);
   http(s) only, never the app's origin, an optional `desktop.webViews.allowedOrigins`, a
   per-window `limit`), with navigation, `state`, `capture` (a `Blob`, at a chosen scale), isolated
   `evaluate`, stacking (`raise` / `lower` / `setZOrder`), zoom, find, print, DevTools (only where

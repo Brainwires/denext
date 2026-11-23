@@ -373,6 +373,9 @@ export {
 export {
   onQuickAction,
   type QuickAction,
+  type QuickActionEntry,
+  type QuickActionSeparator,
+  type QuickActionSubmenu,
   setQuickActions,
   useQuickAction,
 } from "./quick-actions.ts";

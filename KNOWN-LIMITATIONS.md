@@ -644,6 +644,35 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   `run.module` file, or an extension module, given as a path that leaves the project (`../x`) is
   embedded like one inside it. The config that names it is code the build already runs, so it is
   not a confinement boundary; keep the files an app should carry inside the project.
+- **A bundled native library needs the unscoped `--allow-ffi`.** `desktop.bundle.libraries` are
+  loaded with `Deno.dlopen`, and a baked grant names only paths known at packaging time; where the
+  app gets installed is not (a tarball, an AppImage or a dragged `.app` can be anywhere), and the
+  runtime has no folder token for the app's own bundle. So the app sets
+  `desktop.extraPermissions: { ffi: ["*"] }` (or the paths a `.deb` / `.rpm` installs to); the
+  package run, `denext desktop run` / `dev` and `denext desktop doctor` say so. A library that
+  links another bundled one finds it through `@rpath` / `@executable_path/../Frameworks` on macOS,
+  but install names are not rewritten.
+- **Detached sidecars:** only a module sidecar can detach (`detached: true`); a program
+  (`run.exec`) has no control channel denext can authenticate, so it cannot be found and stopped
+  again safely. A detached sidecar ends at logout and shutdown, and earlier where the app was
+  started in a kill-on-close job object (some Windows launchers), under systemd-logind's
+  `KillUserProcesses=yes`, or in a sandbox that ends the app's whole process tree (Flatpak, Snap).
+  Its registry record (control key, secrets) is readable by any process of the same user: the
+  boundary of the user's other app data, not a defense against same-user malware; on Windows its
+  `0600` / `0700` modes have no effect and the user profile's ACL is the protection. Its output
+  reaches only its log file (`logs: "file"` / `"both"`), so `ready.stdout` cannot be used, and an
+  exit of its own (not through `stop()` or denext's idle / registry checks) reads as a crash.
+- **Local IPC (`listenLocalIpc`):** `Deno.listen` / `Deno.connect` have no named-pipe transport, so
+  the helper runs on the runtime's `node:net`. A `unix:` network grant names one exact path and the
+  runtime expands no folder token in a network grant, so a packaged app cannot bake the per-user
+  socket or pipe path: it grants `netListen` / `netConnect: ["*"]` (and a write of
+  `$APPDATA/ipc`). On Windows the pipe has the default security descriptor (read access for
+  Everyone, so another local user can open it and read what the server writes), the name is
+  machine-wide (a process that creates it first makes the app's listen fail and receives its
+  clients): authenticate sensitive channels. A runtime that limits a pipe to its pending-instance
+  count (4, or `NODE_PENDING_PIPE_INSTANCES`) stops accepting for good once a connection arrives
+  with every instance in use; keep few connections open at once there (the runtime's pipes have no
+  instance limit once it carries that fix).
 - **The window's engine is the OS's** (WKWebView, WebView2, WebKitGTK), so features and bugs
   follow the OS; `--backend cef` ships Chromium everywhere (about 150 MB larger).
 - **Web MIDI in a packaged app's backend has no capability yet:** the package scripts bake no
@@ -688,7 +717,15 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   `https:` only). A reload of the window's page can't reach the views it had open (they stay until
   closed or the window closes). Web views need an engine that hosts them —
   `webViewCapabilities().supported` says; elsewhere `createWebView` rejects `unsupported` — and
-  WKWebView keeps a named partition only on macOS 14 and later (in memory before).
+  WKWebView keeps a named partition only on macOS 14 and later (in memory before). App-decided
+  downloads and permission requests (`downloads: "app"`, `permissions: "app"`) differ by engine:
+  pausing and resuming a download works on CEF and WebView2 only; WKWebView raises only camera and
+  microphone requests; WebKitGTK reports no requesting frame and needs 2.40 or later for download
+  events; CEF remembers an allowed or refused prompt per origin in the view's partition (camera,
+  microphone and screen are asked every time) and starts receiving a waiting download into its own
+  temporary file; WebView2 never raises a screen-capture request (it stays refused). An allowed
+  capture still needs the OS's consent for the app. A page's `save()` writes only into the app's
+  folders or a picked item, and its `reveal()` follows `revealInFileManager`'s rules.
 - **Sign-in on Windows and Linux runs in the system browser**, which reports no cancel (no OS
   auth session); denext shows a Cancel overlay and `timeoutMs` is the backstop.
 - **Clerk sign-in on Windows and Linux needs the app to handle its scheme.** When another app
@@ -716,8 +753,12 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   `unsupported`, as it does on Windows under a runtime whose `Deno.openPty` throws `NotSupported`
   there (`error.data.reason` says why). On Windows (10 1809 and later) the terminal is a ConPTY, whose output carries its
   own VT sequences (cursor moves, repaints) even for a program that writes plain text, so render it
-  with a terminal emulator (xterm.js), not as a log. `ptyInfo` names the foreground process and its
-  folder on Linux only.
+  with a terminal emulator (xterm.js), not as a log. `ptyInfo` names the terminal's foreground process (name, arguments, folder, id, process group)
+  where the runtime's `Deno.Pty` has `foreground()`; under a runtime without it, only Linux gives
+  the name and folder. Windows has no foreground process group: the process is found in the tree
+  below the terminal's program (a shell's child started last, through nested shells), so a
+  `start /b` job can be named instead, and `foregroundGroup` / `tty` are never set there. A process
+  of another user (`sudo`) hides its arguments and folder on every OS.
 - **Notifications:** on Linux a click that starts a quit app and a scheduled notification posted
   while the app is closed need a `.deb` / `.rpm` install, xdg-desktop-portal 1.19+ and a systemd
   user manager; macOS shows them only from a signed bundle. A click's tag, action and `data` are
@@ -778,7 +819,9 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **WebKitGTK `fetch` bodies aren't byte streams** ([WebKit bug 322545](https://bugs.webkit.org/show_bug.cgi?id=322545)):
   on Linux's WebView backend `getReader({ mode: "byob" })` throws.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move
-  its own window; CEF gets no paths from a file drop (use the webview backend).
+  its own window; no client is told how windows are stacked or where the pointer is outside its own
+  windows, so `getWindowOrder()` answers the focus order (`source: "focus"`), `getPointer()` answers
+  `null` and `startDragSession()` rejects `unsupported` (a drag stays within one window there); CEF gets no paths from a file drop (use the webview backend).
   `startFileDrag` resolves `"failed"` as a normal outcome with the pointer off the app's windows,
   and always under CEF (`fileDragOut` is `false`). Under CEF the runtime's clipboard `change` event
   doesn't fire where the compositor lacks data-control (`Deno.desktop.clipboard.capabilities()`

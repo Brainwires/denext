@@ -353,6 +353,22 @@ Deno.test("host: the login environment is read once per launch, for the sidecars
   await host.stopAll();
 });
 
+Deno.test("host: without an inheritedPath option the app's own PATH follows the login one", async () => {
+  const { launch, ctxs } = recordingLauncher();
+  const host = await createSidecarHost({
+    sidecars: [{ name: "a", run: { exec: "true" }, loginShellEnv: true }],
+    launcher: () => launch,
+    captureLoginShellEnv: () =>
+      Promise.resolve({ ok: true, shell: "/bin/sh", env: { PATH: "/login/bin" } }),
+  });
+  host.startAll();
+  await until(() => ctxs.length === 1);
+  const own = Deno.env.get("PATH");
+  assertEquals(ctxs[0].loginEnv, loginEnvPatch({ PATH: "/login/bin" }, [], own));
+  assert(ctxs[0].loginEnv?.PATH?.startsWith("/login/bin"));
+  await host.stopAll();
+});
+
 Deno.test("host: a failed read logs one warning and starts with the inherited environment", async () => {
   const { launch, ctxs } = recordingLauncher();
   let reads = 0;

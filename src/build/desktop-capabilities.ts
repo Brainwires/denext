@@ -1350,6 +1350,11 @@ function sidecarNeeds(
   if (typeof exec === "string") needs.push(...programNeeds(d.name, exec, bake));
   // Log files are `<data>/logs/<name>.log` (sidecar-host.ts).
   if (d.logs === "file" || d.logs === "both") needs.push(["write", ["$APPDATA/logs"]]);
+  // A detached sidecar's registry record (and its start lock) is `<data>/sidecars/<name>.json`
+  // (sidecar-detached.ts): the app writes it, the sidecar reads it.
+  if (d.detached !== undefined && d.detached !== false) {
+    needs.push(["write", ["$APPDATA/sidecars"]]);
+  }
   // A Node backend's packages are unpacked into the cache folder (sidecar-modules.ts).
   if ((d.run as { nodeModules?: unknown } | undefined)?.nodeModules !== undefined) {
     needs.push(["write", ["$CACHE"]]);

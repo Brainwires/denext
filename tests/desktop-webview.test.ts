@@ -159,6 +159,12 @@ class FakeWebView extends EventTarget {
     this.#rec("blur");
     return this.answer;
   }
+  controlDownload(id: number, action: string, path?: string) {
+    this.#rec("controlDownload", path === undefined ? [id, action] : [id, action, path]);
+  }
+  respondToPermissionRequest(id: number, allow: boolean) {
+    this.#rec("respondToPermissionRequest", [id, allow]);
+  }
   close() {
     this.#rec("close");
     if (this.closed) return;
@@ -238,6 +244,9 @@ const CAPS = {
   blur: true,
   keyUp: true,
   forwardKeysBeforeMenu: true,
+  downloadEvents: true,
+  downloadPause: true,
+  permissionRequests: true,
 };
 /** Every feature on. */
 const ALL_ON = {
@@ -258,6 +267,9 @@ const ALL_ON = {
   blur: true,
   keyUp: true,
   forwardKeysBeforeMenu: true,
+  downloadEvents: true,
+  downloadPause: true,
+  permissionRequests: true,
 };
 /** What an older runtime (or no engine) answers. */
 const NONE = {
@@ -278,6 +290,9 @@ const NONE = {
   blur: false,
   keyUp: false,
   forwardKeysBeforeMenu: false,
+  downloadEvents: false,
+  downloadPause: false,
+  permissionRequests: false,
 };
 const BOUNDS = { x: 10, y: 20, width: 300, height: 200 };
 
@@ -312,6 +327,9 @@ Deno.test("web views backend: capabilities from the runtime, supported: false on
       print: false,
       forwardKeys: false,
       blur: false,
+      downloadEvents: false,
+      downloadPause: false,
+      permissionRequests: false,
     },
   );
   // The engine without a feature: false.

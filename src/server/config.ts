@@ -1432,6 +1432,14 @@ export interface DesktopConfig {
    * {@link capabilities} and {@link extraPermissions}.
    */
   denoFlags?: string[];
+  /**
+   * Extra files the package scripts put inside the app bundle. `libraries`: the app's own native
+   * libraries (loaded with `Deno.dlopen`), one build per target, copied into each bundle
+   * (`Contents/Frameworks` on macOS, `lib/` on Linux, beside the `.exe` on Windows), code-signed
+   * with the app and carried by its installers; `bundledLibraryPath(name)` from `denext/desktop`
+   * finds the one the running app has.
+   */
+  bundle?: DesktopBundleConfig;
 }
 
 /**
@@ -1481,6 +1489,24 @@ export interface DesktopSidecarConfig {
   expose?: Record<string, string>;
   /** What it needs beyond the app's baseline permissions, baked into the packaged app. */
   permissions?: DesktopExtraPermissions;
+  /**
+   * Run it as its own OS process that outlives the app (a `run.module` sidecar only): the next
+   * launch finds it in the app's registry (`<app data>/sidecars/`) and reattaches over an
+   * authenticated loopback control connection instead of starting another. Quitting leaves it
+   * running; `sidecar(name).stop()`, `stopSidecars()` and a full-app update end it; another app
+   * version's instance is replaced at launch unless `keepAcrossUpdates`. `exitAfterMs` ends it
+   * once no app was attached that long. Its output goes to its log file (`logs: "file"` /
+   * `"both"`) or nowhere. Not with `ready.stdout`.
+   */
+  detached?: boolean | DesktopSidecarDetachedConfig;
+}
+
+/** {@link DesktopSidecarConfig.detached} with options. */
+export interface DesktopSidecarDetachedConfig {
+  /** End it once no app instance was attached this long, at least 1 000 ms (default: never). */
+  exitAfterMs?: number;
+  /** Keep an instance another app version started instead of replacing it (default `false`). */
+  keepAcrossUpdates?: boolean;
 }
 
 /**
@@ -1726,6 +1752,57 @@ export interface DesktopInstallersConfig {
   email?: string;
   /** One line describing the app, for the package managers. Default `"<name> desktop application"`. */
   description?: string;
+}
+
+/** {@link DesktopConfig.bundle}: extra files inside the packaged app. */
+export interface DesktopBundleConfig {
+  /**
+   * The app's own native libraries, one file per target (OS + architecture). Each entry is a
+   * project-relative path pattern (`"native/{target}/libaudio.{ext}"`: `{os}` is `darwin` /
+   * `linux` / `windows`, `{arch}` `arm64` / `x64`, `{target}` the Rust target triple such as
+   * `aarch64-apple-darwin`, `{ext}` `dylib` / `so` / `dll`), the same as `{ path, name?, optional? }`,
+   * or an explicit per-target map `{ name, files, optional? }` (a target with no entry ships
+   * without the library). A pattern's name is its file name without the `lib` prefix and the
+   * extension. A missing file fails packaging for that target unless the entry is `optional`.
+   * Paths are relative to the project (no `..`), each naming one `.dylib`, `.so` (`.so.N`) or `.dll`.
+   */
+  libraries?: Array<string | DesktopBundleLibraryPath | DesktopBundleLibraryFiles>;
+}
+
+/** A {@link DesktopBundleConfig.libraries} entry given as a path pattern. */
+export interface DesktopBundleLibraryPath {
+  /** The project-relative path pattern (`{os}`, `{arch}`, `{target}`, `{ext}`). */
+  path: string;
+  /** The name `bundledLibraryPath` takes. Default: the file name without `lib` and extension. */
+  name?: string;
+  /** Skip a target whose file is missing (with a note) instead of failing packaging. */
+  optional?: boolean;
+}
+
+/** A {@link DesktopBundleConfig.libraries} entry given as an explicit per-target map. */
+export interface DesktopBundleLibraryFiles {
+  /** The name `bundledLibraryPath` takes. */
+  name: string;
+  /** One project-relative file per target; a target with no entry ships without the library. */
+  files: DesktopBundleLibraryTargets;
+  /** Skip a listed target whose file is missing (with a note) instead of failing packaging. */
+  optional?: boolean;
+}
+
+/** The targets a {@link DesktopBundleLibraryFiles} map names, each a project-relative file. */
+export interface DesktopBundleLibraryTargets {
+  /** macOS on Apple silicon (`aarch64-apple-darwin`). */
+  "darwin-arm64"?: string;
+  /** macOS on Intel (`x86_64-apple-darwin`). */
+  "darwin-x64"?: string;
+  /** Linux on ARM64 (`aarch64-unknown-linux-gnu`). */
+  "linux-arm64"?: string;
+  /** Linux on x86-64 (`x86_64-unknown-linux-gnu`). */
+  "linux-x64"?: string;
+  /** Windows on ARM64 (`aarch64-pc-windows-msvc`). */
+  "windows-arm64"?: string;
+  /** Windows on x86-64 (`x86_64-pc-windows-msvc`). */
+  "windows-x64"?: string;
 }
 
 /** {@link DesktopConfig.update}: full-app self-update. */

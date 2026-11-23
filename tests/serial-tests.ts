@@ -45,6 +45,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/deno-exec.test.ts",
   "tests/dep-age.test.ts",
   "tests/desktop-app-dirs.test.ts",
+  "tests/desktop-bundle-libraries-macos.test.ts",
   "tests/desktop-deno-flags.test.ts",
   "tests/desktop-doctor.test.ts",
   // Points PATH at a stand-in `caffeinate` / `systemd-inhibit` (the keep-awake driver).

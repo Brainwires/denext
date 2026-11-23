@@ -6,7 +6,7 @@
 // real edit to the same file still must.
 
 import { assertEquals } from "@std/assert";
-import { join, toFileUrl } from "@std/path";
+import { basename, dirname, join, toFileUrl } from "@std/path";
 import { resolveProject } from "../src/build/paths.ts";
 import { createSpaDevState, getUnbundledCss } from "../src/build/spa/dev-state.ts";
 import { watch } from "../src/build/spa/dev-watch.ts";
@@ -138,10 +138,20 @@ Deno.test({
       await attached(watched, attach);
       watched.seen.length = 0;
 
+      // writeTextFile truncates, then writes: inotify reports the truncate, and a loaded
+      // watcher can hash the file while it is empty or partial, which counts as an edit. So
+      // write the same bytes to a temp file outside the watched dir (same filesystem) and
+      // rename it over the target: the watcher never sees a partial file.
+      const rewriteAtomically = async (path: string, text: string) => {
+        const tmp = join(dirname(dir), `${basename(dir)}.${basename(path)}.tmp`);
+        await Deno.writeTextFile(tmp, text);
+        await Deno.rename(tmp, path);
+      };
+
       const main = join(dir, "main.tsx");
       const before = await Deno.readTextFile(main);
       // The same bytes again: an event arrives, but nothing changed since the start.
-      await Deno.writeTextFile(main, before);
+      await rewriteAtomically(main, before);
       const marker = join(dir, "marker.txt");
       const markerSeen = watched.next(marker);
       await Deno.writeTextFile(marker, "after the rewrite\n");
@@ -154,7 +164,7 @@ Deno.test({
 
       // A new file seen once, then written with the same bytes: dropped the second time.
       const from = watched.seen.length;
-      await Deno.writeTextFile(marker, "after the rewrite\n");
+      await rewriteAtomically(marker, "after the rewrite\n");
       const second = join(dir, "second.txt");
       const secondSeen = watched.next(second);
       await Deno.writeTextFile(second, "x\n");

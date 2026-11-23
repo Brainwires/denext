@@ -67,11 +67,12 @@ import {
   createAppMenus,
   type DesktopAppMenuItemContext,
   MENU_ITEM_PREFIX,
+  menuSnapshotOf,
   WINDOW_APP_ITEM_PREFIX,
 } from "../app-menus.ts";
-import type { DesktopMenuSpec } from "../menu-config.ts";
+import { type DesktopMenuSpec, dockMenuProblem, type MenuSnapshotItem } from "../menu-config.ts";
 import { insertCustomMenus, managedBar, mergeWindowSubmenu } from "../menu-bar.ts";
-import { clickedId, nativeMenu } from "./menu.ts";
+import { clickedId, type NativeMenu, nativeMenu } from "./menu.ts";
 import { platformFacts, reasonText } from "./platform.ts";
 import { createPullQueue, type PullQueue } from "./queue.ts";
 import type { DesktopEventAppendOptions } from "../bridge-events.ts";
@@ -117,6 +118,8 @@ export interface DockLike extends EventTarget {
   bounce(critical?: boolean): void;
   setMenu?(menu: DesktopMenuItem[] | null): void;
   setVisible?(visible: boolean): void;
+  /** The Dock menu read back from the OS (a runtime with menu read-back), else absent. */
+  getMenu?(): unknown;
   /** The activation policy (runtime `3.0.0-denext.6`+, macOS); `false` where there is none. */
   setActivationPolicy?(policy: ActivationPolicy): boolean;
   /** The current activation policy, or `null` where there is none. */
@@ -231,6 +234,13 @@ export interface AppControllerOptions {
   readonly keyWindow?: () => { readonly id: string; readonly key?: string } | undefined;
   /** A custom item or a window's own Window-menu item was chosen: the backend's handlers. */
   readonly onMenuItem?: (id: string, ctx: DesktopAppMenuItemContext) => void;
+  /** A Dock menu item (the backend's or a page's) was chosen: the backend's handlers, once. */
+  readonly onDockMenuItem?: (id: string, ctx: { readonly keyWindow: KeyWindowRef }) => void;
+  /**
+   * The open windows' ids, the one that had the focus last first (a page's quick action goes to
+   * the first that subscribed); default the key window alone.
+   */
+  readonly focusOrder?: () => readonly string[];
 }
 
 /** What {@linkcode createAppController} returns. */
@@ -265,6 +275,14 @@ export interface AppController {
   setWindowMenuAppItems(windowId: string, items: unknown): void;
   /** Queue an action for every window (the backend tray's clicks; tests). */
   broadcast(action: AppAction): void;
+  /**
+   * The backend's Dock menu (`setDockMenu` in `desktop.ts`): checked, merged before the page's
+   * quick actions. Throws a {@linkcode DesktopCapError} (`validation`) for a bad menu or an id a
+   * page's quick action uses.
+   */
+  setDockMenu(items: unknown): void;
+  /** The Dock menu read back from the OS, or `null`. */
+  getDockMenu(): MenuSnapshotItem[] | null;
   /**
    * The backend tray is being made: pages asking for it (`backendTray`) wait for `pending`, so a
    * page that loads first still finds it.
@@ -358,6 +376,7 @@ interface LiveTray {
 /** The adopted window, as far as this module uses it. */
 type AppWindow = EventTarget & {
   setApplicationMenu?(menu: DesktopMenuItem[]): void;
+  getApplicationMenu?(): unknown;
   setSkipTaskbar?(skip: boolean): void;
   isVisible?(): boolean;
   show?(): void;
@@ -383,7 +402,12 @@ interface AppState {
   perWindow: boolean;
   /** Windows whose own `"menuclick"` is listened to (a runtime without app-level clicks). */
   readonly listened: WeakSet<object>;
-  dockMenuIds: Set<string>;
+  /** The backend's Dock menu (`setDockMenu` in `desktop.ts`). */
+  backendDock: NativeMenu | null;
+  /** The pages' Dock menu (`setQuickActions`), the last one set. */
+  pageDock: NativeMenu | null;
+  /** The windows whose page listens to its quick actions (`onQuickAction`). */
+  readonly dockSubscribers: Set<string>;
   nextTray: number;
   installed: boolean;
   readonly activity: UserActivityHandle;
@@ -492,6 +516,88 @@ function applyAppLevelMenu(s: AppState): void {
 /** Whether the dock menu can be set here (macOS with `Deno.dock.setMenu`). */
 function dockMenuWorks(s: AppState): boolean {
   return s.os === "darwin" && typeof s.dock?.setMenu === "function";
+}
+
+/** The first id of `menu` that `other` uses too. */
+function sharedId(menu: NativeMenu | null, other: NativeMenu | null): string | undefined {
+  if (!menu || !other) return undefined;
+  for (const id of menu.ids) if (other.ids.has(id)) return id;
+  return undefined;
+}
+
+/** The Dock menu: the backend's items, a separator, then the page's; `null` with neither. */
+function mergedDock(s: AppState): DesktopMenuItem[] | null {
+  const backend = s.backendDock?.items ?? [];
+  const page = s.pageDock?.items ?? [];
+  if (backend.length === 0 && page.length === 0) return null;
+  if (backend.length === 0) return page;
+  if (page.length === 0) return backend;
+  return [...backend, "separator", ...page];
+}
+
+/** Set the merged Dock menu where it can be set; whether it was. */
+function applyDock(s: AppState): boolean {
+  if (!dockMenuWorks(s)) return false;
+  s.dock!.setMenu!(mergedDock(s));
+  return true;
+}
+
+/** A menu that is empty (`null`, `[]`) as `null`, else checked and converted. */
+function dockMenuOf(raw: unknown): NativeMenu | null {
+  return raw === null || raw === undefined || (Array.isArray(raw) && raw.length === 0)
+    ? null
+    : nativeMenu(raw);
+}
+
+/** The backend's Dock items as the wire menu `nativeMenu` takes. */
+function dockWire(items: readonly unknown[]): unknown[] {
+  return items.map((entry) => {
+    const e = entry as Record<string, unknown>;
+    if (e.type === "separator") return "separator";
+    if (Array.isArray(e.submenu)) return { label: e.label, children: dockWire(e.submenu) };
+    return { id: e.id, label: e.label, enabled: e.enabled !== false, checked: e.checked === true };
+  });
+}
+
+/** `setDockMenu` from `desktop.ts`: checked, then merged with the page's. */
+function setBackendDock(s: AppState, items: unknown): void {
+  if (items === null || items === undefined) {
+    s.backendDock = null;
+  } else {
+    const problem = dockMenuProblem(items);
+    if (problem) throw invalid(`setDockMenu: items${problem[0]} ${problem[1]}`);
+    const menu = dockMenuOf(dockWire(items as unknown[]));
+    const clash = sharedId(menu, s.pageDock);
+    if (clash !== undefined) {
+      throw invalid(`setDockMenu: the id "${clash}" is a page's quick action (setQuickActions)`);
+    }
+    s.backendDock = menu;
+  }
+  applyDock(s);
+}
+
+/**
+ * The window whose page hears a click on one of the page's quick actions: the key window's page
+ * if it listens, else the page of the window focused most recently that listens, else the one
+ * that started listening last; `undefined` when no page listens.
+ */
+function dockTarget(s: AppState): string | undefined {
+  const subs = s.dockSubscribers;
+  if (subs.size === 0) return undefined;
+  const key = s.options.keyWindow?.()?.id;
+  if (key !== undefined && subs.has(key)) return key;
+  for (const id of s.options.focusOrder?.() ?? []) if (subs.has(id)) return id;
+  return [...subs].at(-1);
+}
+
+/** A Dock menu item was chosen: the backend's handlers once, a page's item to one page. */
+function dockClicked(s: AppState, id: string): void {
+  const page = s.pageDock?.ids.has(id) === true;
+  if (!page && s.backendDock?.ids.has(id) !== true) return;
+  s.options.onDockMenuItem?.(id, { keyWindow: keyWindowOf(s) });
+  if (!page) return;
+  const target = dockTarget(s);
+  if (target !== undefined) pushAction(s, { source: "dock", id }, target);
 }
 
 /** The window's action queue (made on first use; its signal goes to that window only). */
@@ -789,8 +895,20 @@ async function appCapabilities(s: AppState) {
     cameraAccessReason: facts.cameraAccessReason,
     bounce: typeof dock?.bounce === "function",
     dockMenu: dockMenuWorks(s),
+    menuSnapshot: menuSnapshotCapability(s, caps.snapshot),
     ...trayAndDockCapabilities(s, trayReason === null),
   };
+}
+
+/**
+ * Whether the native menus read back: the runtime's `snapshot` when it reports it; `false` with no
+ * read-back call at all; else `"unknown"` (the calls exist, the runtime does not say).
+ */
+function menuSnapshotCapability(s: AppState, reported: unknown): boolean | "unknown" {
+  if (typeof reported === "boolean") return reported;
+  const reads = typeof s.win?.getApplicationMenu === "function" ||
+    typeof s.dock?.getMenu === "function";
+  return reads ? "unknown" : false;
 }
 
 /** Whether the custom menus' calls work, and whether the runtime has an app-level menu. */
@@ -859,15 +977,32 @@ function menuAndDockMethods(s: AppState): DesktopCapability["methods"] {
     setDockMenu: {
       handler: (args) => {
         if (!dockMenuWorks(s)) return { applied: false };
-        const raw = argsOf(args).menu;
-        const menu = raw === null || (Array.isArray(raw) && raw.length === 0)
-          ? null
-          : nativeMenu(raw);
-        s.dock!.setMenu!(menu?.items ?? null);
-        s.dockMenuIds = menu?.ids ?? new Set();
-        return { applied: true };
+        const menu = dockMenuOf(argsOf(args).menu);
+        const clash = sharedId(menu, s.backendDock);
+        if (clash !== undefined) {
+          throw invalid(`menu: the id "${clash}" is the app's own Dock menu item (setDockMenu)`);
+        }
+        s.pageDock = menu;
+        return { applied: applyDock(s) };
       },
     },
+    subscribeDockMenu: {
+      // The page listens to its quick actions (`onQuickAction`) or stopped: a click on one goes
+      // to one listening page, never every window's.
+      handler: (args, ctx) => {
+        const windowId = ctx.windowId ?? "main";
+        if (argsOf(args).on === false) s.dockSubscribers.delete(windowId);
+        else s.dockSubscribers.add(windowId);
+        return null;
+      },
+    },
+    getAppMenu: {
+      handler: (_args, ctx) => {
+        const win = (ctx.window ?? s.win) as AppWindow | undefined;
+        return menuSnapshotOf(() => win?.getApplicationMenu?.());
+      },
+    },
+    getDockMenu: { handler: () => menuSnapshotOf(() => s.dock?.getMenu?.()) },
     setBadge: {
       handler: (args) => {
         const dock = s.dock;
@@ -1105,9 +1240,10 @@ function installAppEvents(s: AppState): void {
   s.installed = true;
   s.activity.install();
   appMenuClickTarget(s)?.addEventListener("menuclick", (e) => onAppMenuClick(s, e));
+  // The one listener on the Dock's clicks: each reaches the backend once, a page's item one page.
   s.dock?.addEventListener("menuclick", (e) => {
     const id = clickedId(e);
-    if (id !== undefined && s.dockMenuIds.has(id)) pushAction(s, { source: "dock", id });
+    if (id !== undefined) dockClicked(s, id);
   });
   // macOS: the Dock icon was clicked (the runtime leaves what happens to the app).
   s.dock?.addEventListener("reopen", (e) => {
@@ -1148,7 +1284,9 @@ export function createAppController(options: AppControllerOptions): AppControlle
     }),
     perWindow: false,
     listened: new WeakSet(),
-    dockMenuIds: new Set(),
+    backendDock: null,
+    pageDock: null,
+    dockSubscribers: new Set(),
     nextTray: 1,
     installed: false,
     activity: createUserActivity(options.api, options.emit),
@@ -1167,6 +1305,7 @@ export function createAppController(options: AppControllerOptions): AppControlle
     onPageLoad: (windowId = "main") => {
       destroyTrays(s, windowId);
       s.queues.get(windowId)?.clear();
+      s.dockSubscribers.delete(windowId);
     },
   };
   return {
@@ -1182,6 +1321,7 @@ export function createAppController(options: AppControllerOptions): AppControlle
       destroyTrays(s, windowId);
       s.queues.delete(windowId);
       s.model.windowClosed(windowId);
+      s.dockSubscribers.delete(windowId);
     },
     windowOpened: (windowId) => {
       if (s.model.active()) applyAppMenu(s, windowId);
@@ -1190,6 +1330,8 @@ export function createAppController(options: AppControllerOptions): AppControlle
     setMenuItemState: (itemId, state, windowId) => setMenuItemState(s, itemId, state, windowId),
     setWindowMenuAppItems: (windowId, items) => setWindowMenuAppItems(s, windowId, items),
     broadcast: (action) => pushAction(s, action),
+    setDockMenu: (items) => setBackendDock(s, items),
+    getDockMenu: () => menuSnapshotOf(() => s.dock?.getMenu?.()),
     backendTrayPending: (pending) => {
       s.trayPending = pending.catch(() => {});
     },

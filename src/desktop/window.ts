@@ -39,7 +39,12 @@
  * @module
  */
 
-import { desktopRpc, hasDesktopBridge, subscribeDesktopEvent } from "./bridge-client.ts";
+import {
+  desktopRpc,
+  hasDesktopBridge,
+  isDesktopBridgeError,
+  subscribeDesktopEvent,
+} from "./bridge-client.ts";
 
 export {
   type DesktopBridgeError,
@@ -58,12 +63,23 @@ export {
   type WebViewBounds,
   type WebViewCapabilities,
   webViewCapabilities,
+  type WebViewDownloadAction,
+  type WebViewDownloadDestination,
+  type WebViewDownloadDone,
+  type WebViewDownloadEvent,
+  type WebViewDownloadInterruptReason,
+  type WebViewDownloadItem,
+  type WebViewDownloadState,
   type WebViewEngine,
   type WebViewEventMap,
   type WebViewForwardKey,
   type WebViewHandle,
   type WebViewKeyEvent,
   type WebViewLoadState,
+  type WebViewPermission,
+  type WebViewPermissionHandler,
+  type WebViewPermissionRequest,
+  type WebViewPermissionRequestEvent,
   type WebViewPermissions,
   type WebViewState,
 } from "./webview.ts";
@@ -1549,6 +1565,270 @@ export async function getWindows(): Promise<DesktopWindowInfo[]> {
       ...(typeof o.key === "string" ? { key: o.key } : {}),
       ...(typeof o.title === "string" ? { title: o.title } : {}),
     }];
+  });
+}
+
+/** The app's windows front to back ({@linkcode getWindowOrder}). */
+export interface DesktopWindowOrder {
+  /** The ids of the windows that are on screen, the front-most first. */
+  readonly ids: string[];
+  /**
+   * `"os"`: the OS's own stacking order. `"focus"`: the OS does not tell (a Wayland session, a
+   * runtime without the call), so this is the order the windows last had the focus in; a window
+   * raised without the focus, or an always-on-top window, can be elsewhere in the real order.
+   */
+  readonly source: "os" | "focus";
+}
+
+/**
+ * The app's windows as they are stacked on screen right now, front to back: the real z-order
+ * from the OS where it tells (macOS, Windows, Linux on X11), else the order the windows last had
+ * the focus in. A hidden or minimized window, and one on another Space / virtual desktop /
+ * workspace, is not listed under `"os"`.
+ *
+ * @returns The window ids, and whether the OS gave the order.
+ * @example
+ * ```ts
+ * import { getWindowOrder } from "denext/desktop/window";
+ *
+ * const { ids, source } = await getWindowOrder();
+ * const front = ids[0]; // the window in front
+ * ```
+ */
+export async function getWindowOrder(): Promise<DesktopWindowOrder> {
+  const out = await desktopRpc<{ ids?: unknown; source?: unknown }>(WINDOWS, "order", {});
+  return {
+    ids: Array.isArray(out?.ids)
+      ? out.ids.filter((id): id is string => typeof id === "string")
+      : [],
+    source: out?.source === "os" ? "os" : "focus",
+  };
+}
+
+/** The pointer on the screen ({@linkcode getPointer}). */
+export interface DesktopPointer {
+  /** Where it is, in the coordinates of {@linkcode getScreens} and a window's bounds. */
+  readonly x: number;
+  /** Its vertical place (see `x`). */
+  readonly y: number;
+  /** The mouse buttons held, as a DOM `MouseEvent.buttons` (`1`: the primary button). */
+  readonly buttons: number;
+  /**
+   * The id of the app window a click there would go to (the window on top at that point, counting
+   * every application's windows), or `null`: another app's window, the desktop, a menu.
+   */
+  readonly window: string | null;
+  /** The pointer in that window's page (CSS pixels at zoom 1), when `window` is set. */
+  readonly clientX?: number;
+  /** Its vertical place in the page (see `clientX`). */
+  readonly clientY?: number;
+}
+
+/**
+ * Where the pointer is on the screen, the buttons held and the app window under it, asked of the
+ * OS: it answers outside the app's windows too, which a page's own pointer events do not.
+ *
+ * @returns The pointer, or `null` where the OS does not tell (a Wayland session, a runtime
+ *   without the call).
+ */
+export async function getPointer(): Promise<DesktopPointer | null> {
+  try {
+    return await desktopRpc<DesktopPointer>(WINDOWS, "pointer", {});
+  } catch (err) {
+    if (isDesktopBridgeError(err) && (err.code === "unsupported" || err.code === "unavailable")) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+/** What a window is told about a drag session passing over it ({@linkcode onDragSession}). */
+export interface DragSessionEvent {
+  /** The session's id. */
+  readonly session: string;
+  /**
+   * `"enter"`: the pointer came over this window. `"over"`: it moved within it. `"leave"`: it
+   * left (or the session was cancelled: `cancelled`). `"drop"`: the button was released here.
+   */
+  readonly type: "enter" | "over" | "leave" | "drop";
+  /** The id of the window that started the session (this one, for a drag within one window). */
+  readonly origin: string;
+  /** The pointer on the screen. */
+  readonly x: number;
+  /** Its vertical place (see `x`). */
+  readonly y: number;
+  /** The pointer in this window's page (CSS pixels at zoom 1): `enter`, `over`, `drop`. */
+  readonly clientX?: number;
+  /** Its vertical place in the page (see `clientX`). */
+  readonly clientY?: number;
+  /** The mouse buttons held. */
+  readonly buttons: number;
+  /** What the origin attached ({@linkcode DragSessionOptions.data}): `enter` and `drop`. */
+  readonly data?: unknown;
+  /** `leave`: the session was cancelled. */
+  readonly cancelled?: boolean;
+}
+
+/** What the window that started a drag session is told as it goes ({@linkcode DragSession}). */
+export interface DragSessionMove {
+  /** The pointer on the screen. */
+  readonly x: number;
+  /** Its vertical place (see `x`). */
+  readonly y: number;
+  /** The mouse buttons held. */
+  readonly buttons: number;
+  /** The id of the app window under the pointer, or `null`. */
+  readonly window: string | null;
+}
+
+/** How a drag session ended ({@linkcode DragSession.ended}). */
+export interface DragSessionEnd {
+  /** The id of the window it was dropped on, or `null` (dropped outside the app, or cancelled). */
+  readonly window: string | null;
+  /** The pointer on the screen at the end. */
+  readonly x: number;
+  /** Its vertical place (see `x`). */
+  readonly y: number;
+  /** It was cancelled: no window got a `drop`. */
+  readonly cancelled: boolean;
+  /**
+   * With `cancelled`: `"cancelled"` ({@linkcode DragSession.cancel}), `"timeout"` (ten minutes),
+   * `"unavailable"` (the OS stopped telling the pointer).
+   */
+  readonly reason?: string;
+}
+
+/** Options for {@linkcode startDragSession}. */
+export interface DragSessionOptions {
+  /**
+   * What is dragged, as JSON (at most 64 KiB): the window under the pointer gets a copy with
+   * `enter` and `drop`. It stays inside the app: nothing is put on the OS pasteboard.
+   */
+  readonly data?: unknown;
+  /** How often the pointer is sampled, in ms (8 to 100; default 16). */
+  readonly intervalMs?: number;
+  /** Called as the pointer moves or the window under it changes. */
+  readonly onMove?: (move: DragSessionMove) => void;
+}
+
+/** A drag session this window started ({@linkcode startDragSession}). */
+export interface DragSession {
+  /** Its id. */
+  readonly id: string;
+  /** Resolves once the button is released (a drop) or the session is cancelled. */
+  readonly ended: Promise<DragSessionEnd>;
+  /** Cancel it (Escape): the window under the pointer gets `leave`, none gets `drop`. */
+  cancel(): Promise<void>;
+}
+
+/**
+ * Start a drag that can cross the app's windows, from a `pointerdown` or `dragstart` handler
+ * (while the mouse button is held). The OS is asked where the pointer is once per frame for as
+ * long as the button stays down, so the session follows the pointer over any window of the app
+ * and outside them: `onMove` reports the pointer on the screen and the window under it, the window
+ * under the pointer hears {@linkcode onDragSession} events with the pointer in ITS page's
+ * coordinates, and releasing the button drops there.
+ *
+ * Nothing is drawn: show your own drag image (in the origin window, and in the target window on
+ * its `enter`). One session runs at a time. Rejects `unsupported` where the OS does not tell the
+ * pointer (a Wayland session, a runtime without the call), `not_dragging` when no button is held
+ * and `conflict` while another session runs.
+ *
+ * @param options The data to carry, the sampling interval and the move callback.
+ * @returns The session.
+ * @example
+ * ```ts
+ * import { onDragSession, startDragSession } from "denext/desktop/window";
+ *
+ * tab.addEventListener("pointerdown", async () => {
+ *   const drag = await startDragSession({ data: { tab: tab.id } });
+ *   const end = await drag.ended;
+ *   if (!end.cancelled && end.window === null) detachIntoNewWindow(tab, end.x, end.y);
+ * });
+ * // in every window:
+ * onDragSession((e) => {
+ *   if (e.type === "drop") adoptTab((e.data as { tab: string }).tab, e.clientX!, e.clientY!);
+ * });
+ * ```
+ */
+export async function startDragSession(options: DragSessionOptions = {}): Promise<DragSession> {
+  let settle!: (end: DragSessionEnd) => void;
+  const ended = new Promise<DragSessionEnd>((resolve) => (settle = resolve));
+  let id: string | undefined;
+  // Events can arrive before the call's answer: keep them until the id is known.
+  const early: Array<Record<string, unknown>> = [];
+  const handle = (e: Record<string, unknown>) => {
+    if (e.session !== id) return;
+    if (e.type === "move") {
+      options.onMove?.({
+        x: Number(e.x),
+        y: Number(e.y),
+        buttons: Number(e.buttons),
+        window: typeof e.window === "string" ? e.window : null,
+      });
+    } else if (e.type === "end") {
+      unsubscribe();
+      settle({
+        window: typeof e.window === "string" ? e.window : null,
+        x: Number(e.x),
+        y: Number(e.y),
+        cancelled: e.cancelled === true,
+        ...(typeof e.reason === "string" ? { reason: e.reason } : {}),
+      });
+    }
+  };
+  const unsubscribe = subscribeDesktopEvent(WINDOWS, "drag", (data) => {
+    const e = (data ?? {}) as Record<string, unknown>;
+    if (id === undefined) early.push(e);
+    else handle(e);
+  });
+  try {
+    const out = await desktopRpc<{ session?: unknown }>(WINDOWS, "dragStart", {
+      ...(options.data !== undefined ? { data: options.data } : {}),
+      ...(options.intervalMs !== undefined ? { intervalMs: options.intervalMs } : {}),
+    });
+    id = String(out?.session ?? "");
+  } catch (err) {
+    unsubscribe();
+    throw err;
+  }
+  for (const e of early.splice(0)) handle(e);
+  const session = id;
+  return {
+    id: session,
+    ended,
+    cancel: async () => {
+      await desktopRpc(WINDOWS, "dragCancel", { session });
+    },
+  };
+}
+
+/**
+ * Hear the drag sessions that pass over this window ({@linkcode startDragSession}, from this
+ * window or another of the app): `enter`, `over`, `leave` and `drop`, with the pointer in this
+ * page's coordinates and the data the origin attached.
+ *
+ * @param handler Called with each event.
+ * @returns A function that unsubscribes.
+ */
+export function onDragSession(handler: (event: DragSessionEvent) => void): () => void {
+  return subscribeDesktopEvent(WINDOWS, "drag", (data) => {
+    const e = (data ?? {}) as Record<string, unknown>;
+    const type = e.type;
+    if (type !== "enter" && type !== "over" && type !== "leave" && type !== "drop") return;
+    if (typeof e.session !== "string") return;
+    handler({
+      session: e.session,
+      type,
+      origin: String(e.origin ?? ""),
+      x: Number(e.x),
+      y: Number(e.y),
+      buttons: Number(e.buttons),
+      ...(typeof e.clientX === "number" ? { clientX: e.clientX } : {}),
+      ...(typeof e.clientY === "number" ? { clientY: e.clientY } : {}),
+      ...("data" in e ? { data: e.data } : {}),
+      ...(e.cancelled === true ? { cancelled: true } : {}),
+    });
   });
 }
 

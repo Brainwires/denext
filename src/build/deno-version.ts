@@ -29,12 +29,19 @@ export const FIRST_OWN_VERSION_RUNTIME = "3.0.0-rc.1";
 
 /**
  * The oldest denext runtime release this denext runs on when one is selected rather than bundled
- * (a project pin, a user default or `DENEXT_RUNTIME`; src/build/runtime-select.ts): the first
- * bundled pin of a channel-aware denext. Below it a project pin is an error naming `denext runtime
- * use --project`, and a user default is skipped with one notice. Features of newer runtimes keep
- * degrading through the `supports*()` gates in this file; this is the hard floor under them.
+ * (a project pin, a user default or `DENEXT_RUNTIME`; src/build/runtime-select.ts). Below it a
+ * project pin is an error naming `denext runtime use --project`, and a user default is skipped with
+ * one notice. Features of newer runtimes keep degrading through the `supports*()` gates in this
+ * file; this is the hard floor under them.
+ *
+ * It is at or below the bundled pins' `rollback` (the release run when the signed revoked-runtimes
+ * list revokes the bundled one), so the fallback is always a release this denext runs; the pin
+ * tooling never writes a rollback below it (scripts/desktop-pin-runtime.ts `rollbackFor`).
+ * `3.0.0-denext.25` passes every other check denext makes: laufey API 58
+ * ({@linkcode MIN_RUNTIME_LAUFEY_API}), esbuild 0.25.5, and every `FIRST_*_RUNTIME` gate in this
+ * file at or below it.
  */
-export const MIN_RUNTIME = "3.0.0-denext.27";
+export const MIN_RUNTIME = "3.0.0-denext.25";
 
 /**
  * The laufey API level denext's desktop glue needs from a selected runtime's Deno Desktop runtime

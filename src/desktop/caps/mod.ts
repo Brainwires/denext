@@ -24,6 +24,8 @@ import type {
 import type { DesktopCapability, DesktopSecureStore } from "../extension.ts";
 import { type SidecarDefinition, sidecarListError } from "../sidecar.ts";
 import { type DesktopAppDirs, desktopAppDirs } from "../app-dirs.ts";
+import { registerBundledLibraries } from "../bundled-libraries.ts";
+import { registerLocalIpcAppId } from "../local-ipc.ts";
 import { echoCapability } from "./echo.ts";
 import { deviceCapability } from "./device.ts";
 import { fsCapability } from "./fs.ts";
@@ -154,6 +156,11 @@ export interface DesktopRuntimeConfig {
   readonly desktop?: unknown;
   /** The config's `spa` section; only `spa.proxy` is read. */
   readonly spa?: unknown;
+  /**
+   * The `desktop.bundle.libraries` table the desktop sync writes (per target, each library's
+   * project-relative file), which `bundledLibraryPath` from `denext/desktop` reads.
+   */
+  readonly bundledLibraries?: unknown;
 }
 
 /** The default URL schemes `shell.openExternal` allows when enabled with `shell: true`. */
@@ -235,6 +242,9 @@ export async function resolveDesktopCapabilities(
   runtimeConfig: DesktopRuntimeConfig | undefined,
   options: ResolveDesktopOptions = {},
 ): Promise<ResolvedDesktop> {
+  // `bundledLibraryPath`'s table (`bundledLibraries`, written by the desktop sync), registered
+  // before an extension module loads, so one can look a library up as it starts.
+  registerBundledLibraries(runtimeConfig);
   const config = runtimeConfig as DenextConfig | undefined;
   const desktop = config?.desktop;
   const caps: DesktopCapabilitiesConfig | undefined = desktop?.capabilities;
@@ -245,6 +255,9 @@ export async function resolveDesktopCapabilities(
   const explicitId = options.appId ??
     (desktop as { app?: { identifier?: string } } | undefined)?.app?.identifier;
   const appId = explicitId ?? DEFAULT_APP_ID;
+  // `localIpcPath`'s default `appId`: only an explicit identifier, as the shared default would put
+  // every app's channels under one name.
+  registerLocalIpcAppId(explicitId);
   const dirs = desktopAppDirs(appId);
   const base = {
     ...desktopLaunchBase(config, caps, explicitId, dirs),

@@ -62,16 +62,22 @@ export interface CreateWebViewOptions {
   allowPopups?: "deny" | "same-view" | "browser";
   /**
    * What a download does: `"deny"` (default) cancels it, `"ask"` shows the OS save panel,
-   * `"browser"` cancels it in the view and opens its URL in the system browser.
+   * `"browser"` cancels it in the view and opens its URL in the system browser, `"app"` hands each
+   * download to the app as a `will-download` event's {@linkcode WebViewDownloadItem} (where
+   * `webViewCapabilities().downloadEvents`; elsewhere the create rejects `unsupported`). With
+   * `"app"`, a download requested while nothing listens to `will-download` is cancelled.
    */
-  downloads?: "deny" | "ask" | "browser";
+  downloads?: "deny" | "ask" | "browser" | "app";
   /**
    * The camera / microphone / geolocation / notification prompts: `"deny"` (default) refuses them
-   * without a prompt, `"ask"` asks the user. The object form also sets the clipboard: `prompts`
-   * (default `"deny"`) is the string form's choice, `clipboardRead` (default `false`) lets the
-   * site read the clipboard, `clipboardWrite` (default `true`) lets it write on a user gesture.
+   * without a prompt, `"ask"` asks the user, `"app"` asks the view's
+   * {@linkcode WebViewHandle.setPermissionRequestHandler} (where
+   * `webViewCapabilities().permissionRequests`; elsewhere the create rejects `unsupported`). The
+   * object form also sets the clipboard: `prompts` (default `"deny"`) is the string form's choice,
+   * `clipboardRead` (default `false`) lets the site read the clipboard, `clipboardWrite` (default
+   * `true`) lets it write on a user gesture.
    */
-  permissions?: "deny" | "ask" | WebViewPermissions;
+  permissions?: "deny" | "ask" | "app" | WebViewPermissions;
   /**
    * The context menu: `"native"` (default) is the engine's own; `"app"` suppresses it so the page
    * draws its own from the `context-menu` event (which fires in both modes).
@@ -131,7 +137,7 @@ export interface WebViewKeyEvent {
 /** The object form of {@linkcode CreateWebViewOptions.permissions}. */
 export interface WebViewPermissions {
   /** Camera / microphone / geolocation / notification prompts (default `"deny"`). */
-  prompts?: "deny" | "ask";
+  prompts?: "deny" | "ask" | "app";
   /** Whether the site may read the clipboard (default `false`). */
   clipboardRead?: boolean;
   /** Whether the site may write the clipboard on a user gesture (default `true`). */
@@ -195,9 +201,203 @@ export interface WebViewEventMap {
    * forwarded stay the page's.
    */
   keyup: WebViewKeyEvent & { type: "keyup"; forwarded: true };
+  /**
+   * A download was requested (`downloads: "app"`), once per download: decide it with the item's
+   * `save` / `saveAs` / `cancel`, and follow it with its `on("updated" | "done")`. A download
+   * requested while nothing listens to this event is cancelled.
+   */
+  "will-download": WebViewDownloadItem;
+  /** Each of the runtime's download events, as it reports it (`downloads: "app"`). */
+  download: WebViewDownloadEvent;
+  /**
+   * Each permission request (`permissions: "app"`) as the runtime reports it, and its
+   * cancellation (the page navigated, the engine withdrew it). The handler set with
+   * {@linkcode WebViewHandle.setPermissionRequestHandler} answers it.
+   */
+  "permission-request": WebViewPermissionRequestEvent;
   /** The view closed (its `close()`, or its window closed). Nothing follows it. */
   closed: Record<string, never>;
 }
+
+/** Where a download is in its life. */
+export type WebViewDownloadState =
+  | "requested"
+  | "progressing"
+  | "completed"
+  | "cancelled"
+  | "interrupted";
+
+/** Why a download was interrupted. */
+export type WebViewDownloadInterruptReason = "network" | "server" | "file" | "crash" | "failed";
+
+/** What a download item's control calls send the runtime. */
+export type WebViewDownloadAction = "save" | "saveAs" | "cancel" | "pause" | "resume";
+
+/**
+ * One of the runtime's download events ({@linkcode WebViewEventMap}'s `download`): every event of
+ * one download carries the same `id`, `url` and `filename`.
+ */
+export interface WebViewDownloadEvent {
+  /** The download's id (the runtime's). */
+  id: number;
+  /**
+   * `"requested"` first (nothing is written until it is answered), then `"progressing"` (at most
+   * 5 a second, and once on each pause / resume); `"completed"` and `"cancelled"` are the last
+   * event, and so is `"interrupted"` unless `canResume` is `true`.
+   */
+  state: WebViewDownloadState;
+  /** What is being downloaded. */
+  url: string;
+  /** The suggested file name, reduced to a bare name (never a path). */
+  filename: string;
+  /** Its MIME type, when the server says. */
+  mimeType?: string;
+  /** Its size in bytes, left out while unknown. */
+  totalBytes?: number;
+  /** The bytes received so far. */
+  receivedBytes: number;
+  /** Where it is being saved, once decided. */
+  path?: string;
+  /** Set while it is paused. */
+  paused?: true;
+  /** Whether `resume()` can restart it after an interruption. */
+  canResume?: boolean;
+  /** Why it was interrupted. */
+  reason?: WebViewDownloadInterruptReason;
+}
+
+/**
+ * Where {@linkcode WebViewDownloadItem.save} writes a download from the page: a file in one of the
+ * app's folders (`directory` `"data"`, `"cache"` or `"documents"`, `path` relative to it, missing
+ * folders created), or a writable picked item (`{ picked: handle }` from `saveFile` — the file
+ * itself, `path` `""` — or from `pickFolder`, `path` relative to the folder). The same rules as
+ * the `fs` capability's and `startFileDrag`'s: no absolute path, no `..` or symlink out of the
+ * folder, never the runtime's own folders, and a read-only handle refused.
+ */
+export interface WebViewDownloadDestination {
+  /** An app folder, or a picked file or folder. */
+  readonly directory: "data" | "cache" | "documents" | { readonly picked: string };
+  /** The file, relative to the folder (`""` for a picked file itself). */
+  readonly path: string;
+}
+
+/** What a download item's `done` listeners get: how it ended. */
+export interface WebViewDownloadDone {
+  /** `"completed"`, `"cancelled"` (also when its view closed) or `"interrupted"`. */
+  readonly state: "completed" | "cancelled" | "interrupted";
+  /** Why it was interrupted. */
+  readonly reason?: WebViewDownloadInterruptReason;
+  /** Where it was saved, when it got that far. */
+  readonly path?: string;
+}
+
+/**
+ * A download of a view created with `downloads: "app"` (the `will-download` event): its identity,
+ * its live state, and the calls that decide and control it. Each call resolves once the runtime
+ * took it and rejects with the desktop error shape: `validation` (a download that is over, an
+ * action its state does not take, a bad destination), `unsupported` (`pause` / `resume` where
+ * `webViewCapabilities().downloadPause` is `false`), `forbidden` (a destination outside the rules),
+ * `closed` (its view closed), `failed`.
+ */
+export interface WebViewDownloadItem {
+  /** The download's id (the runtime's; the raw `download` events carry it). */
+  readonly id: number;
+  /** What is being downloaded. */
+  readonly url: string;
+  /** The suggested file name (a bare name, never a path). */
+  readonly filename: string;
+  /** Its MIME type, when the server says. */
+  readonly mimeType?: string;
+  /** Its size in bytes, when known at the request. */
+  readonly totalBytes?: number;
+  /** The bytes received so far. */
+  readonly receivedBytes: number;
+  /** Where it is in its life. */
+  readonly state: WebViewDownloadState;
+  /** Where it is being saved, once decided. */
+  readonly path?: string;
+  /** Whether it is paused. */
+  readonly paused: boolean;
+  /** Whether `resume()` can restart it after an interruption. */
+  readonly canResume: boolean;
+  /**
+   * Answer the request by writing the download to `target`: from the page a
+   * {@linkcode WebViewDownloadDestination}; in `desktop.ts` an absolute path (its folder must
+   * exist, a file there is replaced; the app needs write permission for it).
+   */
+  save(target: WebViewDownloadDestination | string): Promise<void>;
+  /** Answer the request with the OS save panel (dismissing it cancels the download). */
+  saveAs(): Promise<void>;
+  /** Cancel it, at any time before its last event. */
+  cancel(): Promise<void>;
+  /** Pause it (where `webViewCapabilities().downloadPause`). */
+  pause(): Promise<void>;
+  /** Resume it after a pause, or restart an interrupted one whose `canResume` is `true`. */
+  resume(): Promise<void>;
+  /**
+   * Show the saved file in Finder / Explorer / the file manager. Rejects `not_found` before it
+   * has a path. From the page this is `revealInFileManager`, with its rules: the `shell` capability
+   * with `reveal` on, and a file in the app's folders or the picked file it was saved to (a file
+   * saved through `saveAs()` or into a picked folder is outside them: `forbidden`).
+   */
+  reveal(): Promise<void>;
+  /**
+   * Listen for `"updated"` (each progress event, pause and resume, with the item) or `"done"`
+   * (once, with how it ended). Returns the unsubscribe.
+   */
+  on(event: "updated", fn: (item: WebViewDownloadItem) => void): () => void;
+  /** See the `"updated"` overload: `"done"` fires once, with how the download ended. */
+  on(event: "done", fn: (done: WebViewDownloadDone) => void): () => void;
+}
+
+/**
+ * A permission a page in a web view asks for (`"camera"`, `"microphone"`, `"screen"`,
+ * `"geolocation"`, `"notifications"`, `"midi"`, `"pointer-lock"`, `"storage-access"`, `"sensors"`,
+ * `"clipboard-read"`, `"window-management"`, `"local-fonts"`, `"file-system"`,
+ * `"multiple-downloads"`, `"autoplay"`; the engine decides which it raises).
+ */
+export type WebViewPermission = string;
+
+/** A permission request as the handler gets it ({@linkcode WebViewPermissionHandler}). */
+export interface WebViewPermissionRequest {
+  /** The request's id (the runtime's; the raw `permission-request` events carry it). */
+  readonly id: number;
+  /** The origin that asked (`"https://example.com"`). */
+  readonly origin: string;
+  /** What it asked for; one request may name several. */
+  readonly permissions: readonly WebViewPermission[];
+  /** The frame that asked, where the engine says. */
+  readonly frame?: { readonly isMain: boolean; readonly origin?: string };
+}
+
+/** The raw `permission-request` event: a request, or its cancellation. */
+export type WebViewPermissionRequestEvent =
+  | {
+    /** The request's id. */
+    id: number;
+    /** A new request. */
+    state: "requested";
+    /** The origin that asked. */
+    origin: string;
+    /** What it asked for. */
+    permissions: WebViewPermission[];
+    /** The frame that asked, where the engine says. */
+    frame?: { isMain: boolean; origin?: string };
+  }
+  | {
+    /** The request's id. */
+    id: number;
+    /** It went away unanswered (and was refused). */
+    state: "cancelled";
+  };
+
+/**
+ * Answers a web view's permission requests: `true` allows, anything else refuses. A throw, a
+ * rejection or no answer within 5 minutes refuses.
+ */
+export type WebViewPermissionHandler = (
+  request: WebViewPermissionRequest,
+) => boolean | Promise<boolean>;
 
 /** What {@linkcode WebViewHandle.state} answers. */
 export interface WebViewState {
@@ -254,6 +454,12 @@ export interface WebViewCapabilities {
   keyUp: boolean;
   /** Whether `forwardKeys` entries take `beforeMenu: true`. */
   forwardKeysBeforeMenu: boolean;
+  /** Whether `downloads: "app"` works (the `will-download` and `download` events). */
+  downloadEvents: boolean;
+  /** Whether a download item's `pause()` / `resume()` work. */
+  downloadPause: boolean;
+  /** Whether `permissions: "app"` works ({@linkcode WebViewHandle.setPermissionRequestHandler}). */
+  permissionRequests: boolean;
 }
 
 /** A web view (from {@linkcode createWebView}, or `win.createWebView` in `desktop.ts`). */
@@ -334,6 +540,13 @@ export interface WebViewHandle {
   /** Listen to one of its events; returns the unsubscribe. */
   on<K extends keyof WebViewEventMap>(event: K, fn: (e: WebViewEventMap[K]) => void): () => void;
   /**
+   * Answer the view's permission requests (`permissions: "app"`) with `handler`, or `null` to
+   * refuse every request at once (the default). The handler allows with `true`; anything else, a
+   * throw, a rejection or no answer within 5 minutes refuses. A request cancelled before the
+   * answer drops the answer. The raw `permission-request` event fires either way.
+   */
+  setPermissionRequestHandler(handler: WebViewPermissionHandler | null): void;
+  /**
    * Close it (`closed` fires; the handle's calls reject `closed` after). A view that had the
    * keyboard hands it back to the app's page.
    */
@@ -352,6 +565,8 @@ const EVENT_NAMES: ReadonlySet<string> = new Set([
   "context-menu",
   "keydown",
   "keyup",
+  "download",
+  "permission-request",
   "closed",
 ]);
 
@@ -424,13 +639,23 @@ function fire(v: ViewState, event: string, detail: unknown): void {
     }));
 }
 
-/** The view closed: `closed` fires once, then every listener goes. */
+/** The view closed: its downloads end, `closed` fires once, then every listener goes. */
 function markClosed(v: ViewState): void {
   if (v.closed) return;
   v.closed = true;
   router?.views.delete(v.id);
+  v.media?.closed();
   fire(v, "closed", {});
   v.listeners.clear();
+}
+
+/** Show a saved download in the file manager through the `shell` capability's `reveal`. */
+async function revealSaved(path: string, savedTo: unknown): Promise<void> {
+  const to = savedTo as { directory?: { picked?: unknown }; path?: unknown } | undefined;
+  const handle = to?.directory?.picked;
+  // Saved to a picked file: reveal it by its handle; anything else by its path.
+  const args = typeof handle === "string" && to?.path === "" ? { handle } : { path };
+  await desktopRpc("shell", "reveal", args);
 }
 
 /** One call on view `v` (rejects `closed` once it closed, without a request). */
@@ -470,6 +695,22 @@ function handleOf(v: ViewState): WebViewHandle {
       await viewCall(v, "close");
       markClosed(v);
     },
+    control: async (download, action, target) => {
+      await viewCall(v, "controlDownload", {
+        download,
+        action,
+        ...(target !== undefined ? { target } : {}),
+      });
+    },
+    respond: async (request, allow) => {
+      await viewCall(v, "respondToPermissionRequest", { request, allow });
+    },
+    reveal: revealSaved,
+    fail: (code, message) => desktopError(CAP, "webViewCall", code, message),
+    onListenerError: (err) =>
+      queueMicrotask(() => {
+        throw err;
+      }),
   });
 }
 
@@ -481,8 +722,10 @@ function adopt(id: string): WebViewHandle {
   r.pending.delete(id);
   const process = (e: WireEvent) => {
     if (v.closed) return;
-    if (e.event === "closed") markClosed(v);
-    else fire(v, e.event, e.detail);
+    if (e.event === "closed") return markClosed(v);
+    fire(v, e.event, e.detail);
+    if (e.event === "download") v.media?.download(e.detail);
+    else if (e.event === "permission-request") v.media?.permissionRequest(e.detail);
   };
   // Events that came before the handle are delivered once the caller had a chance to subscribe
   // (the create's continuation runs first); later ones queue behind them, in order.
@@ -538,7 +781,7 @@ export async function createWebView(opts: CreateWebViewOptions): Promise<WebView
  * Whether this window can host web views, on which engine, and which of their features work
  * (`capture`, `evaluate`, `zOrder`, `zoom`, `find`, `devTools`, `contextMenu`, `print`,
  * `clipboard`, `menuAccelerators`, `unhandledKeys`, `forwardKeys`, `blur`, `keyUp`,
- * `forwardKeysBeforeMenu`). On a runtime without web views it resolves `supported: false` and every feature
+ * `forwardKeysBeforeMenu`, `downloadEvents`, `downloadPause`, `permissionRequests`). On a runtime without web views it resolves `supported: false` and every feature
  * `false`; a feature the engine or runtime lacks is `false`, and its call rejects `unsupported`.
  *
  * @returns The capabilities. Off desktop it rejects `unavailable`.
@@ -570,6 +813,9 @@ export async function webViewCapabilities(): Promise<WebViewCapabilities> {
     blur: flag("blur"),
     keyUp: flag("keyUp"),
     forwardKeysBeforeMenu: flag("forwardKeysBeforeMenu"),
+    downloadEvents: flag("downloadEvents"),
+    downloadPause: flag("downloadPause"),
+    permissionRequests: flag("permissionRequests"),
   };
 }
 

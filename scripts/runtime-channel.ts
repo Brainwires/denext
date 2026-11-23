@@ -39,6 +39,7 @@
 //   deno task runtime:pin <version> [--allow-yanked]
 //       copy a published release document into src/build/deno-toolchain-pin.json and
 //       desktop-runtime-pin.json (the bundled pin), the pins they replace kept as `rollback`
+//       (never one older than MIN_RUNTIME, which denext refuses to run)
 //   deno task runtime:channel expiry      warn when the published index expires within 15 days
 //   deno task runtime:channel floor [--file <keys module>]
 //       raise the compiled-in minimum sequence (RUNTIME_CHANNEL_MIN_SEQUENCE in
@@ -76,7 +77,7 @@ import {
   verifyReleaseDocument,
   verifyRuntimeChannel,
 } from "../src/build/runtime-channel.ts";
-import { compareDenoVersions } from "../src/build/deno-version.ts";
+import { compareDenoVersions, MIN_RUNTIME } from "../src/build/deno-version.ts";
 import { toBase64 } from "../src/build/ota-signing.ts";
 import {
   ghApi,
@@ -144,6 +145,8 @@ export interface ChannelDeps {
   readonly compat: (tag: string, flags: Flags) => Promise<CompatLeg[]>;
   /** Whether a runtime version is revoked (default: the published revoked-runtimes list). */
   readonly revoked: (version: string) => Promise<boolean>;
+  /** The oldest release `pin` keeps as the rollback (default {@linkcode MIN_RUNTIME}). */
+  readonly minRuntime?: string;
   /** The bundled pin files `pin` writes and `--bundled` reads (default: the checkout's). */
   readonly pinFiles?: { readonly toolchain: string; readonly desktop: string };
   /** The entries file (default {@linkcode ENTRIES_FILE}). */
@@ -985,15 +988,22 @@ async function servedDocument(
   return fail(`no served copy of the ${entry.version} release document verifies`);
 }
 
-/** `pin` with its `rollback` (the pin it replaces, unless that is revoked), as written. */
-async function withRollback<P extends { version: string; rollback?: R }, R>(
+/**
+ * `pin` with its `rollback` (the pin it replaces, unless that is revoked or older than
+ * {@linkcode MIN_RUNTIME}), as written.
+ */
+async function withRollback<
+  P extends { version: string; rollback?: R },
+  R extends { version: string },
+>(
   pin: object,
   file: string,
   version: string,
   deps: ChannelDeps,
   of: (old: P) => R,
 ): Promise<{ text: string; rollback?: R }> {
-  const rollback = await rollbackFor(await readPin<P>(file), version, deps.revoked, of);
+  const floor = deps.minRuntime ?? MIN_RUNTIME;
+  const rollback = await rollbackFor(await readPin<P>(file), version, deps.revoked, of, floor);
   const text = JSON.stringify({ ...pin, ...(rollback ? { rollback } : {}) }, null, 2) + "\n";
   return { text, rollback };
 }

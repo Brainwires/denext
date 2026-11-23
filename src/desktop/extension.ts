@@ -271,7 +271,9 @@ export interface DesktopConfirmOptions {
  * to what the static {@linkcode DesktopCapability.onWindowOpened} hooks receive, `onBeforeQuit`
  * can refuse a quit, `quit()` quits again, `onWindowMenuItem` takes the app's own Window-menu
  * items, `setMenu` / `setMenuItemState` / `setWindowMenuAppItems` / `onAppMenuItem` drive the app's
- * own top-level menus and each window's Window-menu items, `onSecondInstance` hears the app launched again, `onWillNavigate` sees (and may refuse)
+ * own top-level menus and each window's Window-menu items, `setDockMenu` / `onDockMenuItem` the
+ * app's own Dock menu (and every Dock-menu click), `getApplicationMenu` / `getDockMenu` read the
+ * native menus back for self-tests, `onSecondInstance` hears the app launched again, `onWillNavigate` sees (and may refuse)
  * every top-level navigation, and `windows()` lists the open windows now. Each subscription returns its unsubscribe.
  */
 export interface DesktopExtensionHost extends DesktopAppMenusApi {

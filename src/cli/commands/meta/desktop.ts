@@ -39,6 +39,11 @@ export const DESKTOP_ADD_FLAGS: readonly FlagSpec[] = [
   },
   { name: "proxy", type: "boolean", help: "add sidecar: point spa.proxy at it" },
   {
+    name: "detached",
+    type: "boolean",
+    help: "add sidecar: run the --entry module as its own process that outlives the app",
+  },
+  {
     name: "rp-id",
     type: "string",
     valueName: "<domain>",

@@ -42,8 +42,10 @@ Deno.test("denext/mobile imports the desktop modules only lazily", async () => {
   for await (const entry of Deno.readDir(ROOT + "src/mobile")) {
     if (!entry.name.endsWith(".ts")) continue;
     const code = stripComments(await Deno.readTextFile(`${ROOT}src/mobile/${entry.name}`));
-    const staticImports = [...code.matchAll(/^\s*(?:import|export)\b[^;]*?from\s+"([^"]+)"/gm)]
-      .map((m) => m[1]);
+    // `import type` / `export type` are erased at compile time, so they load nothing.
+    const staticImports = [
+      ...code.matchAll(/^\s*(?:import|export)\b(?!\s+type\b)[^;]*?from\s+"([^"]+)"/gm),
+    ].map((m) => m[1]);
     for (const spec of staticImports) {
       assert(!spec.includes("../desktop/"), `${entry.name} statically imports ${spec}`);
     }

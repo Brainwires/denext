@@ -170,6 +170,62 @@ export interface DesktopWindowMenuAppItem {
   readonly type?: "normal" | "separator";
 }
 
+/**
+ * One entry of the backend's Dock menu (macOS; `setDockMenu` on `runDesktop`'s result and an
+ * extension's host, `runDesktop({ dockMenu })`): an item (`id`, `label`, optionally `enabled`
+ * and `checked`), a separator, or a submenu (`label`, `submenu`). Ids are unique across every
+ * level and across the pages' quick actions merged into the same menu.
+ */
+export type DesktopDockMenuItem =
+  | {
+    /** What a click reports to `onDockMenuItem` (unique, non-empty). */
+    readonly id: string;
+    /** The label. */
+    readonly label: string;
+    /** Selectable (default `true`). */
+    readonly enabled?: boolean;
+    /** A checkmark next to the label. */
+    readonly checked?: boolean;
+  }
+  | {
+    /** A separator line. */
+    readonly type: "separator";
+  }
+  | {
+    /** The submenu's label. */
+    readonly label: string;
+    /** Its entries. */
+    readonly submenu: readonly DesktopDockMenuItem[];
+  };
+
+/**
+ * One item of a menu read back from the OS (`getApplicationMenu`, `getDockMenu`; for
+ * self-tests): what the native menu holds now, the items the OS or the runtime added included.
+ */
+export interface MenuSnapshotItem {
+  /** An item, a submenu or a separator. */
+  readonly type: "item" | "submenu" | "separator";
+  /** The title the native item shows. */
+  readonly label: string;
+  /** A custom item's id. */
+  readonly id?: string;
+  /** The role an item was built from. */
+  readonly role?: string;
+  /** Selectable. */
+  readonly enabled: boolean;
+  /** Shows a checkmark. */
+  readonly checked: boolean;
+  /** Shown. */
+  readonly visible: boolean;
+  /**
+   * The key the native item is bound to, in canonical form (`"Ctrl+Alt+Shift+Super+<Key>"` with
+   * the modifiers present; Command is `Super`).
+   */
+  readonly accelerator?: string;
+  /** A submenu's items. */
+  readonly submenu?: readonly MenuSnapshotItem[];
+}
+
 /** The most custom top-level menus. */
 const MAX_MENUS = 16;
 /** The longest menu id. */
@@ -441,6 +497,70 @@ function windowAppItemProblem(entry: unknown, seen: Set<string>): Problem | null
   if (seen.has(entry.id as string)) return [".id", `"${entry.id}" is used by another item`];
   seen.add(entry.id as string);
   return null;
+}
+
+/** Why one Dock menu entry is not one. */
+function dockEntryProblem(entry: unknown, depth: number, walk: MenuWalk): Problem | null {
+  if (--walk.left < 0) return ["", `the Dock menu holds at most ${MAX_MENU_ENTRIES} entries`];
+  if (!isObject(entry)) {
+    return ["", 'must be { id, label, enabled?, checked? }, { type: "separator" } or a submenu'];
+  }
+  if (entry.type === "separator") return null;
+  if (entry.type !== undefined) return [".type", 'must be "separator" (or left out)'];
+  return entry.submenu !== undefined
+    ? dockSubmenuProblem(entry, depth, walk)
+    : dockItemProblem(entry, walk);
+}
+
+/** Why a Dock submenu (`{ label, submenu }`) is not one. */
+function dockSubmenuProblem(
+  entry: Record<string, unknown>,
+  depth: number,
+  walk: MenuWalk,
+): Problem | null {
+  const problem = first(
+    labelProblem(entry.label),
+    depth >= MAX_MENU_DEPTH ? [".submenu", `submenus nest at most ${MAX_MENU_DEPTH} deep`] : null,
+  );
+  if (problem) return problem;
+  const inner = dockEntriesProblem(entry.submenu, depth + 1, walk);
+  return inner ? [`.submenu${inner[0]}`, inner[1]] : null;
+}
+
+/** Why a Dock item (`{ id, label, enabled?, checked? }`) is not one; its id joins `walk.ids`. */
+function dockItemProblem(entry: Record<string, unknown>, walk: MenuWalk): Problem | null {
+  const problem = first(
+    idProblem(entry.id),
+    labelProblem(entry.label),
+    boolProblem(entry, "enabled"),
+    boolProblem(entry, "checked"),
+  );
+  if (problem) return problem;
+  const id = entry.id as string;
+  if (walk.ids.has(id)) return [".id", `"${id}" is used by another Dock menu item`];
+  walk.ids.add(id);
+  return null;
+}
+
+/** Why a list of Dock menu entries is not one (`[i].path`). */
+function dockEntriesProblem(items: unknown, depth: number, walk: MenuWalk): Problem | null {
+  if (!Array.isArray(items)) return ["", "must be an array of Dock menu items"];
+  for (const [i, entry] of items.entries()) {
+    const problem = dockEntryProblem(entry, depth, walk);
+    if (problem) return [`[${i}]${problem[0]}`, problem[1]];
+  }
+  return null;
+}
+
+/**
+ * Why `items` is not the backend's Dock menu ({@linkcode DesktopDockMenuItem}s), as
+ * `[path, problem]` (like `"[1].submenu[0].id"`), or `null`. Ids are unique across every level.
+ *
+ * @param items The entries.
+ * @returns The problem, or `null`.
+ */
+export function dockMenuProblem(items: unknown): Problem | null {
+  return dockEntriesProblem(items, 1, { left: MAX_MENU_ENTRIES, ids: new Set() });
 }
 
 /**

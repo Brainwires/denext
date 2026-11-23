@@ -15,7 +15,10 @@ import {
   formatDesktopCapabilityTable,
 } from "../../build/desktop-capabilities.ts";
 
-/** `denext desktop add sidecar --name <n> (--entry <module> [--node-modules <dir>] | --exec <p>)`. */
+/**
+ * `denext desktop add sidecar --name <n> (--entry <module> [--node-modules <dir>] [--detached] |
+ * --exec <p>)`.
+ */
 async function desktopAddSidecar(ctx: CommandContext, dir: string): Promise<void> {
   const dryRun = ctx.flags["dry-run"] === true;
   const str = (k: string) => ctx.flags[k] as string | undefined;
@@ -28,6 +31,7 @@ async function desktopAddSidecar(ctx: CommandContext, dir: string): Promise<void
       ...(str("exec") !== undefined ? { exec: str("exec") } : {}),
       ...(str("ready") !== undefined ? { ready: str("ready") } : {}),
       proxy: ctx.flags.proxy === true,
+      detached: ctx.flags.detached === true,
       dryRun,
     });
     if (ctx.global.json) return console.log(JSON.stringify(report));

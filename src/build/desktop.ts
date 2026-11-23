@@ -74,8 +74,12 @@ import {
   noDesktopWindows,
   setUpDesktopWindows,
 } from "../desktop/app-windows.ts";
-import type { DesktopMenuSettings } from "../desktop/menu-config.ts";
-import type { DesktopAppMenuItemHandler, DesktopAppMenusApi } from "../desktop/app-menus.ts";
+import type { DesktopDockMenuItem, DesktopMenuSettings } from "../desktop/menu-config.ts";
+import type {
+  DesktopAppMenuItemHandler,
+  DesktopAppMenusApi,
+  DesktopDockMenuItemHandler,
+} from "../desktop/app-menus.ts";
 import type { DesktopWebViewSettings } from "../desktop/webview-config.ts";
 import type {
   DesktopNewWindowHandler,
@@ -93,6 +97,7 @@ import { createSpeechCapability } from "../desktop/caps/speech.ts";
 import { mergeSidecars, SIDECAR_CHILD_ENV, type SidecarDefinition } from "../desktop/sidecar.ts";
 import type { SidecarHandle } from "../desktop/sidecar-supervisor.ts";
 import type { SidecarHost } from "../desktop/sidecar-host.ts";
+import type { DetachedSidecarEntry } from "../desktop/sidecar-detached.ts";
 
 /** The per-launch picked-path set (re-exported so {@linkcode RunDesktopOptions} is documentable). */
 export type { PickedPaths, PickedTarget, PickMode } from "../desktop/picked-paths.ts";
@@ -131,8 +136,10 @@ export type {
   DesktopAppMenuItemContext,
   DesktopAppMenuItemHandler,
   DesktopAppMenusApi,
+  DesktopDockMenuItemHandler,
 } from "../desktop/app-menus.ts";
 export type {
+  DesktopDockMenuItem,
   DesktopMenuAnchor,
   DesktopMenuItemSpec,
   DesktopMenuItemState,
@@ -140,6 +147,7 @@ export type {
   DesktopMenuSpec,
   DesktopMenuUpdate,
   DesktopWindowMenuAppItem,
+  MenuSnapshotItem,
 } from "../desktop/menu-config.ts";
 /** `desktop.webViews` as resolved ({@linkcode RunDesktopOptions.webViews}). */
 export type { DesktopWebViewSettings } from "../desktop/webview-config.ts";
@@ -150,11 +158,22 @@ export type { DesktopWebViewSettings } from "../desktop/webview-config.ts";
 export type {
   CreateWebViewOptions,
   WebViewBounds,
+  WebViewDownloadAction,
+  WebViewDownloadDestination,
+  WebViewDownloadDone,
+  WebViewDownloadEvent,
+  WebViewDownloadInterruptReason,
+  WebViewDownloadItem,
+  WebViewDownloadState,
   WebViewEventMap,
   WebViewForwardKey,
   WebViewHandle,
   WebViewKeyEvent,
   WebViewLoadState,
+  WebViewPermission,
+  WebViewPermissionHandler,
+  WebViewPermissionRequest,
+  WebViewPermissionRequestEvent,
   WebViewPermissions,
   WebViewState,
 } from "../desktop/webview.ts";
@@ -226,6 +245,11 @@ export type {
 export type { DesktopWindowMenuItem } from "../desktop/menu-config.ts";
 /** A keyed window the user closed (`runDesktop({ onDockReopen })`'s context). */
 export type { ClosedWindow as DesktopClosedWindow } from "../desktop/window-registry.ts";
+/** What `windows.order()` and `windows.pointer()` answer (the stacking order, the pointer). */
+export type {
+  PointerInfo as DesktopPointerInfo,
+  WindowOrder as DesktopWindowOrder,
+} from "../desktop/window-drag.ts";
 // The machine's aggregate CPU, GPU and memory load, straight from the runtime (no bridge).
 export {
   system,
@@ -253,6 +277,7 @@ export {
 export {
   defineSidecar,
   type SidecarDefinition,
+  type SidecarDetached,
   type SidecarExit,
   type SidecarExposedValue,
   type SidecarInfo,
@@ -268,6 +293,7 @@ export {
 } from "../desktop/sidecar.ts";
 export type { SidecarHandle } from "../desktop/sidecar-supervisor.ts";
 export { stopSidecars } from "../desktop/sidecar-registry.ts";
+export type { DetachedSidecarEntry } from "../desktop/sidecar-detached.ts";
 
 // Which desktop world the app runs in (stock loopback vs the denext-pinned runtime's in-process
 // memory transport at a stable origin): the env the runtime publishes, and the types the handler's
@@ -278,6 +304,28 @@ export {
   type DesktopServeInfo,
   type DesktopTrust,
 } from "../desktop/transport.ts";
+
+// `desktop.bundle.libraries`: the app's own native libraries, copied into each bundle by the package
+// scripts and found at run time (the packaged bundle's copy, or the project's file in `desktop run`
+// / `dev`).
+export {
+  type BundledDesktopLibraries,
+  bundleDesktopLibraries,
+} from "./desktop-bundle-libraries.ts";
+export { bundledLibraryPath } from "../desktop/bundled-libraries.ts";
+
+// Local IPC between the app and its helper processes: a Unix-domain socket on macOS / Linux, a named
+// pipe on Windows (over the runtime's `node:net`), no loopback port.
+export {
+  connectLocalIpc,
+  listenLocalIpc,
+  type LocalIpcConnection,
+  type LocalIpcConnectOptions,
+  type LocalIpcListenOptions,
+  localIpcPath,
+  type LocalIpcPathOptions,
+  type LocalIpcServer,
+} from "../desktop/local-ipc.ts";
 
 // The packager's per-app files: `.deno-desktop/app.json` (+ `compile.include`) and the packaged
 // `laufey-launch.json`, called by the scaffolded `scripts/package-*.ts`.
@@ -844,6 +892,22 @@ export interface RunDesktopOptions {
    */
   onAppMenuItem?: DesktopAppMenuItemHandler;
   /**
+   * The app's own Dock menu (macOS; ignored elsewhere), set at launch: items `{ id, label,
+   * enabled?, checked? }`, `{ type: "separator" }` and submenus `{ label, submenu }`, ids unique
+   * and non-empty (a bad menu fails the launch). `setDockMenu` on the result replaces it; the
+   * pages' quick actions (`setQuickActions`) follow it in the same menu, after a separator.
+   */
+  dockMenu?: readonly DesktopDockMenuItem[];
+  /**
+   * Called once per click on a Dock menu item (macOS), the app's own (`dockMenu`, `setDockMenu`)
+   * and the pages' quick actions alike, with its `id` and the key window (`{ id, key? }`, or
+   * `null`): with no window open too. A page's quick action also reaches one page's
+   * `onQuickAction` (the key window's if it listens, else the one focused most recently that
+   * does); the app's own items never reach a page. Extensions get them too (`host.onDockMenuItem`).
+   * A throw or a rejection is logged.
+   */
+  onDockMenuItem?: DesktopDockMenuItemHandler;
+  /**
    * The tray icon the backend owns: created before the first page needs it, kept across page
    * reloads, reachable from every window (`getTray()` in `denext/desktop/app`) and from
    * {@linkcode DesktopRuntime.tray}. Its keys replace `desktop.tray`'s; the handlers run in the
@@ -973,6 +1037,21 @@ export interface DesktopRuntime extends DesktopAppMenusApi {
    * `onStatus`, `restart` and `stop`. Throws for a name the app does not declare.
    */
   sidecar(name: string): SidecarHandle;
+  /**
+   * The app's registry of detached sidecars (`detached: true`): every recorded one, whether its
+   * endpoint authenticated just now (`reachable`) and whether the app still declares it
+   * (`declared`). An app that uses detached sidecars should show that something keeps running
+   * after it quit and offer to stop it; this is the list. `[]` in a sidecar's child.
+   */
+  detachedSidecars(): Promise<DetachedSidecarEntry[]>;
+  /**
+   * Stop a recorded detached sidecar (shutdown, then a forced kill of the authenticated process
+   * where the app may signal processes) and remove its record: a declared one as
+   * `sidecar(name).stop()` does, a leftover the app no longer declares through its record. Rejects
+   * when none is recorded, or it could not be ended (its record is removed anyway, so it ends
+   * itself at its next registry check).
+   */
+  stopDetachedSidecar(name: string): Promise<void>;
   /**
    * Ask `fn` before the app quits (`quitApp()`, `Deno.desktop.quit()`, Cmd+Q, the OS's session
    * end), before any page's `onBeforeQuit` / `onCloseRequested` handler: the quit is cancelled
@@ -1994,6 +2073,8 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     ...(options.onDockReopen ? { onDockReopen: options.onDockReopen } : {}),
     ...(options.onWindowMenuItem ? { onWindowMenuItem: options.onWindowMenuItem } : {}),
     ...(options.onAppMenuItem ? { onAppMenuItem: options.onAppMenuItem } : {}),
+    ...(options.dockMenu ? { dockMenu: options.dockMenu } : {}),
+    ...(options.onDockMenuItem ? { onDockMenuItem: options.onDockMenuItem } : {}),
     ...(options.onSecondInstance ? { onSecondInstance: options.onSecondInstance } : {}),
   });
   windowsRef.setup = windows;
@@ -2120,6 +2201,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
       if (!sidecarHost) throw new Error(`desktop: no sidecar named "${name}" (none declared)`);
       return sidecarHost.handle(name);
     },
+    ...detachedRegistryApi(sidecarHost, sidecarDataDir(options)),
     onBeforeQuit: (fn) => windows.lifecycle?.onBeforeQuit(fn, DESKTOP_TS_OWNER) ?? (() => {}),
     quit: () => windows.lifecycle?.requestQuit(DESKTOP_TS_OWNER) ?? Promise.resolve(false),
     ...windows.appMenus,
@@ -2196,10 +2278,66 @@ async function runAsSidecarChild(options: RunDesktopOptions): Promise<DesktopRun
     sidecar: (name) => {
       throw new Error(`desktop: no sidecar named "${name}" (a sidecar's child runs none)`);
     },
+    detachedSidecars: () => Promise.resolve([]),
+    stopDetachedSidecar: (name) =>
+      Promise.reject(
+        new Error(`desktop: no sidecar named "${name}" (a sidecar's child runs none)`),
+      ),
     onBeforeQuit: () => () => {},
     quit: () => Promise.resolve(false),
     sidecarChild: launch.name,
   };
+}
+
+/** The app's data folder, where the sidecars' logs and the detached registry live. */
+function sidecarDataDir(options: RunDesktopOptions): string | undefined {
+  return options.appDirs?.data ?? options.appSupportDir;
+}
+
+/** Whether the app has a detached-sidecar registry (`<data>/sidecars`) on disk. */
+async function hasDetachedRegistry(dataDir: string | undefined): Promise<boolean> {
+  if (!dataDir) return false;
+  return await Deno.stat(join(dataDir, "sidecars")).then((s) => s.isDirectory, () => false);
+}
+
+/**
+ * `detachedSidecars` / `stopDetachedSidecar` of {@linkcode DesktopRuntime}: the host's, or for an
+ * app that declares no sidecar, the registry's own (the module is loaded only when called).
+ */
+function detachedRegistryApi(
+  host: SidecarHost | undefined,
+  dataDir: string | undefined,
+): Pick<DesktopRuntime, "detachedSidecars" | "stopDetachedSidecar"> {
+  if (host) {
+    return {
+      detachedSidecars: () => host.detachedSidecars(),
+      stopDetachedSidecar: (name) => host.stopDetachedSidecar(name),
+    };
+  }
+  return {
+    detachedSidecars: async () => {
+      if (!(await hasDetachedRegistry(dataDir))) return [];
+      const m = await import("../desktop/sidecar-detached.ts");
+      return await m.listDetachedSidecars(m.detachedRegistryDir(dataDir!), []);
+    },
+    stopDetachedSidecar: async (name) => {
+      const m = await import("../desktop/sidecar-detached.ts");
+      if (!dataDir) {
+        throw new Error(`sidecar ${name}: no detached sidecar of that name is recorded`);
+      }
+      await m.stopDetachedRecord(m.detachedRegistryDir(dataDir), name, 5_000);
+    },
+  };
+}
+
+/**
+ * For an app that declares no sidecar: stop and remove the detached sidecars an earlier version
+ * left in its registry (only when the registry folder exists; the module is loaded only then).
+ */
+async function cleanDetachedRegistry(dataDir: string | undefined): Promise<void> {
+  if (!(await hasDetachedRegistry(dataDir))) return;
+  const m = await import("../desktop/sidecar-detached.ts");
+  await m.cleanDetachedLeftovers(m.detachedRegistryDir(dataDir!), [], 5_000);
 }
 
 /** The app's sidecar host, or `undefined` when it declares none (the module is then never loaded). */
@@ -2208,9 +2346,12 @@ async function createSidecars(
   emit: (cap: string, event: string, data: unknown) => void,
 ): Promise<SidecarHost | undefined> {
   const sidecars = mergeSidecars(options.configSidecars, options.sidecars);
-  if (sidecars.length === 0) return undefined;
+  const dataDir = sidecarDataDir(options);
+  if (sidecars.length === 0) {
+    void cleanDetachedRegistry(dataDir).catch(() => {});
+    return undefined;
+  }
   const { createSidecarHost } = await import("../desktop/sidecar-host.ts");
-  const dataDir = options.appDirs?.data ?? options.appSupportDir;
   return await createSidecarHost({
     sidecars,
     ...(options.importMetaUrl ? { importMetaUrl: options.importMetaUrl } : {}),

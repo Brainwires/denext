@@ -145,7 +145,8 @@ every build runs exactly that release:
 
 Whatever selects it, a release runs only when it is at or above the oldest runtime this denext
 supports, carries the esbuild version denext's build API speaks, and its Deno Desktop runtime
-offers the API level denext's desktop support needs. Each release in the channel also declares
+offers the API level denext's desktop support needs. The bundled runtime's rollback is always at
+or above that oldest runtime, so the fallback is never a release denext refuses. Each release in the channel also declares
 the oldest denext it was proven with. Before a release is
 signed, it runs denext's test suites under the latest stable denext and the last patch of the
 previous minor; the oldest passing one is recorded. Older denexts keep the runtime they bundle.

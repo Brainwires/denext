@@ -51,6 +51,8 @@ const T = NOW.getTime();
 const DAY = 86_400_000;
 const VERSION = toolchainPin.version;
 const TAG = toolchainPin.tag;
+/** The release after the bundled pin (the tests publish it as "next"). */
+const NEXT = `3.0.0-denext.${Number(VERSION.split(".").pop()) + 1}`;
 const ROOT = new URL("..", import.meta.url);
 
 const ok = (stdout = ""): RunResult => ({ code: 0, stdout });
@@ -287,7 +289,7 @@ Deno.test("publish: green on both legs → entry, signed index, document before 
     assertStringIncludes(w.logged.join("\n"), "commit");
 
     // A second release builds on the branch (the first document is kept by the base tree).
-    const next = "3.0.0-denext.28";
+    const next = NEXT;
     await main(["publish", `denext-runtime-v${next}`, "--out", out], w.deps);
     assertEquals(w.mirror[1].parents.length, 1, "on top of the branch, never a force push");
     assert(w.mirror[1].baseTree?.startsWith("tree-of-"));
@@ -415,7 +417,7 @@ Deno.test("publish: an entries file that drops a published release is refused", 
     await main(["publish", TAG, "--out", join(w.dir, "out")], w.deps);
     await Deno.writeTextFile(w.deps.entriesFile!, '{ "releases": [] }\n');
     await assertRejects(
-      () => main(["publish", "denext-runtime-v3.0.0-denext.28", "--no-publish"], w.deps),
+      () => main(["publish", `denext-runtime-v${NEXT}`, "--no-publish"], w.deps),
       Error,
       "leaves out",
     );
@@ -575,7 +577,11 @@ Deno.test("floor: raises the compiled-in minimum sequence to the published index
   const w = await withKey();
   try {
     const keysModule = join(w.dir, "keys.ts");
-    const source = await Deno.readTextFile(new URL("src/build/runtime-channel-keys.ts", ROOT));
+    // The real module declares it in the shape `floor` rewrites; start from a floor of 0 whatever
+    // a past release raised it to (`deno task release` raises it at every release).
+    const real = await Deno.readTextFile(new URL("src/build/runtime-channel-keys.ts", ROOT));
+    assert(channelMinSequenceIn(real) >= 0);
+    const source = withChannelMinSequence(real, 0);
     assertEquals(channelMinSequenceIn(source), 0);
     await Deno.writeTextFile(keysModule, source);
     await main(["publish", TAG, "--out", join(w.dir, "out")], w.deps);
@@ -605,7 +611,7 @@ Deno.test("floor: raises the compiled-in minimum sequence to the published index
 Deno.test("pin: a published document becomes the bundled pin, the old pin kept as rollback", async () => {
   const w = await withKey();
   try {
-    const next = "3.0.0-denext.28";
+    const next = NEXT;
     await main(["publish", `denext-runtime-v${next}`, "--out", join(w.dir, "out")], w.deps);
     await main(["pin", next], w.deps);
     const toolchain = JSON.parse(await Deno.readTextFile(w.deps.pinFiles!.toolchain));
@@ -613,6 +619,11 @@ Deno.test("pin: a published document becomes the bundled pin, the old pin kept a
     assertEquals([toolchain.version, desktop.version], [next, next]);
     assertEquals([toolchain.rollback.version, desktop.rollback.version], [VERSION, VERSION]);
     assertEquals(toolchain.rollback.rollback, undefined, "a rollback never nests");
+    // Re-pinned with the kept rollback below the floor (MIN_RUNTIME): none, never one denext refuses.
+    await main(["pin", next], { ...w.deps, minRuntime: NEXT });
+    for (const file of [w.deps.pinFiles!.toolchain, w.deps.pinFiles!.desktop]) {
+      assertEquals(JSON.parse(await Deno.readTextFile(file)).rollback, undefined, file);
+    }
     await assertRejects(() => main(["pin", "3.0.0-denext.99"], w.deps), Error, "does not list");
     // A yanked release needs --allow-yanked.
     await main(["yank", next, "--reason", "broken", "--out", join(w.dir, "out")], w.deps);
@@ -726,7 +737,7 @@ Deno.test("entries: canonical text, one per version, and the committed file is c
     releasedAt: "2026-11-10T00:00:00Z",
     minDenext: "4.19.0",
   });
-  const { entry: b } = await releaseEntryFor(documentFor("3.0.0-denext.28"), {
+  const { entry: b } = await releaseEntryFor(documentFor(NEXT), {
     releasedAt: "2026-11-11T00:00:00Z",
     minDenext: "4.20.0",
   });
