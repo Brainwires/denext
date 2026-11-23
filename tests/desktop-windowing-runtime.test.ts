@@ -4,7 +4,13 @@
 // backend tray with its panel, `setUpDesktopWindows` (keepAlive, the Dock, the close rules) and
 // the `textToSpeech` capability — all against fake runtime windows, trays and docks.
 
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
 import type { DesktopCapability, DesktopCapCtx } from "../src/desktop/extension.ts";
 import type { DesktopAppApi, DesktopMenuItem } from "../src/desktop/launch-events.ts";
 import { createWindowController } from "../src/desktop/caps/window.ts";
@@ -1140,6 +1146,88 @@ Deno.test("setup: startTray with no tray host turns keep-alive back off", async 
   );
 });
 
+Deno.test("setup: startTray on a runtime whose windowCapabilities throws still settles", async () => {
+  const api = {
+    ...keepAliveApi(),
+    platformFeatures: () =>
+      Promise.resolve({ trayHost: false, trayReason: "none", sessionType: "wayland" }),
+    windowCapabilities: () => {
+      throw new Error("an older runtime");
+    },
+  };
+  const s = setUpDesktopWindows({
+    window: new FakeWin(),
+    api: api as unknown as DesktopAppApi,
+    emit: () => {},
+    wantsTray: true,
+    warn: () => {},
+  });
+  const tray = await s.startTray({
+    settings: { icon: "/t.png" },
+    appUrl: (p) => p,
+    readFile: () => Promise.resolve(new Uint8Array([1])),
+  });
+  assertEquals(tray, undefined);
+  assertEquals(s.keepAlive(), false);
+});
+
+Deno.test("setup: the windows API delegates order and pointer to the registry; with no window it answers empty", () => {
+  const s = setUpDesktopWindows({
+    window: new FakeWin(),
+    BrowserWindow: FakeWin,
+    emit: () => {},
+    wantsTray: false,
+    appSettings: { keepAlive: true },
+  });
+  s.windows.open({ url: "/a" });
+  assertEquals(s.windows.order(), s.registry!.order());
+  assert(s.windows.order().ids.length <= 2);
+  assertEquals(s.windows.pointer(), s.registry!.pointer());
+  assertEquals(s.windows.lastSession(), s.registry!.lastSession());
+  // No main window (no runtime): nothing to find, nothing open, and opening one throws.
+  const none = setUpDesktopWindows({ window: undefined, emit: () => {}, wantsTray: false });
+  assertEquals(none.windows.order(), { ids: [], source: "focus" });
+  assertEquals(none.windows.pointer(), null);
+  assertEquals(none.windows.lastSession(), []);
+  assertEquals(none.windows.closed(), []);
+  assertEquals([none.windows.get("main"), none.windows.byKey("a")], [undefined, undefined]);
+  none.windows.forget("a");
+  assertThrows(() => none.windows.open({ url: "/" }), Error, "no desktop runtime");
+});
+
+Deno.test("setup: click-through without forward needs the tray as the way back", async () => {
+  const s = setUpDesktopWindows({ window: new FakeWin(), emit: () => {}, wantsTray: false });
+  const cap = s.capabilities.find((c) => c.name === "window")!;
+  // No tray: the app controller says so, and the window could never be clicked again.
+  assertEquals(await codeOf(call(cap, "setIgnoreMouseEvents", { ignore: true })), "validation");
+  await call(cap, "setIgnoreMouseEvents", { ignore: true, forward: true });
+  const win = FakeWin.made.at(-1)!;
+  assertEquals(win.calls.at(-1), 'setIgnoreMouseEvents[true,{"forward":true}]');
+});
+
+Deno.test("setup: a read-only quit flag is left alone; macOS with no Dock sets no policy", () => {
+  const api = {
+    screens: () => [],
+    get quitOnLastWindowClosed() {
+      return true;
+    },
+  } as unknown as DesktopAppApi;
+  const s = setUpDesktopWindows({ window: new FakeWin(), api, emit: () => {}, wantsTray: true });
+  assertEquals(s.keepAlive(), true);
+  assertEquals((api as { quitOnLastWindowClosed?: boolean }).quitOnLastWindowClosed, true);
+  // The runtime's own Deno.dock would be used when there is one: only probe its absence.
+  if ((Deno as unknown as { dock?: unknown }).dock === undefined) {
+    const mac = setUpDesktopWindows({
+      window: new FakeWin(),
+      os: "darwin",
+      emit: () => {},
+      wantsTray: false,
+    });
+    assertEquals(mac.setActivationPolicy("regular"), false);
+    assertEquals(mac.getActivationPolicy(), null);
+  }
+});
+
 // --- text to speech -----------------------------------------------------------------------------
 
 Deno.test("textToSpeech: unsupported until the runtime has Deno.desktop.speech; then it speaks", async () => {
@@ -1220,4 +1308,13 @@ Deno.test("noDesktopWindows: a launch with no windows opens none and leaves the 
     [],
     false,
   ]);
+  assertEquals(none.windows.byKey("a"), undefined);
+  assertEquals(none.windows.order(), { ids: [], source: "focus" });
+  assertEquals(none.windows.pointer(), null);
+  assertEquals(none.windows.lastSession(), []);
+  none.windows.forget("a");
+  // Its subscriptions hear nothing and unsubscribe cleanly.
+  none.onWillNavigate(() => {})();
+  none.onAppMenuItem(() => {})();
+  none.onSecondInstance(() => {})();
 });

@@ -10,6 +10,7 @@
 
 import { assert, assertEquals, assertMatch, assertRejects } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
+import process from "node:process";
 import {
   detachedOptions,
   isDetachedSidecar,
@@ -805,6 +806,86 @@ Deno.test({
   },
 });
 
+Deno.test({
+  name:
+    "host: the default detached launcher reattaches to the recorded instance; stopping it by name ends it",
+  fn: async () => {
+    const data = await tempDir("host-default");
+    const dir = detachedRegistryDir(data);
+    const key = newDetachedKey();
+    const running = await testServer(key, { name: "daemon" });
+    running.server.setReady();
+    try {
+      await writeDetachedRecord(dir, record("daemon", running.server.port, key, { port: 6200 }));
+      const host = await createSidecarHost({
+        sidecars: [{
+          name: "daemon",
+          run: { module: "./d.ts" },
+          detached: true,
+          logs: "file",
+          restart: { on: "never" },
+        }],
+        importMetaUrl: import.meta.url,
+        dataDir: data,
+        appVersion: "1.0.0",
+        logRotateBytes: 1 << 20,
+        detachedRecordPollMs: 100,
+        clock: fakeClock(),
+      });
+      host.startAll();
+      const handle = host.handle("daemon");
+      assert(await waitFor(() => handle.status.state === "ready", 5000), handle.status.state);
+      assertEquals([handle.status.reattached, handle.status.port], [true, 6200]);
+      // Declared and running: stopped through its supervisor (a shutdown, the record removed).
+      await host.stopDetachedSidecar("daemon");
+      assertEquals(running.shutdowns.length, 1);
+      assertEquals(handle.status.state, "stopped");
+      assertEquals(await readDetachedRecord(dir, "daemon"), null);
+      await host.stopAll();
+    } finally {
+      running.server.close();
+      await Deno.remove(data, { recursive: true });
+    }
+  },
+});
+
+Deno.test("host: a detached sidecar without the app's entry fails to start; with no data folder there is no registry", async () => {
+  const data = await tempDir("host-noentry");
+  try {
+    const host = await createSidecarHost({
+      sidecars: [{
+        name: "daemon",
+        run: { module: "./d.ts" },
+        detached: true,
+        restart: { on: "never" },
+      }],
+      dataDir: data,
+      clock: fakeClock(),
+    });
+    host.startAll();
+    const handle = host.handle("daemon");
+    assert(await waitFor(() => handle.status.lastExit !== undefined, 5000));
+    assertMatch(handle.status.lastExit?.error ?? "", /app's entry/);
+    assert(!["starting", "ready", "backoff", "stopping"].includes(handle.status.state));
+    // Declared but not running: looked up in the registry, where nothing is recorded.
+    await assertRejects(() => host.stopDetachedSidecar("daemon"), Error, "no detached sidecar");
+    await host.stopAll();
+  } finally {
+    await Deno.remove(data, { recursive: true });
+  }
+  // No detached sidecar and no data folder: none listed, none to stop.
+  const plain = await createSidecarHost({
+    sidecars: [{ name: "api", run: { module: "./api.ts" } }],
+    launcher: () => () => Promise.reject(new Error("not started")),
+  });
+  assertEquals(await plain.detachedSidecars(), []);
+  await assertRejects(
+    () => plain.stopDetachedSidecar("api"),
+    Error,
+    "sidecar api: no detached sidecar of that name is recorded",
+  );
+});
+
 Deno.test("addDesktopSidecar: --detached writes detached: true (a module only)", async () => {
   const root = await tempDir("add");
   try {
@@ -953,6 +1034,224 @@ Deno.test({
       assertEquals(await readDetachedRecord(dir, "daemon"), null);
       assertEquals(impostor.shutdowns, []); // never commanded
       // (The record named this test's own pid: it is still running.)
+    } finally {
+      impostor.server.close();
+      await Deno.remove(data, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "launcher: a reattached session's end reads as its bye: a code, an error, none at all",
+  fn: async () => {
+    const data = await tempDir("bye");
+    const dir = detachedRegistryDir(data);
+    const ends: Array<[{ code?: number; error?: string; reason: string } | null, unknown]> = [
+      [{ code: 2, reason: "done" }, { code: 2 }],
+      [{ error: "boom", reason: "crashed" }, { error: "boom" }],
+      [{ reason: "ended" }, { code: 0 }],
+      [null, { error: "the detached sidecar ended (its control connection closed)" }],
+    ];
+    try {
+      for (const [bye, expected] of ends) {
+        const key = newDetachedKey();
+        const { server } = await testServer(key, { name: "daemon" });
+        try {
+          await writeDetachedRecord(dir, record("daemon", server.port, key));
+          const readies: number[] = [];
+          const inst = await detachedSidecarLauncher({
+            child: NO_SPAWN,
+            registryDir: dir,
+            appVersion: "1.0.0",
+          })(launchCtx(DAEMON, readies));
+          // Not ready yet: the ready push from the instance is the ready signal.
+          assertEquals([inst.reattached, inst.ready, readies], [true, false, []]);
+          server.setReady();
+          assert(await waitFor(() => readies.length === 1, 3000));
+          if (bye) await server.bye(bye);
+          server.close();
+          assertEquals(await inst.exited, expected);
+        } finally {
+          server.close();
+        }
+      }
+    } finally {
+      await Deno.remove(data, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "launcher: an instance that will not end: its stop rejects, and another version cannot be replaced",
+  fn: async () => {
+    const data = await tempDir("stubborn");
+    const dir = detachedRegistryDir(data);
+    const key = newDetachedKey();
+    const killed: number[] = [];
+    const stopOptions = { canKill: () => false, kill: (pid: number) => void killed.push(pid) };
+    const same = await testServer(key, { name: "daemon", stubborn: true });
+    const old = await testServer(key, { name: "daemon", stubborn: true, appVersion: "0.9.0" });
+    try {
+      same.server.setReady();
+      await writeDetachedRecord(dir, record("daemon", same.server.port, key));
+      const inst = await detachedSidecarLauncher({
+        child: NO_SPAWN,
+        registryDir: dir,
+        appVersion: "1.0.0",
+        stopOptions,
+      })(launchCtx(DAEMON, []));
+      await assertRejects(() => inst.stop(0), Error, "sidecar daemon: did not end within 0 ms");
+      assertEquals(same.shutdowns, [0]);
+      assertEquals(await readDetachedRecord(dir, "daemon"), null, "the record is removed anyway");
+      assertEquals(await inst.exited, { code: 0 }, "asked to stop: not a crash");
+
+      await writeDetachedRecord(
+        dir,
+        record("daemon", old.server.port, key, { appVersion: "0.9.0" }),
+      );
+      await assertRejects(
+        () =>
+          detachedSidecarLauncher({
+            child: NO_SPAWN,
+            registryDir: dir,
+            appVersion: "1.0.0",
+            stopOptions,
+          })(launchCtx({ ...DAEMON, shutdown: { graceMs: 0 } }, [])),
+        Error,
+        "the instance app version 0.9.0 started did not end",
+      );
+      assertEquals(old.shutdowns, [0]);
+      assertEquals(await readDetachedRecord(dir, "daemon"), null);
+      assertEquals(killed, [], "never signalled without the run permission");
+    } finally {
+      same.server.close();
+      old.server.close();
+      await Deno.remove(data, { recursive: true });
+    }
+  },
+});
+
+Deno.test("launcher: a child base that cannot start the app fails every start with its reason", async () => {
+  const data = await tempDir("nobase");
+  try {
+    await assertRejects(
+      () =>
+        detachedSidecarLauncher({
+          child: { error: "sidecar daemon: no app entry" } as unknown as typeof NO_SPAWN,
+          registryDir: detachedRegistryDir(data),
+          appVersion: "1.0.0",
+        })(launchCtx(DAEMON, [])),
+      Error,
+      "no app entry",
+    );
+  } finally {
+    await Deno.remove(data, { recursive: true });
+  }
+});
+
+// ── the launcher's failed fresh starts, against real processes ───────────────────────────────
+
+/**
+ * A child base whose "app" is `sh -c script`: Node's IPC channel is on `$NODE_CHANNEL_FD`, where
+ * the script reads its init line and writes what it answers. It never runs the app itself.
+ */
+function shChild(script: string) {
+  return { ...NO_SPAWN, command: "sh", args: ["-c", `fd=\${NODE_CHANNEL_FD:-3}; ${script}`] };
+}
+
+/** Whether process `pid` still exists (a zombie included: gone only once it was reaped). */
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The pid a {@linkcode shChild} script printed to the log (`pid N`). */
+async function loggedPid(logFile: string): Promise<number> {
+  let pid = 0;
+  assert(
+    await waitFor(async () => {
+      const text = await Deno.readTextFile(logFile).catch(() => "");
+      pid = Number(/^pid (\d+)$/m.exec(text)?.[1] ?? 0);
+      return pid > 0;
+    }, 5000),
+    "the script logged its pid",
+  );
+  return pid;
+}
+
+Deno.test({
+  name:
+    "launcher: a fresh start that exits, stalls, garbles its channel or fails to authenticate is abandoned",
+  ignore: Deno.build.os === "windows", // sh
+  fn: async () => {
+    const data = await tempDir("fresh");
+    const dir = detachedRegistryDir(data);
+    const logFile = join(data, "logs", "sidecar-daemon.log");
+    const impostor = await testServer(newDetachedKey(), { name: "daemon" });
+    const start = (script: string, def: SidecarDefinition = DAEMON, logRotateBytes?: number) => {
+      // No port, with values: the init and the record carry only what the start has.
+      const { port: _port, ...ctx } = launchCtx(def, []);
+      return detachedSidecarLauncher({
+        child: shChild(script),
+        registryDir: dir,
+        appVersion: "1.0.0",
+        logFile,
+        ...(logRotateBytes !== undefined ? { logRotateBytes } : {}),
+      })({ ...ctx, values: { token: "v" } });
+    };
+    const reaped = async (pid: number) => {
+      assert(await waitFor(() => !processExists(pid), 5000), `process ${pid} was ended`);
+      await sleep(50); // its exit reaches the child handle
+    };
+    try {
+      // Ends before it reports its endpoint (it read the init first: no broken pipe).
+      await assertRejects(
+        () => start('read -r init <&"$fd"; exit 3'),
+        Error,
+        "exited before it served its control endpoint (3)",
+      );
+      // Never answers: the ready budget runs out and the process is killed by its handle.
+      await Deno.writeTextFile(logFile, "x".repeat(64)); // a log past its size is rotated
+      await assertRejects(
+        () =>
+          start(
+            'read -r init <&"$fd"; echo "pid $$"; exec sleep 30',
+            { ...DAEMON, ready: { signal: true, timeoutMs: 300 } },
+            16,
+          ),
+        Error,
+        "did not serve its control endpoint within 300 ms",
+      );
+      assertEquals(await Deno.readTextFile(`${logFile}.1`), "x".repeat(64));
+      await reaped(await loggedPid(logFile));
+      // A line that is not JSON breaks the channel: an `error` from the child handle.
+      await Deno.remove(logFile);
+      const garbled = await assertRejects(() =>
+        start(
+          `read -r init <&"$fd"; echo "pid $$"; printf 'not json\\n' >&"$fd"; exec sleep 30`,
+          { ...DAEMON, ready: { signal: true, timeoutMs: 5000 } },
+        )
+      );
+      assert(!String((garbled as Error).message).includes("control endpoint"), String(garbled));
+      await reaped(await loggedPid(logFile));
+      // Something else first (ignored), then an endpoint that cannot prove the key.
+      await Deno.remove(logFile);
+      await assertRejects(
+        () =>
+          start(
+            `read -r init <&"$fd"; echo "pid $$"; printf '{"t":"hello"}\\n{"t":"control","port":%s,"pid":%s}\\n' ${impostor.server.port} $$ >&"$fd"; exec sleep 30`,
+          ),
+        Error,
+        "its control endpoint did not authenticate",
+      );
+      await reaped(await loggedPid(logFile));
+      assertEquals(await readDetachedRecord(dir, "daemon"), null, "the record it wrote is removed");
+      assertEquals(impostor.shutdowns, []);
     } finally {
       impostor.server.close();
       await Deno.remove(data, { recursive: true });

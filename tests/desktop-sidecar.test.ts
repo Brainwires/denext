@@ -944,6 +944,131 @@ Deno.test("exec launcher: killExecSidecars ends every running program at once", 
   }
 });
 
+/** A program as `Deno.Command` spawns it, that the test drives: its output and its kills. */
+class FakeProgram {
+  readonly pid = 31_337;
+  readonly kills: Array<string | undefined> = [];
+  readonly stdin = new WritableStream<Uint8Array>();
+  readonly status: Promise<{ code: number; signal: string | null }>;
+  #exit!: (s: { code: number; signal: string | null }) => void;
+  constructor(
+    readonly stdout: ReadableStream<Uint8Array>,
+    readonly stderr: ReadableStream<Uint8Array>,
+  ) {
+    this.status = new Promise((r) => this.#exit = r);
+  }
+  /** Already gone when asked to end; the forced kill finds it exiting, and fails too. */
+  kill(signal?: string) {
+    this.kills.push(signal);
+    if (signal === "SIGKILL") this.#exit({ code: 137, signal: "SIGKILL" });
+    throw new Deno.errors.NotFound("no such process");
+  }
+}
+
+/** A stream of `chunks` that then fails (a program that went away mid-write) or ends. */
+function output(chunks: string[], fail: boolean): ReadableStream<Uint8Array> {
+  let next = 0;
+  // Pulled one chunk at a time: an error raised with chunks still queued would drop them.
+  return new ReadableStream({
+    pull(c) {
+      if (next < chunks.length) c.enqueue(new TextEncoder().encode(chunks[next++]));
+      else if (fail) c.error(new Error("broken pipe"));
+      else c.close();
+    },
+  });
+}
+
+Deno.test("exec launcher: output that breaks off mid-line is kept; kills of a program already gone are no error", async () => {
+  let made: FakeProgram | undefined;
+  const Command = class {
+    constructor(readonly program: string, readonly options: Deno.CommandOptions) {}
+    spawn() {
+      made = new FakeProgram(output(["one\ntw", "o"], true), output(["warn\r\n"], false));
+      return made;
+    }
+  } as unknown as typeof Deno.Command;
+  const ctx = realCtx({ name: "gone", run: { exec: "gone" } });
+  const inst = await execSidecarLauncher({ program: "gone", Command })(ctx);
+  assertEquals(inst.pid, 31_337);
+  // The synchronous kill at exit tolerates it.
+  killExecSidecars();
+  // The stop's polite kill fails, the grace runs out, and the forced kill fails as it exits.
+  await inst.stop(5);
+  assertEquals(await inst.exited, { signal: "SIGKILL" });
+  const term = Deno.build.os === "windows" ? undefined : "SIGTERM";
+  assertEquals(made!.kills, [term, term, "SIGKILL"]);
+  assertEquals(ctx.lines.sort(), ["stderr:warn", "stdout:one", "stdout:two"]);
+});
+
+Deno.test("host: a program's working folder is absolute, under the data folder, or as written without one", async () => {
+  const data = await Deno.makeTempDir({ prefix: "denext-sidecar-cwd-" });
+  const errors: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => void errors.push(args.join(" "));
+  try {
+    const abs = join(data, "abs");
+    const program = Deno.execPath();
+    const host = await createSidecarHost({
+      sidecars: [
+        {
+          name: "abs",
+          run: { exec: program },
+          args: ["eval", "console.error('to stderr')"],
+          cwd: abs,
+          restart: { on: "never" },
+        },
+        {
+          name: "rel",
+          run: { exec: program },
+          args: ["eval", "0"],
+          cwd: "work",
+          restart: { on: "never" },
+        },
+      ],
+      dataDir: data,
+    });
+    host.startAll();
+    await until(
+      () => ["abs", "rel"].every((n) => host.handle(n).status.lastExit !== undefined),
+      60_000,
+    );
+    assert((await Deno.stat(abs)).isDirectory, "an absolute folder as written");
+    assert(
+      (await Deno.stat(join(data, "work"))).isDirectory,
+      "a relative one under the data folder",
+    );
+    // The program's stderr reaches the console (`logs: "inherit"`), marked as stderr.
+    assert(errors.includes("[sidecar:abs]! to stderr"), errors.join("\n"));
+    await host.stopAll();
+    // Without a data folder a relative folder is passed as written (nothing is made until a start).
+    const bare = await createSidecarHost({
+      sidecars: [{ name: "rel", run: { exec: program }, cwd: "work" }],
+    });
+    assertEquals(bare.names, ["rel"]);
+  } finally {
+    console.error = original;
+    await Deno.remove(data, { recursive: true });
+  }
+});
+
+Deno.test("host: ready.http polls through the fetch the host was given", async () => {
+  const { launch } = fakeLauncher();
+  const urls: string[] = [];
+  const host = await createSidecarHost({
+    sidecars: [def({ port: 4555, ready: { http: "/up", intervalMs: 10 } })],
+    launcher: () => launch,
+    fetch: ((url: string) => {
+      urls.push(url);
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }) as unknown as typeof fetch,
+  });
+  host.startAll();
+  const status = await host.handle("api").whenReady(5000);
+  assertEquals(status.state, "ready");
+  assertEquals(urls[0], "http://127.0.0.1:4555/up");
+  await host.stopAll();
+});
+
 Deno.test("resolveSidecarProgram: as written, the project's file, or copied out of a packaged app", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext-sidecar-prog-" });
   try {

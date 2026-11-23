@@ -294,6 +294,15 @@ Deno.test("worker launcher: an error event, an unreadable message, and a module 
   assertEquals(await c.inst.exited, { error: "SyntaxError" });
 });
 
+Deno.test("worker launcher: only the first end counts; the worker is terminated once", async () => {
+  const { inst, worker } = await fakeLaunch();
+  worker.send({ t: "exit", code: 3 });
+  worker.send({ t: "error", message: "late" });
+  worker.onmessageerror?.();
+  assertEquals(await inst.exited, { code: 3 });
+  assertEquals(worker.terminated, 1);
+});
+
 Deno.test("worker launcher: stop waits for done, else ends at the grace; a closed worker ends at once", async () => {
   const a = await fakeLaunch();
   const stopping = a.inst.stop(5000);
