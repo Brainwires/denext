@@ -1733,10 +1733,13 @@ Deno.test("runDetachedSidecarChild: no app attaching after the start ends it", a
   try {
     const order: string[] = [];
     const started = Date.now();
-    const { exits, sidecar } = await startDetachedChild({ dir, firstAttachMs: 80 });
+    // The first-attach deadline starts before the child imports its module, and the handler can
+    // only be added once that import is done: on a slow runner an 80 ms deadline fired first
+    // (macOS desktop-ci, run 45172423781), so the deadline leaves the import ample room.
+    const { exits, sidecar } = await startDetachedChild({ dir, firstAttachMs: 1500 });
     sidecar.onShutdown(() => void order.push("handler"));
-    assert(await waitFor(() => exits.length >= 1, 3000));
-    assert(Date.now() - started >= 70);
+    assert(await waitFor(() => exits.length >= 1, 5000));
+    assert(Date.now() - started >= 1400);
     assertEquals(exits[0], 0);
     assertEquals(order, ["handler"]);
     assert(await waitFor(() => exits.length === 2, 2000));
