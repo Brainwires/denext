@@ -502,7 +502,7 @@ function validateUserActivityTypes(types: unknown, fail: Fail): void {
   }
 }
 
-/** `desktop.backend`: `"webview"`, `"cef"` or a per-OS `{ macos?, windows?, linux?, default? }`. */
+/** `desktop.backend`: `"webview"`, `"cef"`, `"gpui"` or a per-OS `{ macos?, …, default? }`. */
 function validateDesktopBackend(backend: unknown, fail: Fail): void {
   const problem = desktopBackendProblem(backend);
   if (problem !== null) fail(problem.field, problem.message);

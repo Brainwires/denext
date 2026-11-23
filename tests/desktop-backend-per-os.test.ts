@@ -76,8 +76,13 @@ Deno.test("desktopBackendProblem names the key; desktopBackendOsOfTarget reads a
   assertEquals(desktopBackendProblem({ windows: "cef", default: "webview" }), null);
   assertEquals(desktopBackendProblem({ linux: "chromium" }), {
     field: "desktop.backend.linux",
-    message: 'must be "webview" or "cef"',
+    message: 'must be "webview", "cef" or "gpui"',
   });
+  // The native tree backend (denext/gpui) is an engine like the others, alone or per OS.
+  assertEquals(desktopBackendProblem("gpui"), null);
+  assertEquals(desktopBackendProblem({ macos: "gpui", default: "webview" }), null);
+  assertEquals(resolveDesktopBackend({ macos: "gpui" }, "darwin"), "gpui");
+  assertEquals(resolveDesktopBackend({ macos: "gpui" }, "linux"), "webview");
   assertStringIncludes(desktopBackendProblem({ ios: "cef" })!.message, 'unknown key "ios"');
   assertEquals(desktopBackendProblem(["cef"])!.field, "desktop.backend");
   assertEquals(desktopBackendProblem(3)!.field, "desktop.backend");
@@ -101,6 +106,8 @@ Deno.test("projectDesktopBackend: the config's per-OS value first, deno.json's s
     // No config value: deno.json's engine for every target.
     await Deno.writeTextFile(join(dir, "deno.json"), '{ "desktop": { "backend": "cef" } }');
     assertEquals(await projectDesktopBackend(dir, { target: MAC, config: undefined }), "cef");
+    await Deno.writeTextFile(join(dir, "deno.json"), '{ "desktop": { "backend": "gpui" } }');
+    assertEquals(await projectDesktopBackend(dir, { target: MAC, config: undefined }), "gpui");
     await assertRejects(
       () => projectDesktopBackend(dir, { target: "wasm32-unknown-unknown", config: undefined }),
       Error,

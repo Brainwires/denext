@@ -963,6 +963,40 @@ function stockRuntimeFinding(usable: boolean): DesktopDoctorFinding {
     };
 }
 
+/** The finding about the runtime archive for the project's backend (level, message, fix). */
+function cacheFinding(
+  s: DesktopRuntimeStatus,
+): [DesktopDoctorFinding["level"], string, string] | null {
+  if (s.cache === "unpinned" && s.backend === "gpui") {
+    return [
+      "error",
+      `the pinned runtime ${s.version} has no gpui build for ${s.target} yet (the native tree ` +
+      "backend is in development)",
+      "build laufey's gpui host and set DENEXT_DESKTOP_RUNTIME_DIR to a runtime directory " +
+      "holding it under laufey/gpui (passed to deno desktop as LAUFEY_DEV_DIR)",
+    ];
+  }
+  if (s.cache === "unpinned") {
+    return [
+      "error",
+      `no pinned runtime build for ${s.target}`,
+      "on a stock Deno CLI (DENEXT_DENO=stock), set DENEXT_DESKTOP_RUNTIME=stock to use the stock " +
+      "runtime",
+    ];
+  }
+  if (s.cache === "invalid") {
+    return [
+      "warning",
+      "the cached runtime failed verification",
+      "nothing to do: the next `denext desktop run` or `package` downloads it again",
+    ];
+  }
+  if (s.backend === null) {
+    return ["error", s.detail, 'set deno.json desktop.backend to "webview", "cef" or "gpui"'];
+  }
+  return null;
+}
+
 /** The findings about the pinned runtime. */
 function runtimeFindings(runtime: DoctorRuntime, linuxChecks: boolean): DesktopDoctorFinding[] {
   const s = runtime.status;
@@ -983,22 +1017,8 @@ function runtimeFindings(runtime: DoctorRuntime, linuxChecks: boolean): DesktopD
         `${s.deno.required} binary, or at denext's Deno toolchain: \`denext runtime path\`)`,
     );
   }
-  if (s.cache === "unpinned") {
-    add(
-      "error",
-      `no pinned runtime build for ${s.target}`,
-      "on a stock Deno CLI (DENEXT_DENO=stock), set DENEXT_DESKTOP_RUNTIME=stock to use the stock " +
-        "runtime",
-    );
-  } else if (s.cache === "invalid") {
-    add(
-      "warning",
-      "the cached runtime failed verification",
-      "nothing to do: the next `denext desktop run` or `package` downloads it again",
-    );
-  } else if (s.backend === null) {
-    add("error", s.detail, 'set deno.json desktop.backend to "webview" or "cef"');
-  }
+  const cache = cacheFinding(s);
+  if (cache) add(...cache);
   if (linuxChecks && !runtime.platformFeatures) {
     add(
       "warning",

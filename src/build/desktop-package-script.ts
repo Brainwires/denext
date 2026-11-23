@@ -556,7 +556,7 @@ export async function desktopIconArgs(
  *
  * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
  * @param os The target OS.
- * @returns `["--backend", "webview" | "cef"]`.
+ * @returns `["--backend", "webview" | "cef" | "gpui"]`.
  * @throws {Error} When the configured value is not a backend setting.
  */
 export async function desktopBackendArgs(entryUrl: string, os: DesktopOs): Promise<string[]> {
@@ -855,7 +855,7 @@ export async function desktopWindowsBootstrapBundle(
  * build ships Chromium in the bundle and needs none. Either needs the VC++ 2015-2022
  * redistributable for each arch in `noVcRuntime` (the runtime could not be bundled app-local).
  *
- * @param backend The `deno desktop` backend (`meta.backend`: `"webview"` or `"cef"`).
+ * @param backend The `deno desktop` backend (`meta.backend`: `"webview"`, `"cef"` or `"gpui"`).
  * @param noVcRuntime The arches whose bundle has no app-local VC++ runtime.
  * @returns The note, in parentheses.
  */

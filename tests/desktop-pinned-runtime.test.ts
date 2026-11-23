@@ -1050,6 +1050,11 @@ Deno.test("crossHostBackendRename: only a host/target executable-suffix mismatch
     from: "laufey.exe",
     to: "laufey",
   });
+  assertEquals(crossHostBackendRename("darwin", win, "gpui"), {
+    dir: "gpui",
+    from: "laufey_gpui.exe",
+    to: "laufey_gpui",
+  });
   assertEquals(crossHostBackendRename("windows", TARGET, "webview"), {
     dir: "webview/build",
     from: "laufey_webview",

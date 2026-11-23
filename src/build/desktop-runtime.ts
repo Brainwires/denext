@@ -1302,17 +1302,17 @@ export async function projectDesktopBackend(
   const configured = resolveDesktopBackend(fromConfig, os);
   if (configured !== undefined) return configured;
   const backend = (await configuredBackend(projectDir)) ?? DEFAULT_DESKTOP_BACKEND;
-  if (backend === "webview" || backend === "cef") return backend;
+  if (backend === "webview" || backend === "cef" || backend === "gpui") return backend;
   if (typeof backend === "object" && backend !== null && !Array.isArray(backend)) {
     throw new Error(
       "denext: deno.json desktop.backend is an object; `deno desktop` reads that key as one " +
-        'engine ("webview" or "cef"). Put a per-OS value in denext.config.ts desktop.backend ' +
+        'engine ("webview", "cef" or "gpui"). Put a per-OS value in denext.config.ts desktop.backend ' +
         "({ macos?, windows?, linux?, default? }) and take it out of deno.json.",
     );
   }
   throw new Error(
     `denext: deno.json desktop.backend is ${JSON.stringify(backend)}; the denext Deno Desktop ` +
-      `runtime ships "webview" and "cef". On a stock Deno CLI (DENEXT_DENO=stock), set ` +
+      `runtime ships "webview", "cef" and "gpui". On a stock Deno CLI (DENEXT_DENO=stock), set ` +
       `${RUNTIME_ENV}=stock for another backend.`,
   );
 }
@@ -1352,6 +1352,8 @@ async function localRuntimeEnv(localDir: string, lib: string, target: string) {
 const BACKEND_BINARY: Readonly<Record<DesktopRuntimeBackend, { dir: string; name: string }>> = {
   webview: { dir: "webview/build", name: "laufey_webview" },
   cef: { dir: "cef/build/Release", name: "laufey" },
+  // The native tree host (laufey `backends/gpui`): no web engine, the app renders with denext/gpui.
+  gpui: { dir: "gpui", name: "laufey_gpui" },
 };
 
 /** The file the cross-host backend directory records what it mirrors in. */

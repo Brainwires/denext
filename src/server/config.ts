@@ -1394,14 +1394,15 @@ export interface DesktopConfig {
   update?: DesktopUpdateConfig;
   /**
    * The window engine `deno desktop` builds the app with: `"webview"` (the system WebView:
-   * WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux) or `"cef"` (Chromium, bundled).
-   * One engine for every target, or one per OS (`{ linux: "cef" }`: Chromium on Linux, where
+   * WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux), `"cef"` (Chromium, bundled) or
+   * `"gpui"` (no web view: the app renders React Native primitives into the window's native tree
+   * with `denext/gpui`; in development, no pinned runtime archive yet). One engine for every target, or one per OS (`{ linux: "cef" }`: Chromium on Linux, where
    * WebKitGTK has no WebRTC, and the system WebView elsewhere). The package scripts, `desktop run` /
    * `dev`, the runtime download and both doctors resolve it for the OS they build or run for. It
    * takes precedence over deno.json's `desktop.backend`, which `deno desktop` reads as one engine
    * and which stays the fallback. Default `"webview"`.
    */
-  backend?: "webview" | "cef" | DesktopBackendConfig;
+  backend?: "webview" | "cef" | "gpui" | DesktopBackendConfig;
   /**
    * The installers `denext desktop package` (the `scripts/package-*.ts`) builds, per OS. Unset,
    * an OS builds its defaults: `.dmg` on macOS (beside the `.app`), `.tar.gz` + `.deb` on Linux,
@@ -1712,13 +1713,13 @@ export interface DesktopAppIcons {
  */
 export interface DesktopBackendConfig {
   /** The macOS app's engine (`"webview"`: WKWebView). */
-  macos?: "webview" | "cef";
+  macos?: "webview" | "cef" | "gpui";
   /** The Windows app's engine (`"webview"`: WebView2). */
-  windows?: "webview" | "cef";
+  windows?: "webview" | "cef" | "gpui";
   /** The Linux app's engine (`"webview"`: WebKitGTK, which has no WebRTC). */
-  linux?: "webview" | "cef";
+  linux?: "webview" | "cef" | "gpui";
   /** The engine of every OS not named here. */
-  default?: "webview" | "cef";
+  default?: "webview" | "cef" | "gpui";
 }
 
 /** {@link DesktopConfig.installers}: the installer formats per OS, and what they say about the app. */

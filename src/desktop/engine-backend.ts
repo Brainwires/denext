@@ -1,6 +1,7 @@
 /**
  * `desktop.backend`: the window engine `deno desktop` builds an app with, `"webview"` (the system
- * WebView: WKWebView, WebView2, WebKitGTK) or `"cef"` (Chromium). One value for every target, or a
+ * WebView: WKWebView, WebView2, WebKitGTK), `"cef"` (Chromium) or `"gpui"` (no web view: a native
+ * tree the app renders with `denext/gpui`). One value for every target, or a
  * per-OS object `{ macos?, windows?, linux?, default? }` (the keys `desktop.installers` and
  * `desktop.app.icons` use), so an app can ship CEF on Linux (where WebKitGTK has no WebRTC) and the
  * system WebView elsewhere. An OS the object leaves out takes `default`, else `"webview"`.
@@ -14,7 +15,7 @@
 import type { DesktopBackendConfig } from "../server/config.ts";
 
 /** A window engine `deno desktop --backend` takes. */
-export type DesktopBackend = "webview" | "cef";
+export type DesktopBackend = "webview" | "cef" | "gpui";
 
 /** A target OS, as `Deno.build.os` names it. */
 export type DesktopBackendOs = "darwin" | "windows" | "linux";
@@ -32,7 +33,11 @@ const KEY_OF: Readonly<Record<DesktopBackendOs, "macos" | "windows" | "linux">> 
   linux: "linux",
 };
 
-const isBackend = (v: unknown): v is DesktopBackend => v === "webview" || v === "cef";
+/** Every engine, in the order messages list them. */
+const DESKTOP_BACKENDS: readonly DesktopBackend[] = ["webview", "cef", "gpui"];
+
+const isBackend = (v: unknown): v is DesktopBackend =>
+  (DESKTOP_BACKENDS as readonly unknown[]).includes(v);
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
@@ -57,7 +62,8 @@ export function desktopBackendProblem(value: unknown): DesktopBackendProblem | n
   if (!isPlainObject(value)) {
     return {
       field,
-      message: 'must be "webview", "cef" or a per-OS object { macos?, windows?, linux?, default? }',
+      message:
+        'must be "webview", "cef", "gpui" or a per-OS object { macos?, windows?, linux?, default? }',
     };
   }
   for (const [key, v] of Object.entries(value)) {
@@ -65,7 +71,7 @@ export function desktopBackendProblem(value: unknown): DesktopBackendProblem | n
       return { field, message: `has an unknown key "${key}" (the keys are ${OS_KEYS.join(", ")})` };
     }
     if (v !== undefined && !isBackend(v)) {
-      return { field: `${field}.${key}`, message: 'must be "webview" or "cef"' };
+      return { field: `${field}.${key}`, message: 'must be "webview", "cef" or "gpui"' };
     }
   }
   return null;

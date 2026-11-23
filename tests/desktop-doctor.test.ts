@@ -379,6 +379,15 @@ Deno.test("desktop doctor: the runtime — deno mismatch, a pre-probe pin, stock
   assertEquals(checksOf(unpinned), ["error:runtime"]);
   assertStringIncludes(unpinned.findings[0].message, "no pinned runtime build");
   assertStringIncludes(unpinned.findings[0].fix!, "on a stock Deno CLI (DENEXT_DENO=stock)");
+  // The gpui backend has no pinned archive yet: the fix is a local runtime build, not stock.
+  const gpui = await runDesktopDoctor({
+    runtimeStatus: () => Promise.resolve(status({ cache: "unpinned", backend: "gpui" })),
+    os: "darwin",
+    pin: pin(45),
+  });
+  assertEquals(checksOf(gpui), ["error:runtime"]);
+  assertStringIncludes(gpui.findings[0].message, "no gpui build");
+  assertStringIncludes(gpui.findings[0].fix!, "DENEXT_DESKTOP_RUNTIME_DIR");
   const invalid = await runDesktopDoctor({
     runtimeStatus: () => Promise.resolve(status({ cache: "invalid" })),
     os: "darwin",

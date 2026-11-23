@@ -566,7 +566,7 @@ function toolchainArtifacts(pin: DenoToolchainPin): [string, DenoToolchainArtifa
 /** The desktop pin's archives, each with where it sits. */
 function desktopArtifacts(pin: DesktopRuntimePin): [string, DesktopRuntimeArtifact][] {
   return Object.entries(pin.targets ?? {}).flatMap(([k, t]) =>
-    (["webview", "cef"] as const).flatMap((b) =>
+    (["webview", "cef", "gpui"] as const).flatMap((b) =>
       t[b] ? [[`desktop ${k} ${b}`, t[b]!] as [string, DesktopRuntimeArtifact]] : []
     )
   );
