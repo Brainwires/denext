@@ -113,6 +113,14 @@ and this project adheres to
 
 ### Changed
 
+- **Runtime 3.0.0-denext.28.** The bundled Deno toolchain and Desktop runtime move to
+  3.0.0-denext.28 (rollback 3.0.0-denext.27). Ctrl+C typed into a Windows pseudo-console now ends
+  the program running there when denext itself was started with Ctrl+C ignored (an ssh session, a
+  CI step); `node:dgram` reports `ENOTSUP` for the options Windows refuses, as Node does; the kernel
+  broker refuses a relative Unix socket path on Windows as it does elsewhere; and the runtime
+  carries the fix for RUSTSEC-2026-0592 (a stack overflow in the `url` crate's `Url::origin()` on
+  deeply nested `blob:` URLs, reachable through a cached redirect;
+  [GHSA-gvjm-847g-cqvc](https://github.com/Brainwires/denext/security/advisories/GHSA-gvjm-847g-cqvc)).
 - **A click on a page's quick action reaches one page.** In a Deno Desktop window a Dock menu choice
   goes to the key window's page if it listens with `onQuickAction`, else to the page of the window
   focused most recently that does, instead of every window's page.
