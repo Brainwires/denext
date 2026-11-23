@@ -8,6 +8,13 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **A detached sidecar whose module fails to load exits once.** When the first-attach deadline (or
+  the app's stop) had already begun ending the sidecar while its module was still loading, the
+  load failure no longer starts a second exit with code 1, and a load failure no longer leaves the
+  first-attach timer running.
+
 ## [4.22.0] - 2026-11-23
 
 ### Added

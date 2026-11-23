@@ -1826,6 +1826,30 @@ Deno.test("runDetachedSidecarChild: exitAfterMs ends it once no app was attached
   }
 });
 
+Deno.test("runDetachedSidecarChild: a module that fails after the first-attach deadline ended the start exits once, with 0", async () => {
+  const dir = await tempDir("child-late-fail");
+  const errors: unknown[][] = [];
+  const realError = console.error;
+  console.error = (...args: unknown[]) => void errors.push(args);
+  try {
+    // The module outlives the 50 ms deadline, then throws: the shutdown the deadline began ends
+    // the process, and the failure is only reported (no exit 1 after it).
+    const entry = "data:text/javascript," +
+      encodeURIComponent(
+        `await new Promise((r) => setTimeout(r, 400)); throw new Error("late boom ${crypto.randomUUID()}");`,
+      );
+    const { exits } = await startDetachedChild({ dir, entry, firstAttachMs: 50 });
+    assert(exits.length >= 1);
+    assert(exits.every((c) => c === 0));
+    assertEquals(errors.length, 1);
+    assertMatch(String(errors[0][0]), /^sidecar d: Error: late boom/);
+  } finally {
+    console.error = realError;
+    clearDetachedChildGlobal();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("runDetachedSidecarChild: a module that fails to load is reported and exits 1", async () => {
   const dir = await tempDir("child-fail");
   const errors: unknown[][] = [];
@@ -1835,7 +1859,8 @@ Deno.test("runDetachedSidecarChild: a module that fails to load is reported and 
     const { exits, sent } = await startDetachedChild({
       dir,
       entry: `data:text/javascript,throw new Error("module boom ${crypto.randomUUID()}");`,
-      firstAttachMs: 100,
+      // Room for the import on a slow runner: an expired deadline would end it first (exit 0).
+      firstAttachMs: 2000,
     });
     assertEquals((sent[0] as { t: string }).t, "control");
     assertEquals(exits, [1]);

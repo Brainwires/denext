@@ -292,6 +292,11 @@ export async function runDetachedSidecarChild(options: RunDetachedChildOptions):
   } catch (err) {
     const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
     console.error(`sidecar ${init.name}: ${message}`);
+    // A shutdown that began while the module was still loading (the first-attach deadline, the
+    // app's stop) already ends the process: never a second exit. Otherwise its deadline must not
+    // fire after this exit (it held the event loop open).
+    if (ending) return;
+    clearTimeout(firstAttach.timer);
     ending = true;
     await server.bye({ code: 1, error: message, reason: "its module failed to load" });
     server.close();
