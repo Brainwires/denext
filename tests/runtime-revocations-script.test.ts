@@ -512,15 +512,30 @@ Deno.test("the committed list: canonical, every release through 3.0.0-denext.8, 
     ...Array.from({ length: 6 }, (_, i) => `3.0.0-rc.${i + 1}`),
     ...[1, 2, 3, 5, 6, 7, 8].map((n) => `3.0.0-denext.${n}`),
   ];
+  // The Linux CLI builds of 3.0.0-denext.25 / .26 (GHSA-488g-7qvv-g92h: the lifecycle jail's
+  // /proc/self/fd magic links), revoked on their Linux targets only.
+  const linux = entries.filter((e) => e.targets !== undefined);
+  assertEquals(linux.map((e) => `${e.component} ${e.version}`).sort(), [
+    "cli 3.0.0-denext.25",
+    "cli 3.0.0-denext.26",
+  ]);
+  for (const e of linux) {
+    assertEquals(e.targets, ["aarch64-unknown-linux-gnu", "x86_64-unknown-linux-gnu"], e.version);
+    assertEquals(e.fixedIn, "denext 4.20.1 (runtime 3.0.0-denext.27)");
+    assertEquals(
+      e.advisory,
+      "https://github.com/Brainwires/denext/security/advisories/GHSA-488g-7qvv-g92h",
+    );
+  }
+  const everywhere = entries.filter((e) => e.targets === undefined);
   for (const component of ["cli", "desktop"] as const) {
     assertEquals(
-      entries.filter((e) => e.component === component).map((e) => e.version).sort(),
+      everywhere.filter((e) => e.component === component).map((e) => e.version).sort(),
       [...versions].sort(),
       component,
     );
   }
-  for (const e of entries) {
-    assertEquals(e.targets, undefined, `${e.version}: every target`);
+  for (const e of everywhere) {
     assertEquals(e.fixedIn, "denext 4.13.0 (runtime 3.0.0-denext.12)");
     assertEquals(
       e.advisory,
@@ -562,7 +577,7 @@ Deno.test("sign: the committed list signed with a test key — the shipped verif
     const out = join(dir, "signed.json");
     // Nothing is published for this key: the first signing skips the published-entries check.
     await main(["sign", COMMITTED, "--out", out, "--no-publish", "--skip-published-check"], f.deps);
-    assertStringIncludes(f.logged.join("\n"), "70 revoked; the checked-out pins:");
+    assertStringIncludes(f.logged.join("\n"), "72 revoked; the checked-out pins:");
     assert(!f.logged.some((l) => l.includes("WARNING")), f.logged.join("\n"));
     assertEquals(f.web, [], "--no-publish publishes nothing");
     const text = await Deno.readTextFile(out);

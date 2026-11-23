@@ -4,7 +4,9 @@
  * TCP port. `Deno.listen` / `Deno.connect` have no named-pipe transport, but the runtime's
  * `node:net` does (`net.createServer().listen("\\\\.\\pipe\\name")`, a Unix socket for any other
  * path), so this module is a thin layer over `node:net` that hands each connection out as a pair
- * of web streams.
+ * of web streams. A Windows pipe has no half-close, so both ends frame what they write there
+ * (both are this module; a pipe channel speaks only to another `listenLocalIpc` /
+ * `connectLocalIpc`).
  *
  * - {@linkcode localIpcPath} — where a channel lives for this app and user (pure).
  * - {@linkcode listenLocalIpc} — serve a channel: refuses a live server's socket, replaces a stale
@@ -204,7 +206,9 @@ export function localIpcPath(name: string, options: LocalIpcPathOptions = {}): s
     }
     return path;
   }
-  const dir = options.dir ?? posixJoin(osDataDir(requireAppId(options), os), "ipc");
+  // A Unix path, even when computed on another host (osDataDir joins with that host's separator).
+  const dir = options.dir ??
+    posixJoin(osDataDir(requireAppId(options), os).replaceAll("\\", "/"), "ipc");
   const path = posixJoin(dir, `${name}.sock`);
   const limit = SUN_PATH_BYTES[os];
   const bytes = new TextEncoder().encode(path).length;
@@ -334,28 +338,101 @@ function mapError(err: unknown, path: string, direction: "listen" | "connect"): 
   return err;
 }
 
+/** The bytes of a frame header on a Windows pipe: the payload's length, little-endian. */
+const FRAME_HEADER = 4;
+/** The largest payload one frame carries (a longer write is split). */
+const FRAME_MAX = 1024 * 1024;
+
+/**
+ * Windows pipe framing. A byte-mode named pipe has no half-close: ending its write side tells the
+ * peer nothing, which only learns of the end when the whole pipe closes. Both ends of a pipe
+ * channel are this module, so on a pipe each write travels as frames (a 4-byte little-endian
+ * length, then the bytes) and a zero-length frame says "this side writes no more": the peer's
+ * readable ends there while the other direction keeps flowing. The pipe itself closes once both
+ * directions are done.
+ */
+function frame(chunk: Uint8Array): Uint8Array[] {
+  const out: Uint8Array[] = [];
+  for (let at = 0; at < chunk.length; at += FRAME_MAX) {
+    const part = chunk.subarray(at, Math.min(at + FRAME_MAX, chunk.length));
+    const header = new Uint8Array(FRAME_HEADER);
+    new DataView(header.buffer).setUint32(0, part.length, true);
+    out.push(header, part);
+  }
+  return out;
+}
+
+/** The end-of-writes frame (a zero length). */
+const END_FRAME = new Uint8Array(FRAME_HEADER);
+
+/** Reassembles frames from pipe chunks: `onData` per payload, `onEnd` at the end frame. */
+function frameDecoder(
+  onData: (bytes: Uint8Array) => void,
+  onEnd: () => void,
+): (chunk: Uint8Array) => void {
+  let buffered = new Uint8Array(0);
+  let ended = false;
+  return (chunk) => {
+    if (ended) return;
+    let buf: Uint8Array = buffered.length === 0 ? chunk : concatBytes(buffered, chunk);
+    while (buf.length >= FRAME_HEADER) {
+      const length = new DataView(buf.buffer, buf.byteOffset, FRAME_HEADER).getUint32(0, true);
+      if (length === 0) {
+        ended = true;
+        buffered = new Uint8Array(0);
+        onEnd();
+        return;
+      }
+      if (buf.length < FRAME_HEADER + length) break;
+      onData(buf.slice(FRAME_HEADER, FRAME_HEADER + length));
+      buf = buf.subarray(FRAME_HEADER + length);
+    }
+    buffered = buf.slice();
+  };
+}
+
+function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a);
+  out.set(b, a.length);
+  return out;
+}
+
 /**
  * A `node:net` socket as a {@linkcode LocalIpcConnection}: `data` / `end` feed the readable (paused
  * while its queue is full), each write resolves once the socket took it, closing the writable ends
- * the socket's write side (the socket is half-open, so the other direction keeps flowing).
+ * the socket's write side (the socket is half-open, so the other direction keeps flowing). On a
+ * Windows pipe (`framed`) the same contract rides on frames (see {@linkcode frame}).
  */
-function wrapSocket(socket: net.Socket): LocalIpcConnection {
+function wrapSocket(socket: net.Socket, framed: boolean): LocalIpcConnection {
   let readDone = false;
+  let writeDone = false;
   let discard = false;
   const closed = new Promise<void>((resolve) => socket.once("close", () => resolve()));
+  /** On a pipe: close it once neither direction has more to say. */
+  const settleFramed = () => {
+    if (framed && writeDone && (readDone || discard)) socket.destroy();
+  };
   const readable = new ReadableStream<Uint8Array>({
     start(controller) {
       const finish = (err?: unknown) => {
         if (readDone) return;
         readDone = true;
-        if (discard) return;
-        if (err === undefined) controller.close();
-        else controller.error(err);
+        if (!discard) {
+          if (err === undefined) controller.close();
+          else controller.error(err);
+        }
+        settleFramed();
       };
-      socket.on("data", (chunk: Uint8Array) => {
+      const deliver = (bytes: Uint8Array) => {
         if (readDone || discard) return;
-        controller.enqueue(new Uint8Array(chunk));
+        controller.enqueue(bytes);
         if ((controller.desiredSize ?? 1) <= 0) socket.pause();
+      };
+      const decode = framed ? frameDecoder(deliver, () => finish()) : undefined;
+      socket.on("data", (chunk: Uint8Array) => {
+        if (decode) decode(new Uint8Array(chunk));
+        else deliver(new Uint8Array(chunk));
       });
       socket.once("end", () => finish());
       socket.once("error", (err: unknown) => finish(err));
@@ -369,20 +446,35 @@ function wrapSocket(socket: net.Socket): LocalIpcConnection {
       // side is done too.
       discard = true;
       socket.resume();
-      if (socket.writableEnded) socket.destroy();
+      if (framed) settleFramed();
+      else if (socket.writableEnded) socket.destroy();
     },
   }, { highWaterMark: 4 });
+  const send = (bytes: Uint8Array) =>
+    new Promise<void>((resolve, reject) => {
+      if (socket.destroyed) {
+        reject(new Deno.errors.BrokenPipe("local IPC: the connection is closed"));
+        return;
+      }
+      socket.write(bytes, (err?: Error | null) => err ? reject(err) : resolve());
+    });
   const writable = new WritableStream<Uint8Array>({
-    write(chunk) {
-      return new Promise<void>((resolve, reject) => {
-        if (socket.destroyed) {
-          reject(new Deno.errors.BrokenPipe("local IPC: the connection is closed"));
-          return;
-        }
-        socket.write(chunk, (err?: Error | null) => err ? reject(err) : resolve());
-      });
+    async write(chunk) {
+      if (!framed) return send(chunk);
+      if (chunk.length === 0) return; // a zero-length frame would end the stream
+      for (const part of frame(chunk)) await send(part);
     },
     close() {
+      if (framed) {
+        if (socket.destroyed) {
+          writeDone = true;
+          return Promise.resolve();
+        }
+        return send(END_FRAME).catch(() => {}).then(() => {
+          writeDone = true;
+          settleFramed();
+        });
+      }
       return new Promise<void>((resolve) => {
         if (socket.destroyed || socket.writableFinished) return resolve();
         socket.once("close", () => resolve());
@@ -522,7 +614,7 @@ export async function listenLocalIpc(
     sockets.add(socket);
     socket.once("close", () => sockets.delete(socket));
     try {
-      onConnection(wrapSocket(socket));
+      onConnection(wrapSocket(socket, pipe));
     } catch {
       socket.destroy();
     }
@@ -612,7 +704,7 @@ export function connectLocalIpcWith(
       socket.off("error", onError);
       socket.off("connect", onConnect);
       if (err === undefined) {
-        resolve(wrapSocket(socket));
+        resolve(wrapSocket(socket, isLocalIpcPipePath(path)));
       } else {
         socket.on("error", () => {});
         socket.destroy();

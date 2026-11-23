@@ -11,6 +11,14 @@ const abs = (p: string) => fromFileUrl(new URL(`../${p}`, import.meta.url));
 Deno.test({
   name: "denext graphql sdl loads a module-path schema through the app's own import map",
   fn: async () => {
+    // Fetch the example's npm packages first: the verb loads the project's plugins under a fixed
+    // budget (30 s), which a cold npm cache on a loaded runner can spend on downloads alone.
+    const warm = await boundedOutput(Deno.execPath(), {
+      args: ["cache", "denext.config.ts", "app/graphql/schema.ts"],
+      cwd: abs("examples/graphql"),
+      env: { NO_COLOR: "1" },
+    });
+    assert(warm.success, new TextDecoder().decode(warm.stderr));
     // From the example's directory with NO --config: the example's deno.json (and only it) maps
     // `@pothos/core`, which its app/graphql/schema.ts imports.
     const out = await boundedOutput(Deno.execPath(), {

@@ -105,7 +105,10 @@ and this project adheres to
   `\\.\pipe\<appId>.<user hash>.<name>` named pipe on Windows), `listenLocalIpc(path,
   onConnection, { signal })` serves it and `connectLocalIpc(path, { timeoutMs, signal })` connects,
   each connection a pair of web streams (`readable`, `writable`, `close()`, `Symbol.asyncDispose`).
-  Built on the runtime's `node:net`, since `Deno.listen` has no named-pipe transport. On Unix a
+  Built on the runtime's `node:net`, since `Deno.listen` has no named-pipe transport. Closing one
+  side's `writable` ends the other side's `readable` while the other direction keeps flowing, on
+  Windows too: a named pipe has no half-close, so both ends of a pipe channel frame what they write
+  (a pipe channel talks only to another `listenLocalIpc` / `connectLocalIpc`). On Unix a
   live server's socket is never taken over, a stale one is replaced, the socket is `0600` and an
   unsafe folder (another owner, group/world-writable without the sticky bit) is refused. A refused
   permission check names the grants. Types: `LocalIpcConnection`, `LocalIpcServer`,

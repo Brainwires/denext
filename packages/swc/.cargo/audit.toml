@@ -13,4 +13,12 @@ ignore = [
   # unwinding, so `catch_unwind` never returns), and the cache keys are file names and strings,
   # whose `Drop` cannot panic. Remove this entry when `swc_core` moves to 77 or later.
   "RUSTSEC-2026-0253",
+  # RUSTSEC-2026-0592 (GHSA-hrj5-67jp-wqp9): `url` 2.5.8, `Url::origin()` recurses once per nested
+  # `blob:` prefix with no depth limit (a stack overflow). Pulled by `swc` 74, `swc_common` 25 and
+  # `swc_sourcemap` 10 (data-URL source maps, file names, source-map bases). Not reachable in this
+  # build: none of them, and nothing in this package's src/, calls `origin()`; they only parse,
+  # join and print URLs. The fix, `url` 2.5.9, also changes how paths are percent-encoded (`^`),
+  # which would change emitted source-map URLs, so it waits for the next swc update. Remove this
+  # entry when Cargo.lock has `url` 2.5.9 or later.
+  "RUSTSEC-2026-0592",
 ]

@@ -39,7 +39,11 @@ import {
   withDetachedLock,
   writeDetachedRecord,
 } from "../src/desktop/sidecar-detached.ts";
-import { detachedChildInitError } from "../src/desktop/sidecar-detached-child.ts";
+import {
+  detachedChildInitError,
+  type DetachedChildProcess,
+  runDetachedSidecarChild,
+} from "../src/desktop/sidecar-detached-child.ts";
 import { detachedSidecarLauncher } from "../src/desktop/sidecar-launch.ts";
 import {
   createSidecarSupervisor,
@@ -193,6 +197,17 @@ Deno.test("detachedChildInitError: the init's fields are checked", () => {
   assertEquals(detachedChildInitError({ ...init, recordPath: "" }), "init.recordPath");
   assertEquals(detachedChildInitError({ ...init, exitAfterMs: -1 }), "init.exitAfterMs");
   assertEquals(detachedChildInitError({ ...init, port: "1" }), "init.port");
+  assertEquals(detachedChildInitError({ ...init, t: "control" }), "not an init message");
+  assertEquals(detachedChildInitError({ ...init, name: "" }), "init.name");
+  assertEquals(detachedChildInitError({ ...init, name: 1 }), "init.name");
+  assertEquals(detachedChildInitError({ ...init, recordPath: 1 }), "init.recordPath");
+  assertEquals(detachedChildInitError({ ...init, appVersion: 1 }), "init.appVersion");
+  assertEquals(detachedChildInitError({ ...init, startedAt: "1" }), "init.startedAt");
+  assertEquals(detachedChildInitError({ ...init, secrets: null }), "init.secrets");
+  assertEquals(detachedChildInitError({ ...init, secrets: "s" }), "init.secrets");
+  assertEquals(detachedChildInitError({ ...init, exitAfterMs: "1" }), "init.exitAfterMs");
+  // The optional fields, when present and well-formed, pass.
+  assertEquals(detachedChildInitError({ ...init, port: 5000, exitAfterMs: 0 }), null);
 });
 
 Deno.test("currentAppVersion: the updater's version and the executable's stamp; dev unpackaged", () => {
@@ -1141,4 +1156,395 @@ Deno.test({
       assert(second.STATUS.pid !== first.pid);
       assert(await waitFor(async () => (await pidsOf(marker)).length === 0, 10_000));
     }),
+});
+
+// ── the detached sidecar's own process, in-process (a fake `node:process`) ──────────────────────
+
+/** A fake `node:process` with an IPC channel: what `send` sent, and the events it can emit. */
+function fakeChildProcess(opts: { ipc?: boolean } = {}) {
+  const sent: unknown[] = [];
+  const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+  const proc: DetachedChildProcess = {
+    ...(opts.ipc === false ? {} : {
+      send: (msg: unknown) => {
+        sent.push(msg);
+        return true;
+      },
+    }),
+    on(event, fn) {
+      if (!listeners.has(event)) listeners.set(event, new Set());
+      listeners.get(event)!.add(fn);
+      return proc;
+    },
+    off(event, fn) {
+      listeners.get(event)?.delete(fn);
+      return proc;
+    },
+    listenerCount: (event) => listeners.get(event)?.size ?? 0,
+    emit(event, ...args) {
+      const set = [...(listeners.get(event) ?? [])];
+      for (const fn of set) fn(...args);
+      return set.length > 0;
+    },
+  };
+  return { proc, sent };
+}
+
+/** The `globalThis.denextSidecar` a detached child installs, as these tests read it. */
+interface DetachedChildGlobal {
+  readonly name: string;
+  readonly child: boolean;
+  readonly port?: number;
+  readonly bootstrap?: unknown;
+  readonly secrets: Readonly<Record<string, string>>;
+  ready(): void;
+  onShutdown(fn: unknown): void;
+  readonly detached: {
+    readonly attached: boolean;
+    onAttachedChange(fn: unknown): () => void;
+  };
+  readonly childCommand?: unknown;
+}
+
+/** A module that loads (each test's own, so the import really runs). */
+const okEntry = (tag: string) =>
+  `data:text/javascript,globalThis.__detachedChildLoaded=${JSON.stringify(tag)};`;
+
+/**
+ * Start `runDetachedSidecarChild` for a sidecar `d` against a fake process, hand it a valid init
+ * (after a message that is not one), and wait until it imported its module.
+ */
+async function startDetachedChild(opts: {
+  dir: string;
+  init?: Record<string, unknown>;
+  firstAttachMs?: number;
+  writeRecord?: boolean;
+  entry?: string;
+}) {
+  const { proc, sent } = fakeChildProcess();
+  const exits: number[] = [];
+  const key = newDetachedKey();
+  const recordDir = detachedRegistryDir(opts.dir);
+  const recordPath = detachedRecordPath(recordDir, "d");
+  if (opts.writeRecord !== false) await writeDetachedRecord(recordDir, record("d", 1, key));
+  const helper = () => "child-command";
+  const run = runDetachedSidecarChild({
+    name: "d",
+    entry: opts.entry ?? okEntry(crypto.randomUUID()),
+    childHelpers: { childCommand: helper },
+    process: proc,
+    exit: (code) => exits.push(code),
+    firstAttachMs: opts.firstAttachMs ?? 10_000,
+  });
+  proc.emit("message", { t: "status" }); // not the init: ignored
+  proc.emit("message", {
+    t: "init",
+    name: "d",
+    key,
+    secrets: { token: "s3cret" },
+    appVersion: "1.0.0",
+    startedAt: 7,
+    recordPath,
+    graceMs: 50,
+    ...opts.init,
+  });
+  await run;
+  const control = sent[0] as { t: string; port: number; pid: number };
+  const sidecar = (globalThis as { denextSidecar?: DetachedChildGlobal }).denextSidecar!;
+  return { proc, sent, exits, key, control, sidecar, helper, recordDir, recordPath };
+}
+
+/** Drop the global a detached child installed. */
+function clearDetachedChildGlobal(): void {
+  delete (globalThis as { denextSidecar?: unknown }).denextSidecar;
+  delete (globalThis as { __detachedChildLoaded?: unknown }).__detachedChildLoaded;
+}
+
+Deno.test("runDetachedSidecarChild: no IPC channel, a late, dropped, bad or foreign init is refused", async () => {
+  // No IPC channel at all.
+  await assertRejects(
+    () =>
+      runDetachedSidecarChild({
+        name: "d",
+        entry: okEntry("never"),
+        childHelpers: {},
+        process: fakeChildProcess({ ipc: false }).proc,
+        exit: () => {},
+      }),
+    Error,
+    "needs the IPC channel",
+  );
+  // No init in time: the listeners are dropped again.
+  const late = fakeChildProcess();
+  await assertRejects(
+    () =>
+      runDetachedSidecarChild({
+        name: "d",
+        entry: okEntry("never"),
+        childHelpers: {},
+        process: late.proc,
+        exit: () => {},
+        initTimeoutMs: 30,
+      }),
+    Error,
+    "got no init within 30 ms",
+  );
+  assertEquals(late.proc.listenerCount("message"), 0);
+  assertEquals(late.proc.listenerCount("disconnect"), 0);
+  // The app drops the channel first.
+  const dropped = fakeChildProcess();
+  const droppedRun = runDetachedSidecarChild({
+    name: "d",
+    entry: okEntry("never"),
+    childHelpers: {},
+    process: dropped.proc,
+    exit: () => {},
+  });
+  dropped.proc.emit("disconnect");
+  await assertRejects(() => droppedRun, Error, "dropped a detached sidecar's IPC channel");
+  assertEquals(dropped.proc.listenerCount("message"), 0);
+  // A malformed init names its first bad field.
+  const bad = fakeChildProcess();
+  const badRun = runDetachedSidecarChild({
+    name: "d",
+    entry: okEntry("never"),
+    childHelpers: {},
+    process: bad.proc,
+    exit: () => {},
+  });
+  bad.proc.emit("message", { t: "init", name: "" });
+  await assertRejects(() => badRun, Error, "a detached sidecar got a bad init (init.name)");
+  // An init for another sidecar.
+  const foreign = fakeChildProcess();
+  const foreignRun = runDetachedSidecarChild({
+    name: "d",
+    entry: okEntry("never"),
+    childHelpers: {},
+    process: foreign.proc,
+    exit: () => {},
+  });
+  foreign.proc.emit("message", {
+    t: "init",
+    name: "other",
+    key: newDetachedKey(),
+    secrets: {},
+    appVersion: "1",
+    startedAt: 1,
+    recordPath: "/x/other.json",
+  });
+  await assertRejects(() => foreignRun, Error, "the init names another sidecar (other)");
+  // None of them opened an endpoint or told the app a port.
+  assertEquals([late, dropped, bad, foreign].map((f) => f.sent.length), [0, 0, 0, 0]);
+  assertEquals((globalThis as { denextSidecar?: unknown }).denextSidecar, undefined);
+});
+
+Deno.test("runDetachedSidecarChild: the global, attachments, ready() and an app-asked shutdown", async () => {
+  const dir = await tempDir("child-life");
+  const errors: unknown[][] = [];
+  const realError = console.error;
+  console.error = (...args: unknown[]) => void errors.push(args);
+  try {
+    const { proc, exits, key, control, sidecar, helper } = await startDetachedChild({
+      dir,
+      init: { port: 5555, bootstrap: { hello: "world" } },
+    });
+    // The app learns the control endpoint and this pid over the IPC channel.
+    assertEquals(control.t, "control");
+    assertEquals(control.pid, Deno.pid);
+    assert(control.port > 0);
+    // The module was imported with the global in place.
+    assert((globalThis as { __detachedChildLoaded?: unknown }).__detachedChildLoaded);
+    assertEquals(sidecar.name, "d");
+    assertEquals(sidecar.child, true);
+    assertEquals(sidecar.port, 5555);
+    assertEquals(sidecar.bootstrap, { hello: "world" });
+    assertEquals(sidecar.secrets, { token: "s3cret" });
+    assert(Object.isFrozen(sidecar) && Object.isFrozen(sidecar.secrets));
+    assertEquals(sidecar.childCommand, helper);
+    assertEquals(sidecar.detached.attached, false);
+
+    const changes: boolean[] = [];
+    const dropped: boolean[] = [];
+    sidecar.detached.onAttachedChange((now: boolean) => changes.push(now));
+    sidecar.detached.onAttachedChange(() => {
+      throw new Error("listener boom");
+    });
+    const unsubscribe = sidecar.detached.onAttachedChange((now: boolean) => dropped.push(now));
+    unsubscribe();
+    // A non-function is ignored and still hands back an unsubscribe.
+    const noop = sidecar.detached.onAttachedChange("nope");
+    assertEquals(typeof noop, "function");
+    noop();
+
+    const order: string[] = [];
+    sidecar.onShutdown(async () => {
+      await sleep(5);
+      order.push("handler");
+    });
+    sidecar.onShutdown(() => {
+      throw new Error("a failing handler does not stop the others");
+    });
+    sidecar.onShutdown("not a function");
+    proc.on("SIGTERM", (sig) => void order.push(`signal ${sig}`));
+
+    const s = await connectDetachedControl({ port: control.port, key, name: "d" });
+    assert(s);
+    assertEquals(s.info.name, "d");
+    assertEquals(s.info.appVersion, "1.0.0");
+    assertEquals(s.info.startedAt, 7);
+    assert(await waitFor(() => sidecar.detached.attached, 2000));
+    assertEquals(changes, [true]);
+    assertEquals(dropped, []);
+    // The throwing listener is reported, not fatal.
+    assertEquals(errors.length, 1);
+    assertMatch(String(errors[0][0]), /sidecar d: an onAttachedChange listener failed/);
+
+    // ready() reaches the attached app.
+    assertEquals(s.ready, false);
+    sidecar.ready();
+    await s.whenReady();
+    assert(s.ready);
+
+    // A second attachment is no change for the module.
+    const s2 = await connectDetachedControl({ port: control.port, key, name: "d" });
+    assert(s2);
+    assertEquals(s2.info.attached, 2);
+    s2.close();
+    assert(await waitFor(async () => (await s.status())?.attached === 1, 2000));
+    assertEquals(changes, [true]);
+    assertEquals(exits, []);
+
+    // The app asks it to stop: handlers, then SIGTERM listeners, then the bye and exit(0).
+    assert(await s.shutdown(60));
+    assertEquals((await s.closed).bye?.reason, "the app asked it to stop");
+    assertEquals((await s.closed).bye?.code, 0);
+    assertEquals(order, ["handler", "signal SIGTERM"]);
+    assertEquals(exits, [0]);
+    // The unconditional grace exit still fires (the process would be gone by then).
+    assert(await waitFor(() => exits.length === 2, 2000));
+  } finally {
+    console.error = realError;
+    clearDetachedChildGlobal();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("runDetachedSidecarChild: no app attaching after the start ends it", async () => {
+  const dir = await tempDir("child-first");
+  try {
+    const order: string[] = [];
+    const started = Date.now();
+    const { exits, sidecar } = await startDetachedChild({ dir, firstAttachMs: 80 });
+    sidecar.onShutdown(() => void order.push("handler"));
+    assert(await waitFor(() => exits.length >= 1, 3000));
+    assert(Date.now() - started >= 70);
+    assertEquals(exits[0], 0);
+    assertEquals(order, ["handler"]);
+    assert(await waitFor(() => exits.length === 2, 2000));
+  } finally {
+    clearDetachedChildGlobal();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("runDetachedSidecarChild: a record another start replaced ends it at the next check", async () => {
+  const dir = await tempDir("child-replaced");
+  try {
+    const { exits, key, control, recordDir } = await startDetachedChild({
+      dir,
+      init: { recordPollMs: 50 },
+    });
+    const s = await connectDetachedControl({ port: control.port, key, name: "d" });
+    assert(s);
+    // While the record holds its key, the checks keep it running.
+    await sleep(200);
+    assertEquals(exits, []);
+    assert(s.open);
+    await writeDetachedRecord(recordDir, record("d", 1, newDetachedKey()));
+    const end = await s.closed;
+    assertEquals(end.bye?.reason, "its registry record is gone or was replaced");
+    assertEquals(exits[0], 0);
+    assert(await waitFor(() => exits.length === 2, 2000));
+  } finally {
+    clearDetachedChildGlobal();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("runDetachedSidecarChild: a missing record ends it once the last app detaches", async () => {
+  const dir = await tempDir("child-missing");
+  try {
+    const { exits, key, control, sidecar } = await startDetachedChild({ dir, writeRecord: false });
+    const changes: boolean[] = [];
+    sidecar.detached.onAttachedChange((now: boolean) => changes.push(now));
+    const s = await connectDetachedControl({ port: control.port, key, name: "d" });
+    assert(s);
+    assert(await waitFor(() => changes.length === 1, 2000));
+    s.close();
+    assert(await waitFor(() => exits.length >= 1, 3000));
+    assertEquals(changes, [true, false]);
+    assertEquals(exits[0], 0);
+    assert(await waitFor(() => exits.length === 2, 2000));
+  } finally {
+    clearDetachedChildGlobal();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("runDetachedSidecarChild: exitAfterMs ends it once no app was attached that long; a re-attach resets it", async () => {
+  const dir = await tempDir("child-idle");
+  try {
+    const { exits, key, control, sidecar } = await startDetachedChild({
+      dir,
+      init: { exitAfterMs: 250 },
+    });
+    const changes: boolean[] = [];
+    sidecar.detached.onAttachedChange((now: boolean) => changes.push(now));
+    const s = await connectDetachedControl({ port: control.port, key, name: "d" });
+    assert(s);
+    assert(await waitFor(() => changes.length === 1, 2000));
+    s.close();
+    assert(await waitFor(() => changes.length === 2, 2000));
+    // Re-attached before the idle budget ran out: the idle exit is cancelled.
+    const s2 = await connectDetachedControl({ port: control.port, key, name: "d" });
+    assert(s2);
+    assert(await waitFor(() => changes.length === 3, 2000));
+    await sleep(400);
+    assertEquals(exits, []);
+    const detachedAt = Date.now();
+    s2.close();
+    assert(await waitFor(() => exits.length >= 1, 3000));
+    assert(Date.now() - detachedAt >= 200, "ended before exitAfterMs");
+    assertEquals(changes, [true, false, true, false]);
+    assertEquals(exits[0], 0);
+    assert(await waitFor(() => exits.length === 2, 2000));
+  } finally {
+    clearDetachedChildGlobal();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("runDetachedSidecarChild: a module that fails to load is reported and exits 1", async () => {
+  const dir = await tempDir("child-fail");
+  const errors: unknown[][] = [];
+  const realError = console.error;
+  console.error = (...args: unknown[]) => void errors.push(args);
+  try {
+    const { exits, sent } = await startDetachedChild({
+      dir,
+      entry: `data:text/javascript,throw new Error("module boom ${crypto.randomUUID()}");`,
+      firstAttachMs: 100,
+    });
+    assertEquals((sent[0] as { t: string }).t, "control");
+    assertEquals(exits, [1]);
+    assertEquals(errors.length, 1);
+    assertMatch(String(errors[0][0]), /^sidecar d: Error: module boom/);
+    // The first-attach budget that was still armed finds it already ending: no second exit.
+    await sleep(200);
+    assertEquals(exits, [1]);
+  } finally {
+    console.error = realError;
+    clearDetachedChildGlobal();
+    await Deno.remove(dir, { recursive: true });
+  }
 });

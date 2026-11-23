@@ -3,7 +3,8 @@
 // the folder check, and REAL sockets: an echo through the web streams (binary, larger than one
 // chunk, both directions at once), many sequential connections, `close()` ending open connections
 // and removing the file, a stale socket replaced, a live one never stolen, connecting to nothing,
-// the timeout and the abort, the 0600 mode and a refused world-writable folder.
+// the timeout and the abort, the 0600 mode and a refused world-writable folder, and the frames a
+// Windows pipe connection writes and reads (a pipe has no half-close).
 //
 // The real-socket tests run on every OS: on Windows the path is a named pipe from `localIpcPath`
 // (run this file on a Windows runner to exercise the pipe I/O), and the Unix-only checks (modes,
@@ -561,6 +562,84 @@ Deno.test("local IPC: a refused permission names the grants (child process)", as
       assertMatch(connect, /^NotCapable: local IPC: connect on .* --allow-net-connect=unix:/);
     } finally {
       await Deno.remove(file);
+    }
+  } finally {
+    await ch.cleanup();
+  }
+});
+
+/** A little-endian u32 frame header for `n` payload bytes. */
+function header(n: number): Uint8Array {
+  const h = new Uint8Array(4);
+  new DataView(h.buffer).setUint32(0, n, true);
+  return h;
+}
+
+function concat(parts: Uint8Array[]): Uint8Array {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let at = 0;
+  for (const p of parts) {
+    out.set(p, at);
+    at += p.length;
+  }
+  return out;
+}
+
+// A Windows pipe has no half-close, so a pipe channel frames its bytes. The framing is driven here
+// on every OS: the connection is made for a pipe path while the bytes travel over this OS's real
+// channel, with a raw `node:net` peer reading and writing the frames.
+Deno.test("local IPC: a pipe connection frames each write and ends with a zero-length frame", async () => {
+  const ch = await channel();
+  try {
+    let peer: net.Socket | undefined;
+    const raw: Uint8Array[] = [];
+    const peerEnded = Promise.withResolvers<void>();
+    const server = net.createServer({ allowHalfOpen: true }, (s) => {
+      peer = s;
+      s.on("data", (c: Uint8Array) => raw.push(new Uint8Array(c)));
+      s.once("end", () => peerEnded.resolve());
+    });
+    await new Promise<void>((resolve) => server.listen(ch.path, () => resolve()));
+    try {
+      const conn = await connectLocalIpcWith(
+        () => net.connect({ path: ch.path, allowHalfOpen: true }),
+        "\\\\.\\pipe\\dev.denext.framing.u.t",
+      );
+      // Writes: a small one, an empty one (sends nothing), one past the 1 MiB frame limit.
+      const big = payload(1024 * 1024 + 5, 9);
+      const writer = conn.writable.getWriter();
+      await writer.write(new Uint8Array([1, 2, 3]));
+      await writer.write(new Uint8Array(0));
+      await writer.write(big);
+      await writer.close();
+      // The peer answers in frames split at awkward places, then ends; the client's readable
+      // yields the payloads and closes, and the pipe closes once both directions are done.
+      const reply = concat([header(2), new Uint8Array([7, 8]), header(1), new Uint8Array([9])]);
+      const read = readAll(conn.readable);
+      assert(peer);
+      // Inside the first header, inside the first payload, at a header boundary, then the rest.
+      for (const [from, to] of [[0, 1], [1, 5], [5, 6], [6, reply.length]]) {
+        peer.write(reply.subarray(from, to));
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      peer.write(header(0));
+      assertEquals(await read, new Uint8Array([7, 8, 9]));
+      await peerEnded.promise;
+      assertEquals(
+        concat(raw),
+        concat([
+          header(3),
+          new Uint8Array([1, 2, 3]),
+          header(1024 * 1024),
+          big.subarray(0, 1024 * 1024),
+          header(5),
+          big.subarray(1024 * 1024),
+          header(0),
+        ]),
+      );
+    } finally {
+      peer?.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   } finally {
     await ch.cleanup();
