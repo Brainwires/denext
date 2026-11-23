@@ -674,16 +674,43 @@ const windowChecks: Check[] = [
     // xfwm4 under Xvfb (the Linux CI session) answers `_NET_WM_STATE` late, past 5 s at times
     // (three desktop-window runs in October 2026), so the state change gets 10 s; a WM that
     // never answers still fails, with the state it reports.
+    // xfwm4 can also drop the request outright: the clamp check before this one lifts the maximum
+    // size and resizes without waiting for the WM, and a maximize that lands while the old maximum
+    // hint is still in force is ignored (run 45158824754). So the request is sent again every
+    // 2.5 s while waiting; maximizing an already maximized window changes nothing.
     const state = async () => JSON.stringify(await getWindowState());
+    const resend = (send: () => Promise<unknown>) => {
+      let last = Date.now();
+      return async () => {
+        if (Date.now() - last >= 2500) {
+          last = Date.now();
+          await send();
+        }
+      };
+    };
     await maximizeWindow();
+    const reMax = resend(maximizeWindow);
     await unlessTiled(
       "maximized",
-      () => waitFor(async () => (await getWindowState()).maximized, "maximized", 10_000, state),
+      () =>
+        waitFor(
+          async () => (await getWindowState()).maximized || (await reMax(), false),
+          "maximized",
+          10_000,
+          state,
+        ),
     );
     await unmaximizeWindow();
+    const reUnmax = resend(unmaximizeWindow);
     await unlessTiled(
       "unmaximized",
-      () => waitFor(async () => !(await getWindowState()).maximized, "unmaximized", 10_000, state),
+      () =>
+        waitFor(
+          async () => !(await getWindowState()).maximized || (await reUnmax(), false),
+          "unmaximized",
+          10_000,
+          state,
+        ),
     );
     return "ok";
   }],
