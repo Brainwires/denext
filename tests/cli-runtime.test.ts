@@ -42,6 +42,7 @@ import {
 import type { DenoToolchainPin } from "../src/build/deno-toolchain.ts";
 import { toBase64 } from "../src/build/ota-signing.ts";
 import { sha256Hex } from "../src/build/signed-envelope.ts";
+import { freshRevocationList } from "../src/build/runtime-revocations.ts";
 
 const BUNDLED = BUNDLED_RUNTIME.toolchain.version!;
 const V31 = "3.0.0-denext.31";
@@ -50,6 +51,7 @@ const V33 = "3.0.0-denext.33";
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
 const TARGET = "test-target";
+const HOST_TRIPLE = "x86_64-unknown-linux-gnu";
 
 honourChannelKeysFileForTests();
 
@@ -198,6 +200,8 @@ async function withWorld(fn: (w: World) => Promise<void>): Promise<void> {
           });
         },
         tools: () => Promise.resolve(TOOLS),
+        revocations: () => Promise.resolve({ state: "off" }),
+        triple: HOST_TRIPLE,
         log: (line) => w.out.push(line),
         warn: (line) => w.err.push(line),
         ...over,
@@ -712,6 +716,58 @@ Deno.test("runtime list: offline the channel is unavailable, installed releases 
     assertEquals(json.channel.state, "absent");
     assertEquals(json.upgrade, null);
     assert(json.releases.every((r: { channel: unknown }) => r.channel === null));
+  });
+});
+
+Deno.test("runtime list: an installed release the list revokes here is marked, with the fix", async () => {
+  await withWorld(async (w) => {
+    w.offline = true;
+    for (const v of [V31, V32]) {
+      await Deno.mkdir(join(w.cacheRoot, v, TARGET), { recursive: true });
+      await Deno.writeTextFile(join(w.cacheRoot, v, TARGET, ".denext-toolchain.json"), "{}");
+    }
+    const list = freshRevocationList([
+      { component: "cli", version: V31, targets: [HOST_TRIPLE], reason: "crashes on start" },
+      // Revoked only on another host, and a desktop-only revocation: not marked.
+      { component: "cli", version: V32, targets: ["aarch64-apple-darwin"], reason: "elsewhere" },
+      { component: "desktop", version: V32, reason: "desktop only" },
+      // Not installed: not marked.
+      { component: "cli", version: V33, reason: "never installed" },
+    ], new Date());
+    const read = { revocations: () => Promise.resolve({ state: "read" as const, list }) };
+    assertEquals(await run(w, ["list"], {}, false, read), 0);
+    const out = text(w.out);
+    assertMatch(
+      out,
+      /3\.0\.0-denext\.31\s+installed.*REVOKED for this host \(crashes on start\); `denext runtime prune` removes it/,
+    );
+    assert(!/denext\.32.*REVOKED/.test(out), out);
+    assertEquals(await run(w, ["list"], {}, true, read), 0);
+    const json = JSON.parse(text(w.out));
+    assertEquals(json.revocations, { state: "read", sequence: list.sequence });
+    const rows = new Map(json.releases.map((r: { version: string }) => [r.version, r]));
+    assertEquals((rows.get(V31) as { revoked: unknown }).revoked, {
+      reason: "crashes on start",
+      fix: "denext runtime prune",
+    });
+    assertEquals((rows.get(V32) as { revoked?: unknown }).revoked, undefined);
+
+    // The list unavailable: said once, nothing marked.
+    const gone = {
+      revocations: () =>
+        Promise.resolve({
+          state: "unavailable" as const,
+          reason: "offline, or none published yet",
+        }),
+    };
+    assertEquals(await run(w, ["list"], {}, false, gone), 0);
+    assertStringIncludes(
+      text(w.out),
+      "revocations: unavailable (offline, or none published yet); revoked releases not marked",
+    );
+    assert(!text(w.out).includes("REVOKED"));
+    assertEquals(await run(w, ["list"], {}, true, gone), 0);
+    assertEquals(JSON.parse(text(w.out)).revocations.state, "unavailable");
   });
 });
 

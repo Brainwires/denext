@@ -2,7 +2,7 @@
 // use is kept), the cache listing and deletion under the cache lock, the project's pinned denext,
 // and the real CLI against a temp DENO_DIR — never the machine's own cache.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import {
   diskUsage,
@@ -21,6 +21,13 @@ import { DESKTOP_RUNTIME_PIN } from "../src/build/desktop-runtime.ts";
 import { GLEAM_TOOLCHAIN } from "../src/build/gleam-toolchain.ts";
 import { FASTLANE_TOOLCHAIN } from "../src/build/fastlane-toolchain.ts";
 import { denoCacheDir } from "../src/build/deno-cache-dir.ts";
+import {
+  freshRevocationList,
+  type LoadRevocationsOptions,
+  type RuntimeRevocation,
+  signRevocationList,
+} from "../src/build/runtime-revocations.ts";
+import { toBase64 } from "../src/build/ota-signing.ts";
 import { boundedOutput } from "./helpers/bounded-command.ts";
 import { SYMLINK_GATE } from "./helpers/symlink.ts";
 
@@ -52,6 +59,9 @@ async function fakeCache(
 }
 
 const exists = (p: string) => Deno.lstat(p).then(() => true, () => false);
+
+/** The revoked-runtimes list not read (the tests that cover it inject a served one). */
+const OFF = { mode: "off" } as const;
 
 const NONE: ToolchainVersionsInUse = { deno: [], desktopRuntime: [], gleam: [], fastlane: [] };
 
@@ -344,7 +354,13 @@ Deno.test("denext runtime uninstall / prune: the real CLI against a temp cache",
       boundedOutput(Deno.execPath(), {
         args: ["run", "-A", "--config", join(ROOT, "deno.json"), CLI, ...args],
         cwd: work,
-        env: { DENO_DIR: cacheDir, DENEXT_TOOLCHAIN_ACTIVE: "", NO_COLOR: "1" },
+        // The revoked-runtimes list is covered in-process below; the CLI child never fetches it.
+        env: {
+          DENO_DIR: cacheDir,
+          DENEXT_TOOLCHAIN_ACTIVE: "",
+          NO_COLOR: "1",
+          DENEXT_REVOCATION_CHECK: "0",
+        },
       }).then((o) => {
         const d = new TextDecoder();
         return { code: o.code, stdout: d.decode(o.stdout), stderr: d.decode(o.stderr) };
@@ -430,7 +446,9 @@ Deno.test("runtimeRemove: the project's pins come from jsr.io; this denext's fro
       JSON.stringify({ imports: { denext: "jsr:@denext/denext@0.0.2" } }),
     );
     const json = JSON.parse(
-      await captured(() => runtimeRemove(ctxOf(["prune"], project, {}, true), { roots })),
+      await captured(() =>
+        runtimeRemove(ctxOf(["prune"], project, {}, true), { roots, revocations: OFF })
+      ),
     );
     assertEquals(
       json.removed.map((e: { kind: string; version: string }) => `${e.kind} ${e.version}`),
@@ -441,7 +459,9 @@ Deno.test("runtimeRemove: the project's pins come from jsr.io; this denext's fro
     // Not published (or offline): nothing is removed, and the reason is reported.
     published = false;
     const blind = JSON.parse(
-      await captured(() => runtimeRemove(ctxOf(["prune"], project, {}, true), { roots })),
+      await captured(() =>
+        runtimeRemove(ctxOf(["prune"], project, {}, true), { roots, revocations: OFF })
+      ),
     );
     assertEquals(blind.removed, []);
     assertStringIncludes(blind.warning, "denext 0.0.2");
@@ -450,7 +470,9 @@ Deno.test("runtimeRemove: the project's pins come from jsr.io; this denext's fro
       join(project, "deno.json"),
       JSON.stringify({ imports: { denext: "jsr:@denext/denext@^0.0.2" } }),
     );
-    const range = await captured(() => runtimeRemove(ctxOf(["prune"], project), { roots }));
+    const range = await captured(() =>
+      runtimeRemove(ctxOf(["prune"], project), { roots, revocations: OFF })
+    );
     assertStringIncludes(range, "without an exact version");
     assertStringIncludes(range, "nothing to remove");
   } finally {
@@ -648,7 +670,10 @@ Deno.test("runtimeRemove: unreadable own pins and a malformed project runtime pi
     Deno.env.set("DENEXT_RUNTIME_DEFAULT_FILE", join(dir, "missing-default.json"));
     const json = JSON.parse(
       await captured(() =>
-        runtimeRemove(ctxOf(["prune"], project, { "dry-run": true }, true), { roots })
+        runtimeRemove(ctxOf(["prune"], project, { "dry-run": true }, true), {
+          roots,
+          revocations: OFF,
+        })
       ),
     );
     assertEquals(json.removed.map((e: { version: string }) => e.version), ["3.0.0-denext.30"]);
@@ -688,6 +713,7 @@ Deno.test("runtimeRemove: a published pin that fails to fetch counts as absent; 
         runtimeRemove(ctxOf(["prune"], project, { "dry-run": true }, true), {
           roots,
           ownPins: () => ({ deno: null, desktopRuntime: null, gleam: null, fastlane: null }),
+          revocations: OFF,
         })
       ),
     );
@@ -695,6 +721,261 @@ Deno.test("runtimeRemove: a published pin that fails to fetch counts as absent; 
     assertEquals(json.warning, undefined);
   } finally {
     globalThis.fetch = realFetch;
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// ---------------------------------------------------------------------------------------------
+// The revoked-runtimes list (src/build/runtime-revocations.ts): `prune` removes what it revokes
+// here. The list is a real signed document (a test key) served by a fake network and read through
+// the same verified loader `runtime version` uses.
+
+const HOST = "x86_64-unknown-linux-gnu";
+const OTHER = "aarch64-apple-darwin";
+const LIST_URL = "https://revocations.test/runtime-revocations.json";
+
+/** A P-256 key pair: the private key and the base64 SPKI public key. */
+async function revocationKey(): Promise<{ key: CryptoKey; pub: string }> {
+  const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+    "sign",
+    "verify",
+  ]);
+  const spki = new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey));
+  return { key: pair.privateKey, pub: toBase64(spki) };
+}
+
+/**
+ * The `revocations` seam over a list of `revoked` signed with a test key and served at
+ * {@linkcode LIST_URL}; `offline` makes the fetch fail (and nothing is cached).
+ */
+async function servedList(
+  cacheRoot: string,
+  revoked: RuntimeRevocation[],
+  offline = false,
+): Promise<LoadRevocationsOptions> {
+  const { key, pub } = await revocationKey();
+  const doc = JSON.stringify(
+    await signRevocationList(freshRevocationList(revoked, new Date()), key),
+  );
+  return {
+    keys: [pub],
+    urls: [LIST_URL],
+    env: () => undefined,
+    cacheRoot,
+    minSequence: 0,
+    netGranted: () => Promise.resolve(true),
+    fetch: ((input: string | URL | Request) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (offline || url !== LIST_URL) return Promise.reject(new TypeError("offline"));
+      return Promise.resolve(new Response(doc));
+    }) as typeof fetch,
+  };
+}
+
+const revocation = (over: Partial<RuntimeRevocation>): RuntimeRevocation => ({
+  component: "cli",
+  version: "1.0.0-denext.2",
+  reason: "crashes on start",
+  ...over,
+});
+
+/** The pins of a denext on 1.0.0-denext.3 with 1.0.0-denext.2 as its rollback. */
+const PINS = () => ({
+  deno: "1.0.0-denext.3",
+  desktopRuntime: "1.0.0-denext.3",
+  gleam: null,
+  fastlane: null,
+  rollback: { deno: "1.0.0-denext.2", desktopRuntime: null },
+});
+
+const kinds = (list: { kind: string; version: string }[]) =>
+  list.map((e) => `${e.kind} ${e.version}`).sort();
+
+Deno.test("runtimeRemove: prune removes what the list revokes here (in use too), keeps what it revokes elsewhere", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-prune-revoked-" });
+  try {
+    const roots = await fakeCache(join(dir, "cache"), [
+      ["deno", "1.0.0-denext.1", 10],
+      ["deno", "1.0.0-denext.2", 20],
+      ["deno", "1.0.0-denext.3", 30],
+      ["desktop", "1.0.0-denext.2", 5],
+      ["desktop", "1.0.0-denext.3", 6],
+      ["gleam", "1.0.0-denext.2", 1],
+    ]);
+    const revocations = await servedList(join(dir, "list-cache"), [
+      // The rollback (in use): revoked on this host.
+      revocation({ targets: [HOST], advisory: "https://example.test/a" }),
+      // The pinned toolchain: revoked only on another host — stays.
+      revocation({ version: "1.0.0-denext.3", targets: [OTHER] }),
+      // The pinned desktop runtime: revoked on every target — goes.
+      revocation({ component: "desktop", version: "1.0.0-denext.3", reason: "leaks handles" }),
+    ]);
+    const ownPins = () => ({ ...PINS(), gleam: "1.0.0-denext.2" });
+    const deps = { roots, ownPins, revocations, triple: HOST };
+    const dry = await captured(() =>
+      runtimeRemove(ctxOf(["prune"], dir, { "dry-run": true }), deps)
+    );
+    assertStringIncludes(dry, "would remove Deno toolchain 1.0.0-denext.1");
+    assertMatch(
+      dry,
+      /would remove Deno toolchain 1\.0\.0-denext\.2 .*\(revoked for this host: crashes on start; in use, but denext no longer runs a revoked release, so no --force is needed\)/,
+    );
+    assertMatch(dry, /would remove Deno Desktop runtime 1\.0\.0-denext\.3 .*leaks handles/);
+    assertStringIncludes(dry, "kept Deno toolchain 1.0.0-denext.3");
+    assert(!dry.includes("kept Deno toolchain 1.0.0-denext.2"), dry);
+    assert(await exists(join(roots.deno, "1.0.0-denext.2")), "a dry run removes nothing");
+
+    const dryJson = JSON.parse(
+      await captured(() => runtimeRemove(ctxOf(["prune"], dir, { "dry-run": true }, true), deps)),
+    );
+    assertEquals(dryJson.dryRun, true);
+    assertEquals(dryJson.revocations.state, "read");
+    assert(await exists(join(roots.desktop, "1.0.0-denext.3")), "--dry-run --json removes nothing");
+
+    const json = JSON.parse(
+      await captured(() => runtimeRemove(ctxOf(["prune"], dir, {}, true), deps)),
+    );
+    assertEquals(kinds(json.removed), [
+      "deno 1.0.0-denext.1",
+      "deno 1.0.0-denext.2",
+      "desktop-runtime 1.0.0-denext.3",
+    ]);
+    const byName = new Map(
+      json.removed.map((e: { kind: string; version: string }) => [`${e.kind} ${e.version}`, e]),
+    );
+    assertEquals(byName.get("deno 1.0.0-denext.1"), {
+      kind: "deno",
+      version: "1.0.0-denext.1",
+      path: join(roots.deno, "1.0.0-denext.1"),
+      bytes: 10,
+    });
+    assertEquals(byName.get("deno 1.0.0-denext.2"), {
+      kind: "deno",
+      version: "1.0.0-denext.2",
+      path: join(roots.deno, "1.0.0-denext.2"),
+      bytes: 20,
+      reason: "revoked",
+      revocation: "crashes on start",
+      advisory: "https://example.test/a",
+      inUse: true,
+    });
+    assertEquals(
+      (byName.get("desktop-runtime 1.0.0-denext.3") as { reason: string }).reason,
+      "revoked",
+    );
+    assertEquals(kinds(json.kept), [
+      "deno 1.0.0-denext.3",
+      "desktop-runtime 1.0.0-denext.2",
+      "gleam 1.0.0-denext.2",
+    ]);
+    assertEquals(json.revocations, {
+      state: "read",
+      sequence: json.revocations.sequence,
+    });
+    assertEquals(await exists(join(roots.deno, "1.0.0-denext.2")), false);
+    assertEquals(await exists(join(roots.desktop, "1.0.0-denext.3")), false);
+    assert(await exists(join(roots.deno, "1.0.0-denext.3")), "revoked elsewhere only: kept");
+    assert(await exists(join(roots.desktop, "1.0.0-denext.2")), "a cli revocation spares desktop");
+    assert(await exists(join(roots.deno, "gleam", "1.0.0-denext.2")), "Gleam is never revoked");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("runtimeRemove: with the list unavailable prune behaves as before and says so", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-prune-revoked-offline-" });
+  try {
+    const roots = await fakeCache(join(dir, "cache"), [
+      ["deno", "1.0.0-denext.1", 10],
+      ["deno", "1.0.0-denext.2", 20],
+      ["deno", "1.0.0-denext.3", 30],
+    ]);
+    const revocations = await servedList(join(dir, "list-cache"), [revocation({})], true);
+    const deps = { roots, ownPins: PINS, revocations, triple: HOST };
+    const human = await captured(() =>
+      runtimeRemove(ctxOf(["prune"], dir, { "dry-run": true }), deps)
+    );
+    assertStringIncludes(
+      human,
+      "! the revoked-runtimes list could not be read (offline, or none published yet); " +
+        "revoked releases were not looked for",
+    );
+    assertStringIncludes(human, "kept Deno toolchain 1.0.0-denext.2");
+    const json = JSON.parse(
+      await captured(() => runtimeRemove(ctxOf(["prune"], dir, {}, true), deps)),
+    );
+    assertEquals(kinds(json.removed), ["deno 1.0.0-denext.1"]);
+    assertEquals(kinds(json.kept), ["deno 1.0.0-denext.2", "deno 1.0.0-denext.3"]);
+    assertEquals(json.revocations, {
+      state: "unavailable",
+      reason: "offline, or none published yet",
+    });
+    assert(await exists(join(roots.deno, "1.0.0-denext.2")));
+    // No key configured (the check off): nothing said, nothing extra removed.
+    const off = JSON.parse(
+      await captured(() =>
+        runtimeRemove(ctxOf(["prune"], dir, { "dry-run": true }, true), {
+          ...deps,
+          revocations: { ...revocations, keys: [] },
+        })
+      ),
+    );
+    assertEquals(off.revocations, { state: "off" });
+    // uninstall never consults the list.
+    let asked = 0;
+    const counting = (() => (asked++, Promise.reject(new TypeError("offline")))) as typeof fetch;
+    const un = JSON.parse(
+      await captured(() =>
+        runtimeRemove(
+          ctxOf(["uninstall", "1.0.0-denext.2"], dir, { "dry-run": true, force: true }, true),
+          { ...deps, revocations: { ...revocations, fetch: counting } },
+        )
+      ),
+    );
+    assertEquals(kinds(un.removed), ["deno 1.0.0-denext.2"]);
+    assertEquals(un.revocations, undefined);
+    assertEquals(asked, 0);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("runtimeRemove: a blind prune (the project's pins unknown) still removes revoked releases", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-prune-revoked-blind-" });
+  try {
+    const roots = await fakeCache(join(dir, "cache"), [
+      ["deno", "1.0.0-denext.1", 10],
+      ["deno", "1.0.0-denext.2", 20],
+      ["deno", "1.0.0-denext.3", 30],
+    ]);
+    const project = join(dir, "app");
+    await Deno.mkdir(join(project, ".git"), { recursive: true });
+    await Deno.writeTextFile(
+      join(project, "deno.json"),
+      JSON.stringify({ imports: { denext: "jsr:@denext/denext@0.0.1" } }),
+    );
+    const revocations = await servedList(join(dir, "list-cache"), [
+      revocation({ version: "1.0.0-denext.1", targets: [HOST] }),
+    ]);
+    const deps = {
+      roots,
+      ownPins: PINS,
+      revocations,
+      triple: HOST,
+      pinsOf: () => Promise.resolve(null),
+    };
+    const human = await captured(() =>
+      runtimeRemove(ctxOf(["prune"], project, { "dry-run": true }), deps)
+    );
+    assertStringIncludes(human, "kept every version not revoked");
+    const json = JSON.parse(
+      await captured(() => runtimeRemove(ctxOf(["prune"], project, {}, true), deps)),
+    );
+    assertEquals(kinds(json.removed), ["deno 1.0.0-denext.1"]);
+    assertEquals(json.removed[0].reason, "revoked");
+    assertEquals(json.removed[0].inUse, undefined, "not in use: no note");
+    assertEquals(kinds(json.kept), ["deno 1.0.0-denext.2", "deno 1.0.0-denext.3"]);
+  } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });

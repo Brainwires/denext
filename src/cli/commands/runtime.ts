@@ -14,7 +14,7 @@ import type { CommandContext, CommandSpec } from "../command.ts";
 import { commandCwd } from "../shared.ts";
 import { commandMeta } from "../command-meta.ts";
 import { requireRuntime, runtimeBinary } from "./deno.ts";
-import { runtimeRemove } from "./runtime-prune.ts";
+import { hostRuntimeTriple, runtimeRemove } from "./runtime-prune.ts";
 import {
   denoToolchainCacheRoot,
   type DenoToolchainPin,
@@ -64,8 +64,14 @@ import {
 } from "../../build/runtime-channel.ts";
 import {
   revocationStatusLine,
+  type RuntimeRevocation,
   type RuntimeRevocationStatus,
 } from "../../build/runtime-revocations.ts";
+import {
+  cachedRevocation,
+  type CacheRevocations,
+  cacheRevocations,
+} from "../../build/toolchain-prune.ts";
 import { compareDenoVersions, MIN_RUNTIME } from "../../build/deno-version.ts";
 import { type DepAgeRule, heldUntil, holdHead, readProjectRule } from "../../build/dep-age.ts";
 import { type EnvGet, processEnv } from "../../build/signed-envelope.ts";
@@ -118,6 +124,13 @@ export interface RuntimeCliDeps {
   readonly target?: string;
   /** The cache state of the runtime's tools, for `version` (default: this machine's). */
   readonly tools?: (verify: boolean) => Promise<ToolsStatus>;
+  /**
+   * The revoked-runtimes list `list` marks installed releases by (default: read in `fetch` mode,
+   * the cached copy refreshed within its 1.5 s budget when stale).
+   */
+  readonly revocations?: () => Promise<CacheRevocations>;
+  /** The host's Rust target triple, the list's naming (default this machine's). */
+  readonly triple?: string;
   /** Output (default `console.log` / `console.error`). */
   readonly log?: (line: string) => void;
   readonly warn?: (line: string) => void;
@@ -146,6 +159,8 @@ function machineDeps(env: EnvGet, cacheRoot: string, named?: string): Required<R
     ensure: (pin, root) => ensureDenoToolchain({ pin, cacheRoot: root }),
     target: denoToolchainTarget(),
     tools: machineTools,
+    revocations: () => cacheRevocations({ mode: "fetch", env }),
+    triple: hostRuntimeTriple(),
     log: (line) => console.log(line),
     warn: (line) => console.error(line),
   };
@@ -1053,7 +1068,12 @@ interface ListRow {
   readonly channel: "available" | "held" | "yanked" | "incompatible" | "unlisted" | null;
   readonly reason?: string;
   readonly releasedAt?: string;
+  /** Installed and revoked for this host by the revoked-runtimes list; the fix. */
+  readonly revoked?: { readonly reason: string; readonly advisory?: string; readonly fix: string };
 }
+
+/** What `list` and `prune` tell about an installed revoked release. */
+const PRUNE_FIX = "denext runtime prune";
 
 /** What the channel says about `entry`. */
 function channelVerdict(
@@ -1106,17 +1126,40 @@ function rowOf(
     roles: Map<string, string[]>;
     ch: ChannelState;
     p: FloatingPick | null;
+    revocations: CacheRevocations;
   },
 ): ListRow {
   const entry = ctx.ch.releases.find((e) => e.version === version);
+  const installed = ctx.installed.has(version);
+  const hit = installed ? revokedHere(rt, version, ctx.revocations) : null;
   const base = {
     version,
-    installed: ctx.installed.has(version),
+    installed,
     roles: ctx.roles.get(version) ?? [],
+    ...(hit ? { revoked: revokedOf(hit) } : {}),
   };
   if (ctx.ch.releases.length === 0) return { ...base, channel: null };
   if (!entry) return { ...base, channel: "unlisted" };
   return { ...base, ...channelVerdict(rt, entry, ctx.p!.rule), releasedAt: entry.releasedAt };
+}
+
+/** The list's entry revoking the toolchain of `version` for this host, or `null`. */
+function revokedHere(
+  rt: Rt,
+  version: string,
+  revocations: CacheRevocations,
+): RuntimeRevocation | null {
+  if (revocations.state !== "read") return null;
+  return cachedRevocation({ kind: "deno", version }, revocations.list, rt.triple);
+}
+
+/** A row's `revoked` record. */
+function revokedOf(hit: RuntimeRevocation): NonNullable<ListRow["revoked"]> {
+  return {
+    reason: hit.reason,
+    ...(hit.advisory ? { advisory: hit.advisory } : {}),
+    fix: PRUNE_FIX,
+  };
 }
 
 /** A row's human line. */
@@ -1125,7 +1168,11 @@ function rowLine(row: ListRow): string {
   const state = [row.installed ? "installed" : "", row.channel ?? ""].filter(Boolean).join(", ");
   const roles = row.roles.filter((r) => r !== "selected").join(", ");
   const why = row.reason ? ` (${row.reason})` : "";
-  return `${mark} ${row.version.padEnd(20)} ${state.padEnd(24)} ${roles}${why}`.trimEnd();
+  const revoked = row.revoked
+    ? ` REVOKED for this host (${row.revoked.reason}); \`${row.revoked.fix}\` removes it`
+    : "";
+  return `${mark} ${row.version.padEnd(20)} ${state.padEnd(24)} ${roles}${why}${revoked}`
+    .trimEnd();
 }
 
 /**
@@ -1133,7 +1180,9 @@ function rowLine(row: ListRow): string {
  * selected one starred), and — with the channel (the network at most every 12 hours) — the release
  * an upgrade would take, the one the hold keeps out, and each listed release's verdict: available,
  * held, yanked or incompatible. `--all` lists every release the channel names. Offline, the
- * channel is reported unavailable and the installed releases are still listed.
+ * channel is reported unavailable and the installed releases are still listed. An installed
+ * release the revoked-runtimes list revokes for this host is marked, with `denext runtime prune`
+ * as the fix.
  */
 async function list(rt: Rt, ctx: CommandContext): Promise<number> {
   const release = await selection(rt);
@@ -1143,31 +1192,57 @@ async function list(rt: Rt, ctx: CommandContext): Promise<number> {
   const installed = await installedVersions(rt);
   const roles = rolesOf(rt, selected);
   const versions = listedVersions(installed, roles, ch, p, ctx.flags.all === true);
-  const rowCtx = { installed: new Set(installed), roles, ch, p };
+  const revocations = installed.length > 0
+    ? await rt.revocations().catch((): CacheRevocations => ({ state: "off" }))
+    : { state: "off" } as const;
+  const rowCtx = { installed: new Set(installed), roles, ch, p, revocations };
   const rows = versions.map((v) => rowOf(rt, v, rowCtx));
-  if (rt.json) printJson(rt, listJson(ch, p, rows));
-  else printList(rt, ch, rows);
+  if (rt.json) printJson(rt, listJson(ch, p, rows, revocations));
+  else printList(rt, ch, rows, revocations);
   return 0;
 }
 
+/** The list's state for `list --json`: read (its sequence), unavailable (why) or off. */
+function revocationsState(v: CacheRevocations) {
+  return v.state === "read"
+    ? { state: v.state, sequence: v.list.sequence }
+    : v.state === "unavailable"
+    ? { state: v.state, reason: v.reason }
+    : { state: v.state };
+}
+
 /** `list --json`. */
-function listJson(ch: ChannelState, p: FloatingPick | null, rows: ListRow[]) {
+function listJson(
+  ch: ChannelState,
+  p: FloatingPick | null,
+  rows: ListRow[],
+  revocations: CacheRevocations,
+) {
   return {
     channel: { state: ch.state, reason: ch.reason, sequence: ch.sequence },
     upgrade: p?.pick?.version ?? null,
     held: p?.held?.version ?? null,
+    revocations: revocationsState(revocations),
     releases: rows,
   };
 }
 
 /** `list`'s report: the channel's line, then a row per release. */
-function printList(rt: Rt, ch: ChannelState, rows: ListRow[]): void {
+function printList(
+  rt: Rt,
+  ch: ChannelState,
+  rows: ListRow[],
+  revocations: CacheRevocations,
+): void {
   rt.log("");
   rt.log(
     ch.state === "current"
       ? `  channel: sequence ${ch.sequence}, expires ${ch.expiresAt}`
       : `  channel: unavailable (${ch.reason})`,
   );
+  if (revocations.state === "unavailable") {
+    rt.log(`  revocations: unavailable (${revocations.reason}); revoked releases not marked`);
+  }
   for (const row of rows) rt.log(`  ${rowLine(row)}`);
   rt.log("");
 }

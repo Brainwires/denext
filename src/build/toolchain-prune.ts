@@ -14,6 +14,14 @@ import { acquireCacheLock } from "./project-locks.ts";
 import { lockTask } from "./file-lock.ts";
 import { denoCacheDir } from "./deno-cache-dir.ts";
 import { compareDenoVersions } from "./deno-version.ts";
+import {
+  findRevocation,
+  type LoadRevocationsOptions,
+  loadRuntimeRevocations,
+  type RuntimeComponent,
+  type RuntimeRevocation,
+  type RuntimeRevocationList,
+} from "./runtime-revocations.ts";
 
 /** What a cached entry is. */
 export type ToolchainCacheKind = "deno" | "desktop-runtime" | "gleam" | "fastlane";
@@ -255,6 +263,62 @@ async function removeDanglingShims(dir: string): Promise<void> {
   } catch {
     // No shims.
   }
+}
+
+/** The revoked-runtimes list as a cache report reads it (src/build/runtime-revocations.ts). */
+export type CacheRevocations =
+  /** No revocation key is configured in this denext, or `DENEXT_REVOCATION_CHECK=0`. */
+  | { readonly state: "off" }
+  /** The check is on but no current list could be had (offline, none published, expired). */
+  | { readonly state: "unavailable"; readonly reason: string }
+  /** The verified list in force. */
+  | { readonly state: "read"; readonly list: RuntimeRevocationList };
+
+/**
+ * The revoked-runtimes list in force, read the way `runtime version` reads it: the cached copy
+ * (re-verified) and, in `force` mode, a fetch within its 5 s budget. Never throws.
+ *
+ * @param options How the list is read (default `force` mode, the process env).
+ * @returns The list, or why there is none.
+ */
+export async function cacheRevocations(
+  options: LoadRevocationsOptions = {},
+): Promise<CacheRevocations> {
+  try {
+    const loaded = await loadRuntimeRevocations({ mode: "force", ...options });
+    if (!loaded.configured) return { state: "off" };
+    if (loaded.list !== null) return { state: "read", list: loaded.list };
+    const reason = loaded.expired
+      ? `the list expired at ${loaded.expired.expiresAt}`
+      : "offline, or none published yet";
+    return { state: "unavailable", reason };
+  } catch (err) {
+    return { state: "unavailable", reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** The list component a cache kind is (Gleam and fastlane are never revoked). */
+function componentOf(kind: ToolchainCacheKind): RuntimeComponent | null {
+  return kind === "deno" ? "cli" : kind === "desktop-runtime" ? "desktop" : null;
+}
+
+/**
+ * The entry of `list` that revokes cached `entry` for `triple` (the host's), or `null`: a Deno
+ * toolchain by a `cli` entry, a Deno Desktop runtime by a `desktop` one. An entry revoked only on
+ * other targets is not.
+ *
+ * @param entry The cached version.
+ * @param list The list in force (`null`: none).
+ * @param triple The host's Rust target triple.
+ * @returns The revocation, or `null`.
+ */
+export function cachedRevocation(
+  entry: Pick<ToolchainCacheEntry, "kind" | "version">,
+  list: RuntimeRevocationList | null,
+  triple: string | undefined,
+): RuntimeRevocation | null {
+  const component = componentOf(entry.kind);
+  return component === null ? null : findRevocation(list, component, entry.version, triple);
 }
 
 /**
