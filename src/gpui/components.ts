@@ -1,8 +1,8 @@
 /**
  * The React Native primitives `denext/gpui` renders as native tree nodes: `View`, `Text`,
  * `Image`, `ScrollView`, `TextInput` and `Pressable`. `View`, `Text`, `Image` and `TextInput` are
- * host components (each element is one node); `ScrollView` is a scroll node around a content
- * view (React Native's `contentContainerStyle`); `Pressable` adds React Native's `pressed` state
+ * host components (each element is one node); `ScrollView` is a scroll node (its
+ * `contentContainerStyle` is merged over its style); `Pressable` adds React Native's `pressed` state
  * for a function `style` or `children`.
  *
  * @module
@@ -128,7 +128,7 @@ export interface GpuiScrollViewProps extends GpuiViewProps {
   readonly horizontal?: boolean;
   /** Whether the user can scroll it (default true). */
   readonly scrollEnabled?: boolean;
-  /** The content view's style. */
+  /** Merged over `style` (the host has no separate content view). */
   readonly contentContainerStyle?: GpuiStyle;
   /** Called as it scrolls (at most once a frame). */
   readonly onScroll?: (event: ScrollEvent) => void;
@@ -202,19 +202,20 @@ export const TextInput: GpuiComponent<GpuiTextInputProps> = host("TextInput");
 const HostScrollView = host<Record<string, unknown>>("ScrollView");
 const HostPressable = host<Record<string, unknown>>("Pressable");
 
-/** A row for a horizontal ScrollView's content. */
+/** A horizontal ScrollView lays its children out in a row (`horizontal` only picks the axis). */
 const ROW = { flexDirection: "row" };
 
 /**
- * React Native's `ScrollView`: a scroll node whose content view takes `contentContainerStyle`.
+ * React Native's `ScrollView`. The host scrolls the node's direct children (there is no content
+ * view), so `contentContainerStyle` is merged over `style`, and a horizontal one lays out in a row.
  *
  * @param props The scroll view's props.
  * @returns The element.
  */
 export function ScrollView(props: GpuiScrollViewProps): VNode {
-  const { children, contentContainerStyle, ...rest } = props;
-  const content = props.horizontal ? [ROW, contentContainerStyle] : contentContainerStyle;
-  return h(HostScrollView, rest, h(View, { style: content }, children));
+  const { children, contentContainerStyle, style, ...rest } = props;
+  const merged = [props.horizontal ? ROW : null, style, contentContainerStyle];
+  return h(HostScrollView, { ...rest, style: merged }, children);
 }
 
 /** `useState` on whichever renderer is rendering (react-internals.ts). */

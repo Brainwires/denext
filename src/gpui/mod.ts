@@ -58,6 +58,7 @@ export {
 export {
   type ContainerOptions,
   type NativeTreeApi,
+  NativeTreeBatchError,
   NativeTreeCommitError,
   type NativeTreeWindow,
 } from "./container.ts";

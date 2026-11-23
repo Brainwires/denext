@@ -17,7 +17,8 @@ and this project adheres to
   into it through the app's `react-reconciler`, loaded against denext's React core (denext imports
   no npm package for it). Each React commit is one NTB1 batch for the window's
   `nativeTree.commit`. Styles are React Native's StyleSheet subset: arrays flattened, shorthands
-  expanded per side and corner, colours parsed to RGBA. Events reach React Native's handlers;
+  expanded per side and corner, colours parsed to RGBA. Events reach React Native's handlers (a batch the host rejects arrives as a
+  `NativeTreeBatchError` at `onError`);
   presses go through denext's pressability, and `TextInput` keeps React Native's controlled-input
   event count. Images are fetched in JavaScript, sent once per source and freed with their last
   `Image`. `gpuiSupport()` probes `Deno.desktop` and `windowCapabilities().nativeTree`, `render`

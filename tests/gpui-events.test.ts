@@ -15,6 +15,7 @@ import {
   setCurrentUpdatePriority,
 } from "../src/gpui/priority.ts";
 import type { GpuiNode } from "../src/gpui/node.ts";
+import { NativeTreeBatchError } from "../src/gpui/container.ts";
 import { PROP } from "../src/gpui/props.generated.ts";
 import { fakeWindow, settle } from "./helpers/gpui-fakes.ts";
 import { fakeTimers } from "./helpers/mobile-fakes.ts";
@@ -135,6 +136,21 @@ Deno.test("dispatch drops unknown nodes and types, and reports a throwing handle
   assertEquals((errors[0] as Error).message, "handler failed");
   // A node without the handler: routed, nothing called.
   assertEquals(send(view, "focus"), true);
+});
+
+Deno.test("a batchError (node 0) reaches onError as a NativeTreeBatchError", () => {
+  const { c, errors } = setup();
+  const json = '{"node":0,"type":"batchError","seq":7,"error":"unknown node 42"}';
+  assertEquals(dispatchNativeTreeEvent(c, parseNativeTreeEvent(json)!), true);
+  assertInstanceOf(errors[0], NativeTreeBatchError);
+  assertEquals((errors[0] as NativeTreeBatchError).seq, 7);
+  assertEquals(
+    (errors[0] as Error).message,
+    "denext/gpui: the host rejected batch 7: unknown node 42",
+  );
+  dispatchNativeTreeEvent(c, { node: 0, type: "batchError" });
+  assertEquals((errors[1] as NativeTreeBatchError).seq, -1);
+  assertEquals((errors[1] as Error).message.endsWith("unknown fault"), true);
 });
 
 Deno.test("presses go through pressability: in, out + press, the trailing press, a keyboard press", () => {

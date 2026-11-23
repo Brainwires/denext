@@ -76743,7 +76743,7 @@
               "kind": "property",
               "name": "contentContainerStyle",
               "signature": "readonly contentContainerStyle?: GpuiStyle",
-              "doc": "The content view's style."
+              "doc": "Merged over `style` (the host has no separate content view)."
             },
             {
               "kind": "property",
@@ -77172,6 +77172,47 @@
           ]
         },
         {
+          "name": "NativeTreeBatchError",
+          "slug": "NativeTreeBatchError",
+          "kind": "class",
+          "signature": "class NativeTreeBatchError extends Error",
+          "doc": "A batch the host rejected on its UI thread (a tree-level fault: an unknown node, a cycle, a bad before), reported by its batchError event. The tree stays at the last good batch.",
+          "docFull": "A batch the host rejected on its UI thread (a tree-level fault: an unknown node, a cycle, a bad\n`before`), reported by its `batchError` event. The tree stays at the last good batch.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "constructor",
+              "name": "constructor",
+              "signature": "constructor(seq: number, reason: string)",
+              "doc": "An error for a rejected batch.",
+              "params": [
+                {
+                  "name": "seq",
+                  "doc": "The batch's sequence number."
+                },
+                {
+                  "name": "reason",
+                  "doc": "The host's message."
+                }
+              ]
+            },
+            {
+              "kind": "property",
+              "name": "seq",
+              "signature": "readonly seq: number",
+              "doc": "The rejected batch's sequence number."
+            }
+          ],
+          "extends": [
+            {
+              "type": "Error"
+            }
+          ]
+        },
+        {
           "name": "NativeTreeCommitError",
           "slug": "NativeTreeCommitError",
           "kind": "class",
@@ -77199,7 +77240,7 @@
               "kind": "property",
               "name": "code",
               "signature": "readonly code: number",
-              "doc": "The host's return code (-1 unsupported, -2 malformed)."
+              "doc": "The host's return code (-1 unsupported, -2 malformed, -3 no such window)."
             }
           ],
           "extends": [
@@ -77790,8 +77831,8 @@
           "slug": "ScrollView",
           "kind": "function",
           "signature": "ScrollView(props: GpuiScrollViewProps): VNode",
-          "doc": "React Native's ScrollView: a scroll node whose content view takes contentContainerStyle.",
-          "docFull": "React Native's `ScrollView`: a scroll node whose content view takes `contentContainerStyle`.",
+          "doc": "React Native's ScrollView. The host scrolls the node's direct children (there is no content view), so contentContainerStyle is merged over style, and a horizontal one lays out in a row.",
+          "docFull": "React Native's `ScrollView`. The host scrolls the node's direct children (there is no content\nview), so `contentContainerStyle` is merged over `style`, and a horizontal one lays out in a row.",
           "params": [
             {
               "name": "props",

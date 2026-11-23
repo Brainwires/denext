@@ -15,7 +15,7 @@
 
 import { CONTINUOUS_PRIORITY, DISCRETE_PRIORITY, withEventPriority } from "./priority.ts";
 import { syncInputValue } from "./apply.ts";
-import type { GpuiContainer } from "./container.ts";
+import { type GpuiContainer, NativeTreeBatchError } from "./container.ts";
 import type { GpuiNode } from "./node.ts";
 
 /** The window event the native tree's events arrive as. */
@@ -173,7 +173,8 @@ function priorityOf(type: string): number {
 }
 
 /**
- * Call the handler `event` is for. An event for a node that is gone, or of a type this renderer
+ * Call the handler `event` is for. A `batchError` (node 0: the host rejected a whole batch) goes
+ * to the root's `onError` as a {@linkcode NativeTreeBatchError}. An event for a node that is gone, or of a type this renderer
  * does not know, is dropped; a handler that throws is reported, not rethrown.
  *
  * @param container The window's tree.
@@ -181,6 +182,11 @@ function priorityOf(type: string): number {
  * @returns Whether a route took it.
  */
 export function dispatchNativeTreeEvent(container: GpuiContainer, event: NativeTreeEvent): boolean {
+  if (event.type === "batchError") {
+    const seq = typeof event.seq === "number" ? event.seq : -1;
+    container.reportError(new NativeTreeBatchError(seq, String(event.error ?? "unknown fault")));
+    return true;
+  }
   const node = container.nodes.get(event.node);
   const route = Object.hasOwn(ROUTES, event.type) ? ROUTES[event.type] : undefined;
   if (!node || !route) return false;

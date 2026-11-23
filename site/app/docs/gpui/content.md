@@ -82,17 +82,18 @@ runs only on a local laufey build (see [Running it](#running-it)).
 
 ## The API
 
-| Export                                                          | What it does                                                                                                                                |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `render(element, { window, reconciler })`                       | Mounts `element` in the window's native tree, or updates the root already there. Returns `{ render, unmount, window }`.                     |
-| `gpuiSupport(window?)`                                          | `{ supported: true, version }`, or `{ supported: false, reason }` saying which part is missing.                                             |
-| `GpuiUnsupportedError`                                          | What `render` throws without a native tree (`code: "unsupported"`).                                                                         |
-| `AppRegistry`                                                   | `registerComponent`, `getAppKeys`, `runApplication(appKey, { rootTag, reconciler, initialProps })`, `unmountApplicationComponentAtRootTag`. |
-| `View`, `Text`, `Image`, `ScrollView`, `TextInput`, `Pressable` | The primitives.                                                                                                                             |
-| `StyleSheet`                                                    | `create`, `flatten`, `compose`, `hairlineWidth`, `absoluteFill`, `absoluteFillObject`.                                                      |
-| `Platform`                                                      | React Native mode's `Platform`. `Platform.constants.denextShell` is `"gpui"` while a root is mounted.                                       |
-| `parseColor`                                                    | A colour string as the RGBA `u32` the batches carry.                                                                                        |
-| `NativeTreeCommitError`                                         | Passed to `onError` when the host refuses a batch (`code` -1 unsupported, -2 malformed).                                                    |
+| Export                                                          | What it does                                                                                                                                                                 |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `render(element, { window, reconciler })`                       | Mounts `element` in the window's native tree, or updates the root already there. Returns `{ render, unmount, window }`.                                                      |
+| `gpuiSupport(window?)`                                          | `{ supported: true, version }`, or `{ supported: false, reason }` saying which part is missing.                                                                              |
+| `GpuiUnsupportedError`                                          | What `render` throws without a native tree (`code: "unsupported"`).                                                                                                          |
+| `AppRegistry`                                                   | `registerComponent`, `getAppKeys`, `runApplication(appKey, { rootTag, reconciler, initialProps })`, `unmountApplicationComponentAtRootTag`.                                  |
+| `View`, `Text`, `Image`, `ScrollView`, `TextInput`, `Pressable` | The primitives.                                                                                                                                                              |
+| `StyleSheet`                                                    | `create`, `flatten`, `compose`, `hairlineWidth`, `absoluteFill`, `absoluteFillObject`.                                                                                       |
+| `Platform`                                                      | React Native mode's `Platform`. `Platform.constants.denextShell` is `"gpui"` while a root is mounted.                                                                        |
+| `parseColor`                                                    | A colour string as the RGBA `u32` the batches carry.                                                                                                                         |
+| `NativeTreeCommitError`                                         | Passed to `onError` when `nativeTree.commit` refuses a batch (`code` -1 unsupported, -2 malformed, -3 no such window).                                                       |
+| `NativeTreeBatchError`                                          | Passed to `onError` when the host rejects a batch on its UI thread (an unknown node, a cycle, a bad `before`); `seq` names the batch. The tree stays at the last good batch. |
 
 `render` also takes `onError` (default `console.error`: commit errors, handler errors, React's
 uncaught and recoverable errors), `fetch` for images, and `assetBase` for relative image URLs.
@@ -111,14 +112,14 @@ Call `gpuiSupport()` first to choose another path, such as a web view window, in
 
 ## Primitives and props
 
-| Primitive    | Props                                                                                                                                                                                            |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| All          | `style`, `accessibilityLabel` (or `aria-label`), `accessibilityRole` (or `role`), `testID`, `onLayout`, `onFocus`, `onBlur`, `onKeyPress`                                                        |
-| `Text`       | Nested `Text` elements are styled spans. Press props as `Pressable`. A string outside a `Text` throws, as in React Native.                                                                       |
-| `Image`      | `source` (a URL string, which is what an imported image is, or `{ uri }`), `resizeMode`, `onLoad`, `onError`, `onLoadEnd`                                                                        |
-| `ScrollView` | `horizontal`, `scrollEnabled`, `contentContainerStyle`, `onScroll` (at most once a frame)                                                                                                        |
-| `TextInput`  | `value`, `defaultValue`, `placeholder`, `placeholderTextColor`, `editable`, `secureTextEntry`, `multiline`, `onChangeText`, `onChange`, `onSubmitEditing`, `onSelectionChange`                   |
-| `Pressable`  | `onPress`, `onPressIn`, `onPressOut`, `onLongPress`, `delayLongPress`, `delayPressIn`, `delayPressOut`, `minPressDuration`, `disabled`; `style` and `children` may be functions of `{ pressed }` |
+| Primitive    | Props                                                                                                                                                                                                                                                 |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| All          | `style`, `accessibilityLabel` (or `aria-label`), `accessibilityRole` (or `role`), `testID`, `onLayout`, `onFocus`, `onBlur`, `onKeyPress`                                                                                                             |
+| `Text`       | Nested `Text` elements are styled spans. Press props as `Pressable`. A string outside a `Text` throws, as in React Native.                                                                                                                            |
+| `Image`      | `source` (a URL string, which is what an imported image is, or `{ uri }`), `resizeMode`, `onLoad`, `onError`, `onLoadEnd`                                                                                                                             |
+| `ScrollView` | `horizontal`, `scrollEnabled`, `contentContainerStyle`, `onScroll` (at most once a frame). The host scrolls the direct children: there is no content view, so `contentContainerStyle` is merged over `style`, and a horizontal one lays out in a row. |
+| `TextInput`  | `value`, `defaultValue`, `placeholder`, `placeholderTextColor`, `editable`, `secureTextEntry`, `multiline`, `onChangeText`, `onChange`, `onSubmitEditing`, `onSelectionChange`                                                                        |
+| `Pressable`  | `onPress`, `onPressIn`, `onPressOut`, `onLongPress`, `delayLongPress`, `delayPressIn`, `delayPressOut`, `minPressDuration`, `disabled`; `style` and `children` may be functions of `{ pressed }`                                                      |
 
 The host sends only the events a node has handlers for.
 
@@ -171,8 +172,15 @@ Version 1 has none of the following yet:
 - transforms, shadows and `hsl()` colours;
 - accessibility beyond labels and roles;
 - `onLoadStart` on `Image`, and `contentInset` or `scrollTo` on `ScrollView`;
+- children under `Image` or `TextInput` (only `View`, `Text`, `ScrollView` and `Pressable` take
+  children; anything else throws before the batch is sent);
 - `Platform.OS` other than `"web"`: use `Platform.constants.denextShell` to tell a gpui window
   apart.
+
+The gpui host itself has these gaps in version 1: `multiline` inputs stay single-line, a node has
+one border colour, `letterSpacing`, `textAlign: "justify"` and `resizeMode: "repeat"` are not
+drawn, a nested `Text` can't change size or family, accessibility props are not passed to the OS,
+and on Windows a window can't be moved or hidden.
 
 The gpui backend has no web view at all, so DOM APIs, CSS files and web components do not apply
 in it.

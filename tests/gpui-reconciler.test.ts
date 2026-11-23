@@ -136,7 +136,7 @@ for (const env of ENVS) {
     assertEquals(errors, []);
   });
 
-  Deno.test(`real react-reconciler (${env}): ScrollView's content view, Pressable's render prop`, async () => {
+  Deno.test(`real react-reconciler (${env}): ScrollView's direct children, Pressable's render prop`, async () => {
     const { win, errors, update, send } = await setup(env);
     update(
       h(
@@ -153,14 +153,18 @@ for (const env of ENVS) {
       ops.find((o) => o.op === "SET_PROP" && o.id === scroll),
       { op: "SET_PROP", id: scroll, prop: PROP.horizontal, value: { tag: "bool", value: true } },
     );
-    const content = (ops.find((o) => o.op === "INSERT" && o.parent === scroll) as { child: number })
-      .child;
-    const style = ops.find((o) => o.op === "SET_STYLE" && o.id === content) as {
+    // No content view: the host scrolls the node's direct children, laid out in a row.
+    const style = ops.find((o) => o.op === "SET_STYLE" && o.id === scroll) as {
       props: Array<[number, unknown]>;
     };
     assertEquals(style.props[0], [STYLE_PROP.flexDirection, { tag: "enum", value: 0 }]);
+    assertEquals(style.props[1], [STYLE_PROP.paddingTop, { tag: "f32", value: 2 }]);
     assertEquals(texts(ops), ["up"]);
     const pressable = idOf(ops, KIND.Pressable);
+    assertEquals(
+      ops.find((o) => o.op === "INSERT" && o.parent === scroll),
+      { op: "INSERT", parent: scroll, child: pressable, before: 0 },
+    );
     send(pressable, "pressIn");
     await settle();
     assertEquals(texts(win.takeOps()), ["down"]);

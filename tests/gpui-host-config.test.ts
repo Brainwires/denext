@@ -188,13 +188,25 @@ Deno.test("clearContainer removes every top-level child; ids are never reused", 
   assert(z.id > y.id);
 });
 
-Deno.test("text strings need a Text (or TextInput) ancestor; other elements reset that", () => {
+Deno.test("text strings need a Text ancestor; other elements reset that", () => {
   const { c } = setup();
   assertThrows(() => hc.createTextInstance("loose", c, ROOT_CTX), Error, "within a <Text>");
-  assertEquals(hc.getChildHostContext(ROOT_CTX, "TextInput"), TEXT_CTX);
+  assertEquals(hc.getChildHostContext(ROOT_CTX, "TextInput"), ROOT_CTX);
   assertEquals(hc.getChildHostContext(TEXT_CTX, "View"), ROOT_CTX);
   assertThrows(() => hc.createInstance("div", {}, c), Error, "not a native tree primitive");
   assertThrows(() => hc.createInstance("RawText", {}, c), Error, "not a native tree primitive");
+});
+
+Deno.test("only View, Text, ScrollView and Pressable take children (the host's op rules)", () => {
+  const { c } = setup();
+  const image = hc.createInstance("Image", {}, c);
+  const input = hc.createInstance("TextInput", {}, c);
+  const child = hc.createInstance("View", {}, c);
+  assertThrows(() => hc.appendInitialChild(image, child), Error, "an Image was given one");
+  assertThrows(() => hc.appendChild(input, child), Error, "a TextInput was given one");
+  for (const type of ["View", "Text", "ScrollView", "Pressable"]) {
+    hc.appendChild(hc.createInstance(type, {}, c), child);
+  }
 });
 
 Deno.test("Suspense hides with display: none over the node's style, and text with empty text", () => {
@@ -324,6 +336,10 @@ Deno.test("a commit the host refuses or that throws is reported, not thrown", ()
   hc.createInstance("View", {}, c);
   hc.resetAfterCommit(c);
   assertEquals((errors[2] as Error).message, "boom");
+  (win.nativeTree as { commit: () => number }).commit = () => -3;
+  hc.createInstance("View", {}, c);
+  hc.resetAfterCommit(c);
+  assertEquals((errors[3] as NativeTreeCommitError).message.includes("window is gone"), true);
 });
 
 Deno.test("the rest of the host config is React's no-op defaults", () => {

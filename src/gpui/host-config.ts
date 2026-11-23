@@ -28,7 +28,7 @@ import {
 /** Props as React passes them. */
 type Props = Record<string, unknown>;
 
-/** Whether a text string may be rendered here (inside a Text or TextInput). */
+/** Whether a text string may be rendered here (inside a Text). */
 interface HostContext {
   readonly inText: boolean;
 }
@@ -65,8 +65,23 @@ export function createGpuiContainer(
   return container;
 }
 
+/** The kinds the host lets have children. */
+const CONTAINER_KINDS: ReadonlySet<number> = new Set([
+  KIND.View,
+  KIND.Text,
+  KIND.ScrollView,
+  KIND.Pressable,
+]);
+
 /** Attach (or move) `child` under `parent`, before `before`: INSERT. */
 function attach(parent: GpuiNode, child: GpuiNode, before: GpuiNode | null): void {
+  if (!CONTAINER_KINDS.has(parent.kind)) {
+    // The host would reject the whole batch: say which element is wrong instead.
+    throw new Error(
+      "denext/gpui: only View, Text, ScrollView and Pressable take children " +
+        `(${parent.kind === KIND.Image ? "an Image" : "a TextInput"} was given one)`,
+    );
+  }
   const from = child.parent?.children;
   if (from) from.splice(from.indexOf(child), 1);
   child.parent = parent;
@@ -165,7 +180,7 @@ const creation = {
   shouldSetTextContent: () => false,
   getRootHostContext: () => OUTSIDE_TEXT,
   getChildHostContext: (_parent: HostContext, type: string) =>
-    type === "Text" || type === "TextInput" ? INSIDE_TEXT : OUTSIDE_TEXT,
+    type === "Text" ? INSIDE_TEXT : OUTSIDE_TEXT,
   getPublicInstance: (node: GpuiNode) => node,
 };
 

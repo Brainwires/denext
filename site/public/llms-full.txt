@@ -4203,6 +4203,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface LayoutEvent` — onLayout's event: the node's frame after layout, when it changed.
 - `NATIVE_TREE_EVENT: "nativetree"` — The window event the native tree's events arrive as.
 - `interface NativeTreeApi` — A window's native tree API (Deno.BrowserWindow#nativeTree on a runtime that has it).
+- `class NativeTreeBatchError extends Error` — A batch the host rejected on its UI thread (a tree-level fault: an unknown node, a cycle, a bad before), reported by its batchError event. The tree stays at the last good batch.
 - `class NativeTreeCommitError extends Error` — A commit the host refused.
 - `interface NativeTreeWindow` — The slice of a Deno Desktop window the renderer uses.
 - `parseColor(value: unknown): number | null` — A colour string as NTB1's u32 RGBA (red in the high byte, straight alpha), or null when it is not one this encoder understands.
@@ -4219,7 +4220,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ReactReconcilerInstance` — The slice of a react-reconciler renderer denext/gpui drives.
 - `render(element: unknown, options: GpuiRenderOptions): GpuiRoot` — Render element into options.window's native tree, or update the root already there (as React DOM's root.render). Ops of each React commit go to the host in one batch.
 - `interface ScrollEvent` — onScroll's event.
-- `ScrollView(props: GpuiScrollViewProps): VNode` — React Native's ScrollView: a scroll node whose content view takes contentContainerStyle.
+- `ScrollView(props: GpuiScrollViewProps): VNode` — React Native's ScrollView. The host scrolls the node's direct children (there is no content view), so contentContainerStyle is merged over style, and a horizontal one lays out in a row.
 - `type StyleProp<T> = T | number | false | null | undefined | ReadonlyArray<StyleProp<T>>` — A React Native style: an object, a registered id, an array of styles, or a falsy value.
 - `StyleSheet: GpuiStyleSheet` — React Native's StyleSheet (see the module docs).
 - `Text: GpuiComponent<GpuiTextProps>` — React Native's Text: text, with nested Text elements as styled spans.

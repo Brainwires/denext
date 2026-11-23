@@ -46,7 +46,7 @@ export interface ContainerOptions {
 
 /** A commit the host refused. */
 export class NativeTreeCommitError extends Error {
-  /** The host's return code (-1 unsupported, -2 malformed). */
+  /** The host's return code (-1 unsupported, -2 malformed, -3 no such window). */
   readonly code: number;
 
   /**
@@ -58,10 +58,33 @@ export class NativeTreeCommitError extends Error {
     super(
       code === -1
         ? "denext/gpui: the window does not support the native tree (nativeTree.commit returned -1)"
+        : code === -3
+        ? "denext/gpui: the window is gone (nativeTree.commit returned -3)"
         : `denext/gpui: the host rejected a batch (nativeTree.commit returned ${code})`,
     );
     this.name = "NativeTreeCommitError";
     this.code = code;
+  }
+}
+
+/**
+ * A batch the host rejected on its UI thread (a tree-level fault: an unknown node, a cycle, a bad
+ * `before`), reported by its `batchError` event. The tree stays at the last good batch.
+ */
+export class NativeTreeBatchError extends Error {
+  /** The rejected batch's sequence number. */
+  readonly seq: number;
+
+  /**
+   * An error for a rejected batch.
+   *
+   * @param seq The batch's sequence number.
+   * @param reason The host's message.
+   */
+  constructor(seq: number, reason: string) {
+    super(`denext/gpui: the host rejected batch ${seq}: ${reason}`);
+    this.name = "NativeTreeBatchError";
+    this.seq = seq;
   }
 }
 
