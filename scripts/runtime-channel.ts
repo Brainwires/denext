@@ -28,6 +28,12 @@
 //          root, served as https://denext.dev/runtime/) and in one commit to the orphan branch
 //          `denext-runtime-channel` of Brainwires/deno (the mirror; never a force push).
 //       Commit security/runtime-channel.json to `development` afterwards.
+//   Every signing command (publish, yank, resign) reads the index from EVERY base (denext.dev and
+//   the mirror) and refuses unless both serve the same one that verifies; it starts from that
+//   index's entries (yanked / security / minDenext as published), never from a checkout's
+//   security/runtime-channel.json that may lag it, and rewrites that file to match. `--first`
+//   signs without an agreed index: the very first publish, or a base known to be down (then above
+//   the newest copy any base serves, from the entries file, which must keep every listed release).
 //   deno task runtime:yank <version> --reason <text> [--no-publish]
 //       mark a broken (not dangerous: that is `deno task revocations add`) release as yanked and
 //       re-sign: `runtime upgrade` and the installer stop offering it
@@ -35,7 +41,8 @@
 //       fresh expiry (45 days) and sequence, same entries; `--if-due` only within 15 days of expiry
 //   deno task runtime:verify [<channel.json>]
 //       a file, or every published copy (denext.dev and the mirror): the index against the
-//       compiled-in keys, and every release document it lists against its hash
+//       compiled-in keys, every release document it lists against its hash, and that every base
+//       serves the same index
 //   deno task runtime:pin <version> [--allow-yanked]
 //       copy a published release document into src/build/deno-toolchain-pin.json and
 //       desktop-runtime-pin.json (the bundled pin), the pins they replace kept as `rollback`
@@ -352,6 +359,102 @@ async function publishedText(deps: ChannelDeps): Promise<string | null> {
 async function publishedChannel(deps: ChannelDeps): Promise<RuntimeChannel | null> {
   const text = await publishedText(deps);
   return text === null ? null : await readSignedChannel(text, deps.keys, deps.now());
+}
+
+/** What one base serves: its index (verified, expired allowed), or why it can't be used. */
+export interface BaseCopy {
+  readonly base: string;
+  readonly channel: RuntimeChannel | null;
+  readonly problem?: string;
+}
+
+async function readBase(deps: ChannelDeps, base: string): Promise<BaseCopy> {
+  const text = await deps.fetchText(new URL(CHANNEL_FILE, base).href);
+  if (text === null) return { base, channel: null, problem: "no index served" };
+  try {
+    return { base, channel: await readSignedChannel(text, deps.keys, deps.now()) };
+  } catch (err) {
+    return { base, channel: null, problem: (err as Error).message };
+  }
+}
+
+/** Whether two indexes publish the same thing: the same sequence and the same entries. */
+function sameIndex(a: RuntimeChannel, b: RuntimeChannel): boolean {
+  return a.sequence === b.sequence && JSON.stringify(a.releases) === JSON.stringify(b.releases);
+}
+
+/**
+ * Why the bases don't serve one agreed index (empty when they do): a base that serves none or
+ * one that does not verify, and bases that serve different ones.
+ *
+ * @param copies Every base's copy.
+ * @returns The problems, one line each.
+ */
+export function baseDisagreements(copies: readonly BaseCopy[]): string[] {
+  const problems = copies.filter((c) => !c.channel).map((c) => `${c.base}: ${c.problem}`);
+  const read = copies.filter((c) => c.channel);
+  if (read.some((c) => !sameIndex(c.channel!, read[0].channel!))) {
+    problems.push(
+      "the bases serve different indexes (" +
+        read.map((c) => `${c.base} #${c.channel!.sequence}`).join(", ") + ")",
+    );
+  }
+  return problems;
+}
+
+/**
+ * The published index a signing command (`publish`, `yank`, `resign`) builds on: every base must
+ * serve one that verifies, and the same one, else the command refuses, since signing above a
+ * stale or partial copy would undo what the other base published. `--first` (the very first
+ * publish, or a base known to be down) signs anyway, above the highest sequence any base serves
+ * (`null`: none).
+ *
+ * @param deps Seams.
+ * @param flags The command's flags.
+ * @returns The agreed index; with `--first`, the newest one read, or `null`.
+ */
+async function agreedPublishedChannel(
+  deps: ChannelDeps,
+  flags: Flags,
+): Promise<RuntimeChannel | null> {
+  const copies = await Promise.all(CHANNEL_BASES.map((b) => readBase(deps, b)));
+  const problems = baseDisagreements(copies);
+  const read = copies.map((c) => c.channel).filter((c): c is RuntimeChannel => c !== null);
+  if (problems.length === 0) return read[0];
+  if (flags.first !== true) {
+    fail(
+      `no agreed published index: ${problems.join("; ")}. Signing now could undo what a base ` +
+        "already published: re-publish the stale copy (`runtime:resign` once both serve the " +
+        "newest), or pass --first (the first publish, or a base known to be down)",
+    );
+  }
+  deps.log(`--first: signing without an agreed published index (${problems.join("; ")})`);
+  return read.sort((a, b) => b.sequence - a.sequence)[0] ?? null;
+}
+
+/**
+ * The entries a signing command starts from: the published index's (its `yanked`, `security`
+ * and `minDenext` as published), never a checkout's copy that may lag it. Without a published
+ * index (`--first`), the entries file, which must keep every release a base lists.
+ */
+async function startingEntries(
+  deps: ChannelDeps,
+  current: RuntimeChannel | null,
+  flags: Flags,
+): Promise<RuntimeChannelRelease[]> {
+  const local = await loadEntries(deps);
+  if (!current || flags.first === true) {
+    refuseDroppedReleases(current, local);
+    return local;
+  }
+  const published = readEntries({ releases: structuredClone(current.releases) }, "the index");
+  if (entriesText(local) !== entriesText(published)) {
+    deps.log(
+      `${deps.entriesFile ?? ENTRIES_FILE} differs from the published index ` +
+        `#${current.sequence}: starting from the published entries`,
+    );
+  }
+  return published;
 }
 
 /**
@@ -696,9 +799,8 @@ async function publishRelease(deps: ChannelDeps, tag: string, flags: Flags) {
     minDenext,
     security: flags.security === true,
   });
-  const current = await publishedChannel(deps);
-  const { entries, added } = withEntry(await loadEntries(deps), entry);
-  refuseDroppedReleases(current, entries);
+  const current = await agreedPublishedChannel(deps, flags);
+  const { entries, added } = withEntry(await startingEntries(deps, current, flags), entry);
   const what = `${
     added ? "added" : "kept"
   } ${version} (minDenext ${minDenext}, released ${releasedAt})`;
@@ -708,9 +810,8 @@ async function publishRelease(deps: ChannelDeps, tag: string, flags: Flags) {
 /** `yank <version> --reason <text>`. */
 async function yank(deps: ChannelDeps, version: string, flags: Flags) {
   const reason = str(flags, "reason")?.trim() || fail("--reason <text> is required");
-  const current = await publishedChannel(deps);
-  const entries = await loadEntries(deps);
-  refuseDroppedReleases(current, entries);
+  const current = await agreedPublishedChannel(deps, flags);
+  const entries = await startingEntries(deps, current, flags);
   const i = entries.findIndex((e) => e.version === version);
   if (i === -1) fail(`${version} is not listed in ${deps.entriesFile ?? ENTRIES_FILE}`);
   entries[i] = { ...entries[i], yanked: { reason } };
@@ -723,7 +824,7 @@ async function resign(deps: ChannelDeps, flags: Flags) {
   if (deps.keys.length === 0) {
     return deps.log("no runtime channel public key is compiled in: nothing to re-sign");
   }
-  const current = await publishedChannel(deps) ??
+  const current = await agreedPublishedChannel(deps, flags) ??
     fail("could not read the published index (offline, or none published yet: `runtime:publish`)");
   if (flags["if-due"] === true && !channelResignDue(current, deps.now().getTime())) {
     return deps.log(`index #${current.sequence} expires ${current.expiresAt}: not due yet`);
@@ -766,28 +867,34 @@ async function verifyBase(deps: ChannelDeps, base: string): Promise<string | nul
 }
 
 /** `verify [<file>]`. */
+async function verifyFile(deps: ChannelDeps, file: string) {
+  const channel = await verifyRuntimeChannel(await Deno.readTextFile(file), deps.keys, {
+    now: deps.now().getTime(),
+  }) ?? fail("the index has a schema this denext does not know");
+  deps.log(
+    `index #${channel.sequence}: issued ${channel.issuedAt}, expires ${channel.expiresAt}`,
+  );
+  for (const r of channel.releases) {
+    const notes = [r.security ? "security" : "", r.yanked ? `yanked: ${r.yanked.reason}` : ""]
+      .filter(Boolean).join("; ");
+    deps.log(
+      `  ${r.version} (deno ${r.deno}, denext ≥ ${r.minDenext})${notes ? ` ${notes}` : ""}`,
+    );
+  }
+}
+
 async function verify(deps: ChannelDeps, file: string | undefined) {
   if (deps.keys.length === 0) {
     fail(`no runtime channel public key is compiled in (${CHANNEL_KEYS_MODULE})`);
   }
-  if (file) {
-    const channel = await verifyRuntimeChannel(await Deno.readTextFile(file), deps.keys, {
-      now: deps.now().getTime(),
-    }) ?? fail("the index has a schema this denext does not know");
-    deps.log(
-      `index #${channel.sequence}: issued ${channel.issuedAt}, expires ${channel.expiresAt}`,
-    );
-    for (const r of channel.releases) {
-      const notes = [r.security ? "security" : "", r.yanked ? `yanked: ${r.yanked.reason}` : ""]
-        .filter(Boolean).join("; ");
-      deps.log(
-        `  ${r.version} (deno ${r.deno}, denext ≥ ${r.minDenext})${notes ? ` ${notes}` : ""}`,
-      );
-    }
-    return;
-  }
+  if (file) return await verifyFile(deps, file);
   const problems = (await Promise.all(CHANNEL_BASES.map((b) => verifyBase(deps, b))))
     .filter((p): p is string => p !== null);
+  if (problems.length === 0) {
+    // Each base verifies on its own; they must also publish the same index.
+    const copies = await Promise.all(CHANNEL_BASES.map((b) => readBase(deps, b)));
+    problems.push(...baseDisagreements(copies));
+  }
   if (problems.length > 0) fail(problems.join("\n"));
 }
 
