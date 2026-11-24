@@ -161,6 +161,18 @@ and this project adheres to
   `deno task runtime:pin` / `desktop:pin-runtime` never keep a rollback older than it (a named
   `--rollback` below it is refused).
 
+### Security
+
+- **Runtimes 3.0.0-denext.25 and 3.0.0-denext.26 are revoked on Linux**
+  ([GHSA-488g-7qvv-g92h](https://github.com/Brainwires/denext/security/advisories/GHSA-488g-7qvv-g92h)).
+  The revoked-runtimes list now names both for `x86_64-unknown-linux-gnu` and
+  `aarch64-unknown-linux-gnu`: in their lifecycle-script jail a script could change the mode,
+  owner, timestamps and extended attributes of the installer's open descriptors through procfs
+  links. A Linux machine that selects either (a project pin, a user default, `DENEXT_RUNTIME`) runs
+  a release that isn't revoked instead and says so once; `denext runtime upgrade` moves it on.
+  Fixed in runtime 3.0.0-denext.27 (denext 4.20.1). On other platforms 3.0.0-denext.25 stays the
+  oldest runtime this denext accepts.
+
 ## [4.21.0] - 2026-11-21
 
 ### Added
@@ -306,6 +318,11 @@ and this project adheres to
 
 ### Security
 
+- **The Linux lifecycle-script jail resolves a script's metadata changes within its own root**
+  ([GHSA-488g-7qvv-g92h](https://github.com/Brainwires/denext/security/advisories/GHSA-488g-7qvv-g92h)),
+  in runtime 3.0.0-denext.27: a jailed script can no longer change the mode, owner, timestamps or
+  extended attributes of the installer's open descriptors through procfs links. Affects runtimes
+  3.0.0-denext.25 and 3.0.0-denext.26 on Linux (denext 4.20.0), which 4.22.0 revokes there.
 - **Middleware matchers see every spelling of a path** ([GHSA-7mcj-vqxf-r65h](https://github.com/Brainwires/denext/security/advisories/GHSA-7mcj-vqxf-r65h)). Files under `public/` and dynamic route segments decoded the request path after matchers and config rules had tested it, so another spelling of a guarded path (a percent-encoded character, an encoded separator, or letter case and other aliases on a case-insensitive file system) could skip the middleware. A path with percent-encoded unreserved characters now answers a 308 to its canonical spelling before rules and middleware, and static files are served only under the name they are stored as; encoded separators and NUL are refused. Affects 0.9.0 through 4.20.0.
 - **Incoming `x-middleware-*` headers are dropped** ([GHSA-rh94-m978-c5c8](https://github.com/Brainwires/denext/security/advisories/GHSA-rh94-m978-c5c8)). A middleware that copied the request's headers onto its response handed a client's `x-middleware-rewrite` / `x-middleware-override-headers` to the runner as its own instruction. They are now removed before middleware runs, as in Next.js. Affects 0.9.0 through 4.20.0.
 - **`NextRequest.nextUrl.pathname` excludes the locale prefix under `i18n`** ([GHSA-4j9v-55c2-r88v](https://github.com/Brainwires/denext/security/advisories/GHSA-4j9v-55c2-r88v)), and `nextUrl.locale` is set in middleware, as in Next.js, so a path check in middleware code also covers the localized paths. `href` keeps the prefix. Affects 4.20.0 and earlier.
