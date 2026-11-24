@@ -738,36 +738,105 @@ export async function listenLocalIpc(
 
 /** Who serves a Windows pipe connection: its server process's user, as a SID string. */
 export interface PipeServerIdentity {
-  /** The server process's token user (`S-1-5-21-…`). */
+  /** The server process's token user (`S-1-5-21-…`), or the pipe's owner when that is another. */
   readonly userSid: string;
   /** The server process's id (`GetNamedPipeServerProcessId`), when known. */
   readonly pid?: number;
 }
 
 /**
- * How the client learns who serves a Windows pipe (`GetNamedPipeServerProcessId`, then the
- * process token's user) and who it is itself. A lookup that answers `null` could not tell: the
- * connection is refused rather than trusted.
+ * How the client learns who serves a Windows pipe and who it is itself. A lookup that answers
+ * `null` could not tell: the connection is refused rather than trusted.
  */
 export interface PipeIdentityLookup {
   /** The server at the other end of the connected `socket`. */
   server(socket: net.Socket): Promise<PipeServerIdentity | null>;
-  /** This process's user SID. */
-  currentUserSid(): Promise<string | null>;
+  /** This process's user SID, as read for the connected `socket`. */
+  currentUserSid(socket: net.Socket): Promise<string | null>;
+}
+
+/** What the runtime's `Deno.pipeServerIdentity` reports for a connected pipe client. */
+export interface RuntimePipeServerIdentity {
+  /** The server process's id (`GetNamedPipeServerProcessId`). */
+  readonly pid: number;
+  /** The server process's token user, or `null` when unreadable. */
+  readonly userSid: string | null;
+  /** The pipe object's owner, or `null` when unreadable. */
+  readonly ownerSid: string | null;
+  /** This process's token user, or `null` when unreadable. */
+  readonly currentUserSid: string | null;
 }
 
 /**
- * The runtime's {@linkcode PipeIdentityLookup}, or `undefined` where the runtime has none. denext's
- * Deno runtime does not yet expose a pipe connection's server process or a token's user to
- * script (it would be an op over the connected pipe's handle: `GetNamedPipeServerProcessId`,
- * `OpenProcess` + `OpenProcessToken` + `GetTokenInformation(TokenUser)`, and the current
- * process token's user), so a Windows client cannot yet check its server: same-machine users
- * are trusted there (see the server side, which claims the name as its first instance).
+ * The shape of the runtime's `Deno.pipeServerIdentity`: given a connected `node:net` socket that
+ * is a Windows named-pipe client, who serves it; `null` for anything else and on other OSes.
+ */
+export type PipeServerIdentityReader = (connection: object) => RuntimePipeServerIdentity | null;
+
+/**
+ * A {@linkcode PipeIdentityLookup} over a `Deno.pipeServerIdentity`-shaped `read`, which is called
+ * once per socket. The server is unknown (so refused) when `read` answers `null` or throws, or when
+ * the server's user or the pipe's owner is unreadable. When the pipe's owner is not the server
+ * process's user, the owner is reported as the server's user, so the pipe is taken only if this
+ * user owns it.
  *
+ * @param read The runtime's reader.
+ * @returns The lookup.
+ */
+export function pipeIdentityFrom(read: PipeServerIdentityReader): PipeIdentityLookup {
+  const seen = new WeakMap<net.Socket, RuntimePipeServerIdentity | null>();
+  const once = (socket: net.Socket): RuntimePipeServerIdentity | null => {
+    if (!seen.has(socket)) {
+      let found: RuntimePipeServerIdentity | null = null;
+      try {
+        found = read(socket) ?? null;
+      } catch {
+        // Unreadable: no answer, which the check refuses.
+      }
+      seen.set(socket, found);
+    }
+    return seen.get(socket) ?? null;
+  };
+  return {
+    server(socket) {
+      const found = once(socket);
+      if (!found || typeof found.userSid !== "string" || typeof found.ownerSid !== "string") {
+        return Promise.resolve(null);
+      }
+      // The server's user and the pipe's owner must be one user: a pipe whose owner differs from
+      // the process serving it is named by the user that isn't this one, so it is refused unless
+      // both are this user.
+      const sameOwner = found.ownerSid.toUpperCase() === found.userSid.toUpperCase();
+      const mine = once(socket)?.currentUserSid?.toUpperCase();
+      const userSid = sameOwner || found.userSid.toUpperCase() !== mine
+        ? found.userSid
+        : found.ownerSid;
+      return Promise.resolve({ userSid, pid: found.pid });
+    },
+    currentUserSid(socket) {
+      const own = once(socket)?.currentUserSid;
+      return Promise.resolve(typeof own === "string" ? own : null);
+    },
+  };
+}
+
+/**
+ * The runtime's {@linkcode PipeIdentityLookup}: on a runtime that has `Deno.pipeServerIdentity`
+ * (detected by the function, never a version), a Windows pipe client reads who serves its
+ * connection (the server process's user, the pipe's owner and this process's user) and takes only a
+ * pipe this user serves. On a runtime without the function there is no lookup (`undefined`): the
+ * check is skipped and the client takes whichever process serves the name (the server side still
+ * claims the name as its first instance).
+ *
+ * @param runtime Where to look for `pipeServerIdentity` (default the `Deno` global).
  * @returns The lookup, or `undefined`.
  */
-function runtimePipeIdentity(): PipeIdentityLookup | undefined {
-  return undefined;
+export function runtimePipeIdentity(
+  runtime: { pipeServerIdentity?: unknown } = Deno as { pipeServerIdentity?: unknown },
+): PipeIdentityLookup | undefined {
+  const read = runtime.pipeServerIdentity;
+  if (typeof read !== "function") return undefined;
+  return pipeIdentityFrom((connection) => read.call(runtime, connection));
 }
 
 /**
@@ -801,7 +870,10 @@ async function pipeServerCheck(
   let server: PipeServerIdentity | null = null;
   let own: string | null = null;
   try {
-    [server, own] = await Promise.all([identity.server(socket), identity.currentUserSid()]);
+    [server, own] = await Promise.all([
+      identity.server(socket),
+      identity.currentUserSid(socket),
+    ]);
   } catch {
     // An answer the lookup could not give is treated as no answer: refused below.
   }

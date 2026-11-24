@@ -6560,7 +6560,13 @@ for await (const chunk of conn.readable) console.log(chunk);`}
           <code>PIPE_REJECT_REMOTE_CLIENTS</code>, so a client on another machine is refused. The
           pipe namespace is still machine-wide: a process (of any user) that creates the name first
           makes the app&apos;s <code>listenLocalIpc</code>{" "}
-          fail, and the app&apos;s clients then connect to that process instead.
+          fail, and the app&apos;s clients then reach that process instead. Where the runtime
+          reports who serves a pipe connection (<code>Deno.pipeServerIdentity</code>),{" "}
+          <code>connectLocalIpc</code> refuses it with <code>PermissionDenied</code>{" "}
+          unless this user serves it: a server run by another user, a pipe another user owns, or one
+          whose identity cannot be read is closed before anything is sent. On a runtime that does
+          not report it the check is skipped, and the client is connected to whichever process holds
+          the name.
         </li>
         <li>
           So a channel that carries anything sensitive authenticates before it sends: the client

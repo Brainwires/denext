@@ -25,9 +25,12 @@ import {
   localIpcPath,
   localIpcPermissionError,
   localIpcUserToken,
+  pipeIdentityFrom,
   type PipeIdentityLookup,
   pipeServerRefusal,
   registerLocalIpcAppId,
+  runtimePipeIdentity,
+  type RuntimePipeServerIdentity,
 } from "../src/desktop/local-ipc.ts";
 import { osDataDir } from "../src/desktop/app-dirs.ts";
 
@@ -773,8 +776,7 @@ Deno.test("pipeServerRefusal: only a pipe this user's process serves is taken", 
 });
 
 // The client's check of a pipe's server, driven on every OS: the connection is made for a pipe
-// path over this OS's real channel, with who serves it answered by an injected lookup (the runtime
-// exposes no pipe server identity yet).
+// path over this OS's real channel, with who serves it answered by an injected lookup.
 Deno.test("local IPC: a pipe served by another user (or one nobody can vouch for) is refused", async () => {
   const ch = await channel();
   try {
@@ -819,6 +821,135 @@ Deno.test("local IPC: a pipe served by another user (or one nobody can vouch for
       // A Unix socket path is never asked (its folder's ownership guards it).
       const unix = await connectLocalIpcWith(open, ch.path, {}, lookup("S-1-5-21-9-9-9-1002"));
       unix.close();
+    } finally {
+      for (const p of peers) p.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  } finally {
+    await ch.cleanup();
+  }
+});
+
+// The runtime's lookup, over an injected `Deno.pipeServerIdentity`-shaped function: the connection
+// is made for a pipe path over this OS's real channel.
+Deno.test("local IPC: the runtime's pipe server identity decides which pipe a client takes", async () => {
+  const ch = await channel();
+  try {
+    const peers: net.Socket[] = [];
+    const server = net.createServer({ allowHalfOpen: true }, (s) => {
+      peers.push(s);
+      s.on("error", () => {});
+      s.on("data", () => {});
+    });
+    await new Promise<void>((resolve) => server.listen(ch.path, () => resolve()));
+    const pipe = "\\\\.\\pipe\\dev.denext.ident.u.t";
+    const open = () => net.connect({ path: ch.path, allowHalfOpen: true });
+    const me = "S-1-5-21-9-9-9-1001";
+    const other = "S-1-5-21-9-9-9-1002";
+    let reads = 0;
+    let handed: object | undefined;
+    const connect = (answer: Partial<RuntimePipeServerIdentity> | null | Error) => {
+      const runtime = {
+        pipeServerIdentity(connection: object): RuntimePipeServerIdentity | null {
+          reads++;
+          handed = connection;
+          if (answer instanceof Error) throw answer;
+          if (answer === null) return null;
+          return { pid: 4242, userSid: me, ownerSid: me, currentUserSid: me, ...answer };
+        },
+      };
+      return connectLocalIpcWith(open, pipe, {}, runtimePipeIdentity(runtime));
+    };
+    const refused = (answer: Partial<RuntimePipeServerIdentity> | null | Error, text: RegExp) =>
+      assertRejects(() => connect(answer), Deno.errors.PermissionDenied).then((err) =>
+        assertMatch(err.message, text)
+      );
+    try {
+      // This user's server on this user's pipe: taken, the runtime asked once, with the socket.
+      const own = await connect({});
+      assertEquals(reads, 1);
+      assert(handed instanceof net.Socket);
+      own.close();
+      (await connect({ userSid: me.toLowerCase(), ownerSid: me.toUpperCase() })).close();
+      // Another user's server: refused, named with its process.
+      await refused(
+        { userSid: other, ownerSid: other },
+        /served by another user \(S-1-5-21-9-9-9-1002, process 4242\)/,
+      );
+      // The pipe's owner is not the server's user: the owner counts.
+      await refused(
+        { userSid: me, ownerSid: other },
+        /served by another user \(S-1-5-21-9-9-9-1002/,
+      );
+      // Our pipe served by another user's process: refused too (both must be this user).
+      await refused(
+        { userSid: other, ownerSid: me },
+        /served by another user \(S-1-5-21-9-9-9-1002/,
+      );
+      // No answer, or a field the runtime could not read: refused.
+      await refused(null, /could not verify/);
+      await refused({ userSid: null }, /could not verify/);
+      await refused({ ownerSid: null }, /could not verify/);
+      await refused({ currentUserSid: null }, /could not verify/);
+      await refused(new Error("handle closed"), /could not verify/);
+    } finally {
+      for (const p of peers) p.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  } finally {
+    await ch.cleanup();
+  }
+});
+
+Deno.test("pipeIdentityFrom: one read serves both answers; a server and owner that differ name the one that is not this user", async () => {
+  const socket = new net.Socket();
+  try {
+    let reads = 0;
+    const lookup = pipeIdentityFrom(() => {
+      reads++;
+      return {
+        pid: 7,
+        userSid: "S-1-5-18",
+        ownerSid: "S-1-5-21-1-2-3-1001",
+        currentUserSid: "S-1-5-21-1-2-3-1001",
+      };
+    });
+    assertEquals(await lookup.server(socket), { userSid: "S-1-5-18", pid: 7 });
+    assertEquals(await lookup.currentUserSid(socket), "S-1-5-21-1-2-3-1001");
+    assertEquals(reads, 1);
+    const none = pipeIdentityFrom(() => null);
+    assertEquals(await none.server(socket), null);
+    assertEquals(await none.currentUserSid(socket), null);
+  } finally {
+    socket.destroy();
+  }
+});
+
+Deno.test("runtimePipeIdentity: a runtime without Deno.pipeServerIdentity has no lookup, so the check is skipped", async () => {
+  assertEquals(runtimePipeIdentity({}), undefined);
+  assertEquals(runtimePipeIdentity({ pipeServerIdentity: "3.0.0" }), undefined);
+  assert(runtimePipeIdentity({ pipeServerIdentity: () => null }) !== undefined);
+  // The default follows the running runtime's own function.
+  const has = typeof (Deno as { pipeServerIdentity?: unknown }).pipeServerIdentity === "function";
+  assertEquals(runtimePipeIdentity() !== undefined, has);
+  // With no lookup a pipe path connects unchecked.
+  const ch = await channel();
+  try {
+    const peers: net.Socket[] = [];
+    const server = net.createServer({ allowHalfOpen: true }, (s) => {
+      peers.push(s);
+      s.on("error", () => {});
+      s.on("data", () => {});
+    });
+    await new Promise<void>((resolve) => server.listen(ch.path, () => resolve()));
+    try {
+      const conn = await connectLocalIpcWith(
+        () => net.connect({ path: ch.path, allowHalfOpen: true }),
+        "\\\\.\\pipe\\dev.denext.nolookup.u.t",
+        {},
+        runtimePipeIdentity({}),
+      );
+      conn.close();
     } finally {
       for (const p of peers) p.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));
