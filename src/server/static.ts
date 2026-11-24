@@ -1,7 +1,7 @@
 // Serve files from a public directory, with path-traversal protection.
 
 import { contentType } from "@std/media-types";
-import { extname, join, normalize, resolve } from "@std/path";
+import { basename, extname, join, normalize, resolve } from "@std/path";
 
 /**
  * Try to serve `pathname` from `publicDir`. Returns a Response, or null if no
@@ -356,10 +356,31 @@ async function spelledAsRequested(
   if (nfc(real.target) === nfc(real.root + rel)) return true;
   let dir = rootAbs;
   for (const name of rel.split(separator()).filter((part) => part.length > 0)) {
-    if (!(await hasEntry(dir, name))) return false;
+    if (!(await storedAs(dir, name))) return false;
     dir = join(dir, name);
   }
   return true;
+}
+
+/**
+ * Whether `dir` holds an entry named exactly `name`. An entry that is no symlink carries its
+ * stored name in its own real path (the OS's spelling: case, long name), so a match there answers
+ * without listing `dir`: a request below a symlinked folder of many files reads a name, not the
+ * folder. A symlink (whose real path names its target) or a name that differs from the stored one
+ * is decided by listing `dir`, as before.
+ */
+async function storedAs(dir: string, name: string): Promise<boolean> {
+  const path = join(dir, name);
+  try {
+    if (
+      !(await Deno.lstat(path)).isSymlink && nfc(basename(await Deno.realPath(path))) === nfc(name)
+    ) {
+      return true;
+    }
+  } catch {
+    return false; // unreadable or gone: not served
+  }
+  return await hasEntry(dir, name);
 }
 
 /** Whether directory `dir` has an entry named exactly `name` (but for Unicode normalization). */

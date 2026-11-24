@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Fixed
 
+- **A static file under a symlinked folder no longer lists that folder on every request.** The
+  check that a file is named exactly as requested now reads each non-symlink component's own
+  stored name, so a request below `public/uploads` (a link to a folder of many files) no longer
+  reads the whole folder; a symlink's own name and any other spelling are still checked by
+  listing its parent.
+
 - **A local IPC client on Windows can check who serves its pipe.** A pipe connection now goes
   through a server-identity check that refuses a server run by another user, or one whose user
   can't be read. The runtime doesn't yet tell script who serves a pipe, so on Windows the check is
