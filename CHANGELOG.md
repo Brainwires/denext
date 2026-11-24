@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext desktop package` refuses a macOS script that never copies `desktop.bundle.libraries`.**
+  A `scripts/package-macos.ts` from before the libraries shipped the app without them, and only
+  `denext desktop doctor` said so; the package run now stops with the regenerate command.
+
 - **`denext doctor` names deploy files generated before 4.21.** A `Dockerfile` or `build.sh`
   that still runs `denext … toolchain path` (a verb 4.21 removed) fails the image build or the
   host's build; the new "deploy files" check lists each one and how to regenerate it.

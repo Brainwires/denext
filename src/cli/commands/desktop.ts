@@ -52,7 +52,10 @@ import { desktopPublishUpdate } from "./desktop-publish-update.ts";
 import { desktopDoctor } from "./desktop-doctor.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
 import { bundleDesktopPreload, DESKTOP_PRELOAD_ENV } from "../../build/desktop-preload.ts";
-import { desktopLibrariesFfiNote } from "../../build/desktop-bundle-libraries.ts";
+import {
+  desktopLibrariesFfiNote,
+  staleLibrariesScriptProblem,
+} from "../../build/desktop-bundle-libraries.ts";
 import {
   syncDesktopAppConfigAt,
   syncDesktopRuntimeConfig,
@@ -723,6 +726,15 @@ async function checkPackageScript(
   if (targetOs === "macos" && !age.backend) {
     const mismatch = await staleBackendMismatch(dir, config, PACKAGE_SCRIPTS[targetOs]);
     if (mismatch !== null) fail(mismatch);
+  }
+  // A script that never copies desktop.bundle.libraries would ship an app missing them: refused.
+  const libraries = targetOs === "macos" ? staleLibrariesScriptProblem(config, scriptText) : null;
+  if (libraries !== null) {
+    fail(
+      `denext desktop package: ${libraries}.\n` +
+        "  Run `denext desktop package --regenerate-scripts` to adopt the current template " +
+        "(the old file is kept as a .bak).",
+    );
   }
   return age;
 }
