@@ -1392,15 +1392,38 @@ Deno.test({
 const FIXTURE = new URL("./fixtures/sidecar-detached/", import.meta.url);
 const CONFIG = fromFileUrl(new URL("../deno.json", import.meta.url));
 
-/** The pids of processes whose command line has `marker`. */
-async function pidsOf(marker: string): Promise<number[]> {
-  const out = await new Deno.Command("pgrep", { args: ["-f", marker], stdout: "piped" }).output();
-  return new TextDecoder().decode(out.stdout).split("\n").filter(Boolean).map(Number);
+/**
+ * Whether process `pid` is running, asked of the OS: `tasklist` on Windows, signal 0 elsewhere
+ * (the detached processes are not this test's children: once ended, init reaps them).
+ */
+async function processRunning(pid: number): Promise<boolean> {
+  if (Deno.build.os !== "windows") return processExists(pid);
+  const out = await new Deno.Command("tasklist", {
+    args: ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"],
+    stdout: "piped",
+    stderr: "null",
+  }).output();
+  return new TextDecoder().decode(out.stdout).includes(`"${pid}"`);
 }
 
-/** End every process carrying `marker` (this test's own children only: the marker is unique). */
-async function killMarked(marker: string): Promise<void> {
-  for (const pid of await pidsOf(marker)) {
+/**
+ * The running processes of the fixture's detached sidecar: each writes its pid as a file under
+ * `pidDir` (its `marker` argument) when it starts, and the OS says which still run.
+ */
+async function pidsOf(pidDir: string): Promise<number[]> {
+  const pids: number[] = [];
+  try {
+    for await (const e of Deno.readDir(pidDir)) {
+      const pid = Number(e.name);
+      if (Number.isSafeInteger(pid) && pid > 0 && await processRunning(pid)) pids.push(pid);
+    }
+  } catch { /* none started yet */ }
+  return pids.sort((a, b) => a - b);
+}
+
+/** End every process the fixture recorded under `pidDir` (this test's own, by its pid). */
+async function killMarked(pidDir: string): Promise<void> {
+  for (const pid of await pidsOf(pidDir)) {
     try {
       Deno.kill(pid, "SIGKILL");
     } catch { /* gone */ }
@@ -1443,13 +1466,16 @@ async function launchApp(
   return lines;
 }
 
-/** Run `fn` with a fresh data folder and marker, ending every marked process afterwards. */
+/**
+ * Run `fn` with a fresh data folder and marker (the folder the sidecar records its pid in),
+ * ending every recorded process afterwards.
+ */
 async function withApp(
   name: string,
   fn: (data: string, marker: string) => Promise<void>,
 ): Promise<void> {
   const data = await tempDir(name);
-  const marker = `DENEXT_DETACHED_TEST_${crypto.randomUUID().replaceAll("-", "")}`;
+  const marker = join(data, "pids");
   try {
     await fn(data, marker);
   } finally {
@@ -1459,11 +1485,8 @@ async function withApp(
   }
 }
 
-const REAL = { ignore: Deno.build.os === "windows" } as const;
-
 Deno.test({
   name: "real: a detached sidecar outlives its app; the next launch reattaches and stops it",
-  ...REAL,
   fn: () =>
     withApp("lifecycle", async (data, marker) => {
       const first = (await launchApp("exit", data, marker, "1.0.0")).STATUS;
@@ -1500,7 +1523,6 @@ Deno.test({
 
 Deno.test({
   name: "real: a detached sidecar whose registry record is deleted ends itself",
-  ...REAL,
   fn: () =>
     withApp("record", async (data, marker) => {
       const status = (await launchApp("exit", data, marker, "1.0.0", { pollMs: 200 })).STATUS;
@@ -1515,7 +1537,6 @@ Deno.test({
 
 Deno.test({
   name: "real: detached.exitAfterMs ends it once no app was attached that long",
-  ...REAL,
   fn: () =>
     withApp("idle", async (data, marker) => {
       const status = (await launchApp("exit", data, marker, "1.0.0", {
@@ -1531,7 +1552,6 @@ Deno.test({
 
 Deno.test({
   name: "real: an impostor on the recorded control port is refused and the record replaced",
-  ...REAL,
   fn: () =>
     withApp("impostor", async (data, marker) => {
       const first = (await launchApp("exit", data, marker, "1.0.0")).STATUS;
@@ -1574,7 +1594,6 @@ Deno.test({
 
 Deno.test({
   name: "real: another app version replaces the running detached sidecar",
-  ...REAL,
   fn: () =>
     withApp("update", async (data, marker) => {
       const first = (await launchApp("exit", data, marker, "1.0.0")).STATUS;
