@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext doctor` names deploy files generated before 4.21.** A `Dockerfile` or `build.sh`
+  that still runs `denext … toolchain path` (a verb 4.21 removed) fails the image build or the
+  host's build; the new "deploy files" check lists each one and how to regenerate it.
+
 - **The installer refuses a binary this machine can't run.** On a musl Linux (Alpine) it stops
   before downloading, and the downloaded `denext` must answer `--version` before it is installed,
   so `curl … | sh` no longer exits 0 with a binary an older glibc can't start. A shell under Rosetta
