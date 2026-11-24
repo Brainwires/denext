@@ -20,6 +20,7 @@ import {
   activeDesktopRuntimePinOrBundled,
   activeRuntimeRelease,
   BUNDLED_RUNTIME,
+  bundledRuntimeReleases,
   factsOfEntry,
   factsOfPins,
   fetchLockedReleaseDocument,
@@ -154,6 +155,25 @@ async function pinProject(dir: string, lock: unknown, extra: Record<string, unkn
 
 // ---------------------------------------------------------------------------------------------
 // Release documents and locks.
+
+Deno.test("lockOfPins: the bundled rollback's lock is the integrity its channel entry records", async () => {
+  // The rollback's pins are rebuilt from the bundled pins' `rollback` blocks; their lock must be
+  // the hash of the published release document, or a project pinned to it with `runtime use
+  // --project` fails on every other denext.
+  const channel = JSON.parse(
+    await Deno.readTextFile(new URL("../security/runtime-channel.json", import.meta.url)),
+  ) as { releases: { version: string; doc: { sha256: string; size: number } }[] };
+  const [, rollback] = bundledRuntimeReleases(BUNDLED_RUNTIME);
+  assert(rollback, "the bundled pins carry a rollback release");
+  const entry = channel.releases.find((r) => r.version === rollback.toolchain.version);
+  assert(entry, `security/runtime-channel.json records ${rollback.toolchain.version}`);
+  assertEquals(lockOfPins(rollback)!.integrity, `sha256-${entry.doc.sha256}`);
+  const text = releaseDocumentText(releaseDocumentOf(rollback));
+  assertEquals(new TextEncoder().encode(text).byteLength, entry.doc.size);
+  // The bundled release itself, likewise.
+  const own = channel.releases.find((r) => r.version === BUNDLED);
+  if (own) assertEquals(lockOfPins(BUNDLED_RUNTIME)!.integrity, `sha256-${own.doc.sha256}`);
+});
 
 Deno.test("lockOfPins: the bundled pins without their rollback are a document of their release", async () => {
   const lock = lockOfPins(BUNDLED_RUNTIME)!;

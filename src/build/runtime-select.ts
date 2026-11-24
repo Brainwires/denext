@@ -441,19 +441,35 @@ export function bundledRuntimeReleases(bundled: RuntimePins = BUNDLED_RUNTIME): 
   return bundledReleases(bundled);
 }
 
-/** The bundled release, and its rollback release when both pins name the same one. */
+/** The keys a release document's pins start with, in their published order. */
+const DOCUMENT_HEAD_KEYS = ["schema", "version", "tag", "repository"];
+
+/** `pin` with {@linkcode DOCUMENT_HEAD_KEYS} first, then its other keys in their own order. */
+function inDocumentOrder<T extends object>(pin: T): T {
+  const src = pin as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of DOCUMENT_HEAD_KEYS) if (key in src) out[key] = src[key];
+  for (const [key, value] of Object.entries(src)) if (!(key in out)) out[key] = value;
+  return out as T;
+}
+
+/**
+ * The bundled release, and its rollback release when both pins name the same one. The
+ * rollback's pins are rebuilt in the published release document's key order (`schema`,
+ * `version`, `tag`, `repository`, then the rest as recorded): its lock hashes that text, so any
+ * other order would give an integrity no other denext, and no channel entry, accepts.
+ */
 function bundledReleases(bundled: RuntimePins): RuntimePins[] {
   const out: RuntimePins[] = [bundled];
   const t = bundled.toolchain.rollback;
   const d = bundled.desktop.rollback;
   if (t && d && t.version === d.version) {
+    const repository = bundled.toolchain.repository;
     out.push({
-      toolchain: {
-        schema: 1,
-        ...(bundled.toolchain.repository ? { repository: bundled.toolchain.repository } : {}),
-        ...t,
-      } as DenoToolchainPin,
-      desktop: { schema: 1, ...d } as DesktopRuntimePin,
+      toolchain: inDocumentOrder(
+        { schema: 1, ...(repository ? { repository } : {}), ...t } as DenoToolchainPin,
+      ),
+      desktop: inDocumentOrder({ schema: 1, ...d } as DesktopRuntimePin),
     });
   }
   return out;

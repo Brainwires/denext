@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext runtime use <the bundled rollback> --project` writes the release's published
+  integrity.** The rollback's pins were rebuilt with their keys in another order than the
+  release document, so the pin's hash matched no channel entry and every other denext refused the
+  project.
+
 - **`denext export` pre-renders only route handlers marked static, and never hangs on one.** As
   Next's `output: "export"` requires, a GET is written to its file only when the module exports
   `dynamic = "force-static"` (or a `revalidate` of `false` or a positive number); every other GET
