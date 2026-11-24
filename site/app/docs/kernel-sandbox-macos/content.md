@@ -5,20 +5,23 @@ lead: How the kernel sandbox holds a grant on macOS with Seatbelt, the same engi
 ---
 
 > [!IMPORTANT]
-> **An opt-in preview ships in denext 4.20; the full sandbox, with automatic enforcement, lands
-> in denext 5.0.** `--kernel-sandbox=enforce` confines `deno run` and `deno serve` on macOS today
-> (Mode A); the rest of this page is filled in as the remaining parts land. The
+> **An opt-in preview ships in denext 4.x; automatic enforcement lands in denext 5.0.**
+> `--kernel-sandbox=enforce` confines `deno run`, `deno serve`, `deno test` and `deno bench` on
+> macOS today, with the Mode B supervisor for host-scoped network, and so does a program compiled
+> with it; the rest of this page is filled in as the remaining parts land. The
 > [overview](/docs/kernel-sandbox) has the design.
 
 ## How a macOS process confines itself
 
-Seatbelt applies to the whole process at once, so under `--kernel-sandbox=enforce` `deno` applies
-the profile once the grant is resolved and the module graph is loaded, before any user code runs.
-Two paths:
+Under `--kernel-sandbox=enforce`, `deno` resolves the grant and loads the module graph, then
+re-executes itself; the new image applies the profile first thing, before it opens a cache or runs
+any user code. The process ID stays the same. Like on Linux, the new image gets an environment
+scrubbed to the `--allow-env` names plus a short runtime list (unless `--allow-env` is unscoped),
+and a program read from stdin is refused. Two ways to apply the profile:
 
-- **In place, no re-exec.** `deno` calls the system's sandbox interface (`sandbox_init`), looked up
-  at run time so a future removal degrades to "unavailable" instead of breaking the binary. The
-  environment is kept as it is.
+- **The system's sandbox interface** (`sandbox_init`), looked up at run time so a future removal
+  degrades to "unavailable" instead of breaking the binary. The new image measures that the profile
+  holds before it goes on.
 - **The `sandbox-exec` fallback.** Where that call is missing, the process re-executes under
   `/usr/bin/sandbox-exec` with the same profile, and checks the profile it runs under before user
   code starts. The fallback's profile lets the process exec exactly the runtime's own binary, which
@@ -26,9 +29,9 @@ Two paths:
   report as `--kernel-sandbox=enforce (sandbox-exec fallback)`: native code can start the runtime
   again, still confined.
 
-A process already inside another Seatbelt profile (App Sandbox, an agent's sandbox,
-`sandbox-exec`) can't apply a second one, so `enforce` refuses to start there. Run it outside the
-outer sandbox, or use `warn`.
+A compiled program applies its profile in place, with no re-exec. A process already inside
+another Seatbelt profile (App Sandbox, an agent's sandbox, `sandbox-exec`) can't apply a second
+one, so `enforce` refuses to start there. Run it outside the outer sandbox, or use `warn`.
 
 **Folders listed, never read.** Two folders' names (never their contents) are readable: the
 working directory itself (spawning a child needs it), and `/` when `--allow-run` is granted (every
@@ -63,14 +66,14 @@ scope.
 
 Seatbelt can express ports and `localhost`, not host names. Under `enforce`:
 
-- **`--allow-net=<host>:<port>`** is held by port: native code and children may reach any host on
-  that port, and resolve any name. A `documented` gap, so the run starts.
-- **A port list of IP addresses or `localhost`** is held by port too: any address on those ports,
-  `169.254.169.254` included. A `documented` gap.
-- **Name lookups:** with network allowed, any confined code can resolve any name through the system
-  resolver, and a lookup can carry data out.
-
-Mode B (design: not built yet) will make host-scoped grants exact.
+- **`--allow-net=<host>:<port>`** and `--deny-net` are held by the Mode B supervisor: it resolves
+  the name, checks it, connects and passes the socket back. The profile then denies the confined
+  process all network, so native code and children (other than `deno`) have no network, and UDP is
+  refused under a host-scoped grant.
+- **A port list of IP addresses or `localhost`** is held by port: any address on those ports,
+  `169.254.169.254` included. A `documented` gap. `--kernel-sandbox=broker` holds it exactly.
+- **Name lookups:** with network allowed by port or unscoped, any confined code can resolve any
+  name through the system resolver, and a lookup can carry data out.
 
 ## Programs and children
 
@@ -91,8 +94,14 @@ read what it needs to start often fails outright instead of falling back.
 
 ## Seeing refusals
 
-_Being written as this lands._ Reading Seatbelt's refusals from the unified log, which is how
-`warn` mode reports on macOS, and what `denext doctor` checks.
+Under a `--kernel-sandbox=warn` asked for by name, `deno run` and `deno serve` apply a report-only
+profile: the `enforce` profile for the same grant with every refusal turned into a logged allow.
+The run reads those lines back from the unified log (`log stream`) and prints each access
+`enforce` would refuse, with the grant that would allow it. A program that applies a sandbox of its
+own (a browser, `sandbox-exec`) fails under that profile as it would under `enforce`;
+`DENO_KERNEL_SANDBOX_WARN_OBSERVE=0` turns it off. See
+[Warn mode](/docs/kernel-sandbox-modes#warn-mode). _Being written as this lands:_ what
+`denext doctor` checks.
 
 ## Supported macOS versions
 

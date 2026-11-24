@@ -5,9 +5,10 @@ lead: How the kernel sandbox holds a grant on Linux. Landlock for files and TCP 
 ---
 
 > [!IMPORTANT]
-> **An opt-in preview ships in denext 4.20; the full sandbox, with automatic enforcement, lands
-> in denext 5.0.** `--kernel-sandbox=enforce` confines `deno run` and `deno serve` on Linux
-> x86_64 and aarch64 today (Mode A: Landlock and seccomp); the rest of this page is filled in as
+> **An opt-in preview ships in denext 4.x; automatic enforcement lands in denext 5.0.**
+> `--kernel-sandbox=enforce` confines `deno run`, `deno serve`, `deno test` and `deno bench` on
+> Linux x86_64 and aarch64 today (Landlock and seccomp, with the Mode B supervisor for the rules
+> they can't hold), and so does a program compiled with it; the rest of this page is filled in as
 > the remaining parts land. The
 > [overview](/docs/kernel-sandbox#every-kernel-denext-runs-on-today-keeps-working) has the
 > per-kernel table.
@@ -16,10 +17,15 @@ lead: How the kernel sandbox holds a grant on Linux. Landlock for files and TCP 
 
 Under `--kernel-sandbox=enforce`, `deno run` and `deno serve` resolve the grant and load the
 program's static module graph (remote modules cached), then re-execute themselves with the same
-arguments. The new image applies `no_new_privs`, the Landlock ruleset and one seccomp filter first
+arguments (`deno test` and `deno bench` type-check and find their modules first, and the confined
+image runs exactly those). The new image applies `no_new_privs`, the Landlock ruleset and one seccomp filter first
 thing, while it has a single thread, so every thread and child it ever has is inside the sandbox.
 The process ID stays the same, so signals, supervisors and `$!` keep working. The new image checks
 that the policy it was handed is the one it compiles itself, and refuses to start otherwise.
+
+Under Mode B the re-executed image is the supervisor instead: it keeps the PID, forks the confined
+program and serves its requests. The program ends with the supervisor. See
+[Mode B in detail](/docs/kernel-sandbox-modes#mode-b-broker-in-detail).
 
 What the re-exec changes:
 
@@ -37,9 +43,9 @@ What the re-exec changes:
   import map, the lockfile), even outside the read grant. `.npmrc` is never among them: it can hold
   registry tokens, so it's treated as absent ([below](#npmrc-under-enforce)).
 
-Compiled binaries and desktop apps (design) know their grant before any thread starts, so they
-will confine themselves without the extra exec. Today `deno compile --kernel-sandbox=enforce` is
-refused.
+Compiled programs know their grant before any thread starts, so they confine themselves in place
+without the extra exec (a program whose grant needs the supervisor forks first). See
+[Desktop and compiled apps](/docs/kernel-sandbox-desktop-and-compiled).
 
 ## Files: Landlock
 
@@ -60,8 +66,11 @@ rule.
     it leads), so it can't be read through;
   - the walk stops at 20,000 entries or 64 levels, and `enforce` then refuses to start. Narrow the
     allow, or move the denied file out of a large tree.
-- **A write deny inside a write allow** needs Mode B, which isn't built yet, so `enforce` refuses to
-  start over it. Scope the write grant to the folders that should be writable instead.
+- **A write deny inside a write allow** is held by Mode B. The kernel gives no write rule to the
+  folders on the way to the deny, only to each entry beside them, so it refuses changes directly in
+  those folders and in folders made after start: native code and children get that fail-closed
+  view. Deno's own operations there are asked of the supervisor, which holds the deny exactly. It
+  refuses a recursive removal or a rename of a folder that holds a denied path.
 
 ### What Landlock doesn't cover
 
@@ -104,17 +113,25 @@ kill the process), so they surface as catchable errors in JavaScript.
 - **All network:** allowed.
 - **A port list of IP addresses or `localhost`** on Landlock ABI 4 (Linux 6.7) and later: Landlock
   port rules. They hold the port, not the address, so native code and children may reach any
-  address on those ports, `169.254.169.254` included (a `documented` gap). On an older kernel a
-  port list is a `fail-open` gap and `enforce` refuses to start.
-- **Host names** (`--allow-net=api.example.com:443`) need Mode B, where the supervisor resolves the
-  name, checks it, connects and passes the socket back. Mode B isn't built yet, so `enforce`
-  refuses to start over a host-scoped grant on Linux. Grant by IP address, all network, or run
-  without `enforce`.
+  address on those ports, `169.254.169.254` included (a `documented` gap). On an older kernel
+  `enforce` holds the list through Mode B, and `--kernel-sandbox=broker` does on any kernel.
+- **Host names** (`--allow-net=api.example.com:443`) and `--deny-net` are held by Mode B: the
+  supervisor resolves the name, checks it, connects and passes the socket back. The confined
+  process can't make a network socket, `connect` or `listen` of its own, so native code and child
+  processes (other than `deno`) have no network, and UDP is refused under a host-scoped grant.
+- **Listen-only grants.** An `--allow-net-listen` list whose every entry is an address with a port
+  (`127.0.0.1:8000`, `localhost:9000`, `0.0.0.0:8080`; not a name, a subnet or port 0) is bound
+  and listening before the sandbox applies, and each listener is handed to the operation that
+  listens there (`Deno.listen`, `Deno.serve`, `node:net`). The addresses stay bound for the life of
+  the process, an address that can't be bound reports its error when the program listens there,
+  and UDP on them is refused. Not with `--inspect` or under Mode B.
 
 ## Unix sockets and signals
 
-_Being written as this lands._ Why pathname Unix sockets need an explicit grant (or Mode B), what
-ABI 6 adds for abstract sockets and signals, and what stays open before it.
+Landlock can't scope a socket connect by path, so a Unix socket granted by path
+(`--allow-net=unix:<path>`) is connected by the Mode B supervisor. Sockets the grant doesn't name
+are refused in Mode A, even inside the read and write scope. _Being written as this lands:_ what ABI 6 adds
+for abstract sockets and signals, and what stays open before it.
 
 ## Subprocesses on Linux
 
