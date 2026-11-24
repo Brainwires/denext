@@ -8,6 +8,7 @@
 // it, and only on an index whose signature verifies. Offline, `version`, `list` (installed), `path`
 // and `use <installed>` work; `upgrade` and `install <not cached>` fail with the reason.
 
+import { writeFileAtomic } from "./stack-env.ts";
 import { join } from "@std/path";
 import { cacheCliModules, isRemoteCli } from "../cli-cache.ts";
 import type { CommandContext, CommandSpec } from "../command.ts";
@@ -374,7 +375,8 @@ async function writeProjectPin(rt: Rt, lock: RuntimeLock): Promise<string> {
       `denext: could not write the runtime pin in ${path}: ${edited.reason}`,
     );
   }
-  await Deno.writeTextFile(path, edited.source);
+  // Temp file + rename: an interrupted write never leaves the project's deno.json half-written.
+  await writeFileAtomic(path, edited.source);
   return path;
 }
 
