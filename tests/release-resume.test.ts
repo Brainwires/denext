@@ -11,6 +11,7 @@ import {
   corpusVersion,
   moduleSourceHash,
 } from "../scripts/lib/docs-corpus-package.ts";
+import { newestFinalTag, previousReleaseRefusal } from "../scripts/release.ts";
 import { memberPin, RUNTIME_MEMBERS } from "../scripts/lib/jsr-pins.ts";
 import {
   detectResume,
@@ -504,4 +505,37 @@ Deno.test("release resume: JSR published but the binaries failed is its own stop
   const late = await assertRejects(() => publishFrom(TARGET, "pr", pending.d), ReleaseAbort);
   assertStringIncludes(late.message, "binaries/release: pending");
   assert(!pending.logs.some((l) => l.includes("✓ Released")));
+});
+
+Deno.test("release: the newest final release must be on main before the next one starts", () => {
+  const tags = ["v4.9.0", "v4.22.0-rc.3", "v4.21.0", "v4.10.2", "v4.22.0", "docs-corpus-v4.22.0"];
+  assertEquals(newestFinalTag(tags), "v4.22.0");
+  assertEquals(newestFinalTag(["v5.0.0-rc.1", ""]), null);
+  assertEquals(previousReleaseRefusal("v4.22.0", true), null);
+  assertEquals(previousReleaseRefusal(null, false), null);
+  const refusal = previousReleaseRefusal("v4.22.0", false)!;
+  assertStringIncludes(refusal, "v4.22.0 is not merged into main");
+  assertStringIncludes(refusal, "gh pr create --base main --head development");
+});
+
+Deno.test("release --regate re-runs every check a fresh release runs before its gate pass", async () => {
+  const src = await Deno.readTextFile(new URL("../scripts/release.ts", import.meta.url));
+  const body = (fn: string) => {
+    const start = src.indexOf(`async function ${fn}(`);
+    assert(start >= 0, fn);
+    return src.slice(start, src.indexOf("\n}\n", start));
+  };
+  const regate = body("requireGatePass");
+  for (const check of ["checkCi(", "checkBundledRuntime(", "checkCorpus(", "runReleaseGate("]) {
+    assert(regate.includes(check), check);
+  }
+  // The same doc lint, size guard and stripped publish dry-run a fresh release runs.
+  assert(regate.indexOf("prePublishChecks(") < regate.indexOf("recordGatePass("));
+  assert(body("runGate").includes("prePublishChecks("));
+  const pre = body("prePublishChecks");
+  for (const check of ["doc-lint", "checkPublishSize(", "publishDryRunStripped("]) {
+    assert(pre.includes(check), check);
+  }
+  // A fresh release checks the previous final release reached main.
+  assert(body("checkPreconditions").includes("checkPreviousReleaseMerged("));
 });

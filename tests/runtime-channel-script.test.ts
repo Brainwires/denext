@@ -14,6 +14,8 @@ import {
   channelMinSequenceIn,
   type CompatLeg,
   compatLegs,
+  compatRunRefusal,
+  compatRunTitle,
   entriesText,
   main,
   publishedBundledPinRefusal,
@@ -775,6 +777,40 @@ Deno.test("compatLegs reads the run's `compat (denext <v>)` jobs", () => {
       { denext: "4.19.0", ok: false },
       { denext: "5.0.0-rc.1", ok: false },
     ],
+  );
+});
+
+Deno.test("compatRunRefusal: only a finished, green dispatch on development titled for exactly this tag", () => {
+  const tag = "denext-runtime-v3.0.0-denext.3";
+  const green = [
+    { name: "pick legs and runners", conclusion: "success" },
+    { name: "compat (denext 4.22.0)", conclusion: "success" },
+    { name: "compat (denext 4.21.0)", conclusion: "success" },
+  ];
+  const run = {
+    displayTitle: compatRunTitle(tag),
+    status: "completed",
+    event: "workflow_dispatch",
+    headBranch: "development",
+    jobs: green,
+  };
+  assertEquals(compatRunRefusal("7", run, tag), null);
+  // `…denext.30`'s run is not `…denext.3`'s (a substring match took it).
+  const thirty = { ...run, displayTitle: compatRunTitle("denext-runtime-v3.0.0-denext.30") };
+  assertStringIncludes(compatRunRefusal("7", thirty, tag)!, "is not a runtime-compat.yml run for");
+  // A run on another branch (its own copy of the workflow), or not a dispatch: refused.
+  assertStringIncludes(
+    compatRunRefusal("7", { ...run, headBranch: "fix/always-green" }, tag)!,
+    "not a dispatch on development",
+  );
+  assertStringIncludes(compatRunRefusal("7", { ...run, event: "push" }, tag)!, "push run");
+  assertStringIncludes(
+    compatRunRefusal("7", { ...run, status: "in_progress" }, tag)!,
+    "has not finished",
+  );
+  assertStringIncludes(
+    compatRunRefusal("7", { ...run, jobs: green.slice(0, 2) }, tag)!,
+    "is not green",
   );
 });
 

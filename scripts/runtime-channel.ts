@@ -208,6 +208,56 @@ export function compatLegs(
   return [...runtimeCompatVerdict(jobs).legs];
 }
 
+/** The branch the compatibility proof runs on (its workflow file is the one reviewed there). */
+const COMPAT_BRANCH = "development";
+
+/**
+ * The title runtime-compat.yml gives a run for `tag` (its `run-name`): matched exactly, so
+ * `denext-runtime-v3.0.0-denext.3` never takes the run of `…denext.30`.
+ *
+ * @param tag The runtime release tag.
+ * @returns The title.
+ */
+export function compatRunTitle(tag: string): string {
+  return `runtime-compat ${tag}`;
+}
+
+/** What `gh run view --json displayTitle,status,jobs,headBranch,event` says of a run. */
+export interface CompatRunView {
+  readonly displayTitle?: string;
+  readonly status?: string;
+  readonly headBranch?: string;
+  readonly event?: string;
+  readonly jobs?: { name?: string; conclusion?: string }[];
+}
+
+/**
+ * Why a runtime-compat run can't prove `tag` (null when it can): it must be a finished
+ * `workflow_dispatch` run on `development` (so its workflow is the reviewed one) titled exactly
+ * for `tag`, every job green.
+ *
+ * @param id The run's id, for messages.
+ * @param view The run.
+ * @param tag The runtime release tag.
+ * @returns The refusal, or null.
+ */
+export function compatRunRefusal(id: string, view: CompatRunView, tag: string): string | null {
+  if (view.displayTitle !== compatRunTitle(tag)) {
+    return `run ${id} is not a ${COMPAT_WORKFLOW} run for ${tag} (${view.displayTitle})`;
+  }
+  if (view.event !== "workflow_dispatch" || view.headBranch !== COMPAT_BRANCH) {
+    return `run ${id} is a ${view.event} run on ${view.headBranch}, not a dispatch on ` +
+      `${COMPAT_BRANCH}`;
+  }
+  if (view.status !== "completed") return `run ${id} has not finished (${view.status})`;
+  // The whole run must be green (scripts/release-ci.ts RUNTIME_COMPAT_JOBS), not only its legs.
+  const verdict = runtimeCompatVerdict(view.jobs ?? []);
+  if (!verdict.ok) {
+    return `${COMPAT_WORKFLOW} run ${id} is not green: ${verdict.problems.join(", ")}`;
+  }
+  return null;
+}
+
 /** The id of the runtime-compat dispatch for `tag` made at or after `since`, polling briefly. */
 async function dispatchedRun(deps: ChannelDeps, tag: string, since: number): Promise<string> {
   const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
@@ -232,7 +282,7 @@ async function dispatchedRun(deps: ChannelDeps, tag: string, since: number): Pro
       displayTitle: string;
     }[];
     const run = runs.find((r) =>
-      Date.parse(r.createdAt) >= since - 60_000 && r.displayTitle.includes(tag)
+      Date.parse(r.createdAt) >= since - 60_000 && r.displayTitle === compatRunTitle(tag)
     );
     if (run) return String(run.databaseId);
     await sleep(5000);
@@ -255,7 +305,7 @@ async function realCompat(deps: ChannelDeps, tag: string, flags: Flags): Promise
       "--repo",
       DENEXT_REPO,
       "--ref",
-      "development",
+      COMPAT_BRANCH,
       "-f",
       `tag=${tag}`,
     ], `dispatching ${COMPAT_WORKFLOW}`);
@@ -271,19 +321,12 @@ async function realCompat(deps: ChannelDeps, tag: string, flags: Flags): Promise
       "--repo",
       DENEXT_REPO,
       "--json",
-      "displayTitle,status,jobs",
+      "displayTitle,status,jobs,headBranch,event",
     ], `reading ${COMPAT_WORKFLOW} run ${id}`),
-  ) as { displayTitle?: string; status?: string; jobs?: { name?: string; conclusion?: string }[] };
-  if (!view.displayTitle?.includes(tag)) {
-    fail(`run ${id} is not a ${COMPAT_WORKFLOW} run for ${tag}`);
-  }
-  if (view.status !== "completed") fail(`run ${id} has not finished (${view.status})`);
-  // The whole run must be green (scripts/release-ci.ts RUNTIME_COMPAT_JOBS), not only its legs.
-  const verdict = runtimeCompatVerdict(view.jobs ?? []);
-  if (!verdict.ok) {
-    fail(`${COMPAT_WORKFLOW} run ${id} is not green: ${verdict.problems.join(", ")}`);
-  }
-  return [...verdict.legs];
+  ) as CompatRunView;
+  const refusal = compatRunRefusal(id, view, tag);
+  if (refusal) fail(refusal);
+  return [...runtimeCompatVerdict(view.jobs ?? []).legs];
 }
 
 async function realReleasedAt(deps: ChannelDeps, tag: string): Promise<string> {
