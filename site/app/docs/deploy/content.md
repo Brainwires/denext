@@ -113,10 +113,17 @@ Beside the pages it writes the files Next's `output: "export"` writes:
 - `out/404.html`: `app/not-found.tsx` (or the default 404 page) inside the root layout, with
   their stylesheets — the page GitHub Pages, Netlify, Cloudflare Pages and an S3 website serve
   for a URL with no file. With `trailingSlash: true` it is also written to `out/404/index.html`.
-- each route handler's GET response at its URL (`app/feed.xml/route.ts` → `out/feed.xml`,
-  `app/api/hello/route.ts` → `out/api/hello`, each `generateStaticParams` set of a dynamic one).
-  A handler with another method than GET, `dynamic = "force-dynamic"`, or a GET that fails or
-  answers a non-2xx status is skipped and listed;
+- each static route handler's GET response at its URL (`app/feed.xml/route.ts` →
+  `out/feed.xml`, `app/api/hello/route.ts` → `out/api/hello`, each `generateStaticParams` set of a
+  dynamic one). As in Next, a handler is static only when it says so:
+  `export const dynamic = "force-static"`, or an `export const revalidate` of `false` or a positive
+  number. A GET without either is skipped and listed, never run (Next fails the build there), and
+  a module that names no GET or no `dynamic` / `revalidate` is not even imported, so a POST-only
+  route whose imports need the server's environment doesn't affect the export. A module that
+  fails to import, `dynamic = "force-dynamic"`, a `generateStaticParams` that throws, and a GET that
+  fails, answers a non-2xx status or an event stream, or takes longer than 30 s
+  (`DENEXT_EXPORT_RESPONSE_TIMEOUT_MS`) are skipped and listed by route. A param value is written
+  under its decoded name (`café`, not `caf%C3%A9`), the file a static host serves for the URL;
 - the metadata files: `sitemap.xml` (and its `generateSitemaps` shards), `robots.txt`,
   `favicon.ico`, `manifest.webmanifest` and the icon / Open Graph / Twitter images. A static
   image keeps its extension (`app/icon.png` → `out/icon.png`), and the pages link it there,

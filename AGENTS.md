@@ -153,6 +153,11 @@ export function GET(_req: Request): Response {
 }
 ```
 
+`denext export` (Next's `output: "export"`; also `mobile build` and desktop packaging) writes a
+route handler's GET to a file only when the module marks it static: `export const dynamic =
+"force-static"` (or a `revalidate` of `false` or a positive number). Any other handler is skipped
+and listed, never run at build time.
+
 **A validated route handler + calling it with end-to-end types (no tRPC):** `defineApi`
 takes Standard Schemas (Zod/Valibot/ArkType/TypeBox/hand-rolled) for `params` / `query` /
 `body` / `response` plus the `errors` it may fail with; the handler gets parsed, typed input
@@ -898,7 +903,9 @@ loopback host; an unpinned `https` server is refused too (`insecure`). Whether a
 the UI (`native_mismatch`). A Deno Desktop app gets the same signed updates from
 `denext/desktop/updater` (`checkForDesktopUpdate` / `prepareDesktopUpdate` /
 `applyDesktopUpdate`), and full-app updates under the pinned runtime (`checkForAppUpdate` /
-`downloadAppUpdate` / `installAppUpdateAndRelaunch` / `confirmAppUpdate`: a signed manifest from
+`downloadAppUpdate` / `await installAppUpdateAndRelaunch()` (it stops every sidecar, detached
+ones too, and waits before it quits; `sidecars_running` when one can't be stopped) /
+`confirmAppUpdate`: a signed manifest from
 `denext desktop publish-update`, no downgrades, the same code-signing identity required (on macOS: the same Team ID and a notarized build; on
 Windows: on every PE file, which the package script signs), an atomic
 bundle swap that rolls back if the new version never confirms). The manifest expires (`expiresAt`,
