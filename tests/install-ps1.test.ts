@@ -356,12 +356,21 @@ Deno.test("install.ps1: a wrong checksum installs nothing", { ignore: NOT_WINDOW
   const dir = await Deno.makeTempDir();
   const release = serveRelease("v9.9.9");
   try {
-    release.files.set(ASSET, await releaseZip(dir));
+    const zip = await releaseZip(dir);
+    release.files.set(ASSET, zip);
     release.files.set("SHA256SUMS", new TextEncoder().encode(`${"0".repeat(64)}  ${ASSET}\n`));
     const root = join(dir, "home");
     const { code, out } = await install(release, root, { DENEXT_VERSION: "v9.9.9" });
     assert(code !== 0, out);
     assertStringIncludes(out, "checksum verification FAILED");
+    // Both hashes are shown whole, each on a line of its own (never re-wrapped by the error view).
+    const shown = out.split(/\r?\n/);
+    assert(shown.includes(`  expected ${"0".repeat(64)}`), out);
+    assert(shown.includes(`  got      ${await sha256(zip)}`), out);
+    assert(
+      shown.includes(`denext: checksum verification FAILED for ${ASSET} - not installing.`),
+      out,
+    );
     assert(!(await exists(join(root, "bin", "denext.exe"))));
     assert(!release.hits.some((h) => h.endsWith("/releases/latest")), "DENEXT_VERSION skips it");
   } finally {
@@ -382,10 +391,26 @@ Deno.test("install.ps1: no checksum is fatal unless DENEXT_INSECURE=1; .sha256 i
     const refused = await install(release, root);
     assert(refused.code !== 0, refused.out);
     assertStringIncludes(refused.out, "no checksum could be fetched");
+    // The whole refusal is one line, however long (a URL to open is never broken up).
+    assert(
+      refused.out.split(/\r?\n/).includes(
+        `denext: no checksum could be fetched for ${ASSET} - not installing. Every release ` +
+          "publishes SHA256SUMS; check https://github.com/Brainwires/denext/releases/tag/v9.9.9 " +
+          "(DENEXT_INSECURE=1 installs anyway, unverified).",
+      ),
+      refused.out,
+    );
     assert(!(await exists(join(root, "bin", "denext.exe"))));
     const insecure = await install(release, root, { DENEXT_INSECURE: "1" });
     assertEquals(insecure.code, 0, insecure.out);
     assertStringIncludes(insecure.out, "UNVERIFIED");
+    assert(
+      insecure.out.split(/\r?\n/).includes(
+        `WARNING: denext: no checksum could be fetched for ${ASSET}; installing UNVERIFIED ` +
+          "because DENEXT_INSECURE=1 is set.",
+      ),
+      insecure.out,
+    );
     await Deno.remove(root, { recursive: true });
     release.files.set(
       `${ASSET}.sha256`,
