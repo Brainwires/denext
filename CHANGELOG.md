@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Fixed
 
+- **A detached sidecar survives a failed read of its registry record.** It ended itself on any
+  error reading the record; now only a record that is gone, malformed or names another start ends
+  it, and a read that fails otherwise (a scanner holding the file, no free descriptors) is retried
+  at the next check.
+
 - **Local IPC on a Windows pipe refuses an oversized frame.** A frame header naming more than the
   1 MiB frame limit now errors the connection's read and closes it, instead of buffering until
   that many bytes arrive.

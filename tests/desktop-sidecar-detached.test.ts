@@ -1975,6 +1975,34 @@ Deno.test("runDetachedSidecarChild: a record another start replaced ends it at t
   }
 });
 
+Deno.test("runDetachedSidecarChild: a record that cannot be read just now does not end it", async () => {
+  const dir = await tempDir("child-unreadable");
+  try {
+    const { exits, key, control, recordDir, recordPath } = await startDetachedChild({
+      dir,
+      init: { recordPollMs: 30 },
+    });
+    const s = await connectDetachedControl({ port: control.port, key, name: "d" });
+    assert(s);
+    // The read fails with something other than NotFound (here: a folder in its place, as a
+    // scanner holding the file or no free descriptors would): checked again, never an end.
+    await Deno.remove(recordPath);
+    await Deno.mkdir(recordPath);
+    await sleep(300);
+    assertEquals(exits, []);
+    assert(s.open);
+    // Readable again, naming another start: it ends at the next check.
+    await Deno.remove(recordPath);
+    await writeDetachedRecord(recordDir, record("d", 1, newDetachedKey()));
+    const end = await s.closed;
+    assertEquals(end.bye?.reason, "its registry record is gone or was replaced");
+    assert(await waitFor(() => exits.length === 2, 2000));
+  } finally {
+    clearDetachedChildGlobal();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("runDetachedSidecarChild: a missing record ends it once the last app detaches", async () => {
   const dir = await tempDir("child-missing");
   try {

@@ -14,7 +14,7 @@
  *    `detached: { attached, onAttachedChange(fn) }`, and `childCommand` / `spawnSelf`).
  *
  * Then it keeps the orphan policy: it ends itself gracefully when its registry record is gone,
- * unreadable or holds another key (re-read every 30 s and whenever an app detaches: the app was
+ * malformed or holds another key (a read that fails otherwise is retried at the next check) (re-read every 30 s and whenever an app detaches: the app was
  * uninstalled, its data reset, or another start replaced it), when no app attached within 30 s of
  * the start, and (`detached.exitAfterMs`) once no app has been attached for that long. It is never
  * restarted on its own; the OS ends it at logout.
@@ -212,13 +212,19 @@ function startLogRotation(init: DetachedChildInit): ReturnType<typeof setInterva
   return timer;
 }
 
-/** Whether the record at `path` still holds `key`. */
-async function recordHolds(path: string, key: string): Promise<boolean> {
+/**
+ * Whether the record at `path` still holds `key`: `false` only when it is gone or names another
+ * start (or what is there is no record), `undefined` when it could not be read just now (a
+ * scanner holding the file, no descriptors left): the next check reads it again.
+ */
+async function recordHolds(path: string, key: string): Promise<boolean | undefined> {
+  let text: string;
   try {
-    return parseDetachedRecord(await Deno.readTextFile(path))?.key === key;
-  } catch {
-    return false;
+    text = await Deno.readTextFile(path);
+  } catch (err) {
+    return err instanceof Deno.errors.NotFound ? false : undefined;
   }
+  return parseDetachedRecord(text)?.key === key;
 }
 
 /**
@@ -272,7 +278,7 @@ export async function runDetachedSidecarChild(options: RunDetachedChildOptions):
 
   const checkRecord = async (): Promise<void> => {
     if (ending) return;
-    if (!(await recordHolds(init.recordPath, init.key))) {
+    if ((await recordHolds(init.recordPath, init.key)) === false) {
       void shutdown(graceMs, "its registry record is gone or was replaced");
     }
   };
