@@ -10,6 +10,24 @@ and this project adheres to
 
 ### Fixed
 
+- **A stalled denext.dev no longer fails a runtime install from the mirror.** `denext runtime
+  install | use | upgrade` and a project pin give each host its own budget for the release
+  document, so the GitHub mirror is still tried in full.
+- **A project runtime pin that can't be fetched says why.** The error names the cause (offline, a
+  copy that doesn't match the pin's integrity, a refused document) and points at retrying or
+  `denext runtime use <version> --project`, instead of `denext runtime install`, which fails the
+  same way.
+- **A new runtime line in the channel no longer hides the whole channel.** Entries on a version
+  line this denext doesn't know are skipped; the rest of the signed index is still used.
+- **`denext start` and `denext job` no longer reach the network for the "newer runtime available"
+  notice**, and a read-only cache no longer repeats the notice and its channel fetch on every
+  command.
+- **`denext runtime use | upgrade --project` writes `deno.json` atomically** (temp file and
+  rename).
+- **`denext upgrade` warns when the project's runtime pin won't run on the new denext**, using the
+  cached channel entry, and names the `denext runtime use <version> --project` fix (`runtimePin`
+  in `--json`).
+
 - **`denext export` fails when copying `public/` fails.** Every error copying it read as "no
   `public/`", so a full disk or an unreadable file left an export without its public files and no
   error; only a missing `public/` is skipped now.
