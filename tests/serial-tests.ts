@@ -111,6 +111,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/remix-load-context.test.ts",
   // Points DENEXT_TOOLCHAIN_PIN_FILE / DENEXT_RUNTIME_DEFAULT_FILE at missing files and stubs fetch.
   "tests/runtime-prune.test.ts",
+  "tests/runtime-select.test.ts",
   "tests/scaffold-monorepo.test.ts",
   "tests/security-remediation.test.ts",
   "tests/server-misc-coverage.test.ts",
