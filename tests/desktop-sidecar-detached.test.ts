@@ -1639,6 +1639,7 @@ async function startDetachedChild(opts: {
   dir: string;
   init?: Record<string, unknown>;
   firstAttachMs?: number;
+  armFirstAttach?: (fire: () => void, ms: number) => ReturnType<typeof setTimeout>;
   writeRecord?: boolean;
   entry?: string;
 }) {
@@ -1656,6 +1657,7 @@ async function startDetachedChild(opts: {
     process: proc,
     exit: (code) => exits.push(code),
     firstAttachMs: opts.firstAttachMs ?? 10_000,
+    ...(opts.armFirstAttach ? { armFirstAttach: opts.armFirstAttach } : {}),
   });
   proc.emit("message", { t: "status" }); // not the init: ignored
   proc.emit("message", {
@@ -1854,14 +1856,22 @@ Deno.test("runDetachedSidecarChild: no app attaching after the start ends it", a
   const dir = await tempDir("child-first");
   try {
     const order: string[] = [];
-    const started = Date.now();
-    // The first-attach deadline starts before the child imports its module, and the handler can
-    // only be added once that import is done: on a slow runner an 80 ms deadline fired first
-    // (macOS desktop-ci, run 45172423781), so the deadline leaves the import ample room.
-    const { exits, sidecar } = await startDetachedChild({ dir, firstAttachMs: 1500 });
+    // The deadline is armed (with its budget) before the module is imported; the test fires it
+    // once the module's shutdown handler is in place, so no wall clock decides the order.
+    const armed: Array<{ fire: () => void; ms: number }> = [];
+    const { exits, sidecar } = await startDetachedChild({
+      dir,
+      firstAttachMs: 80,
+      armFirstAttach: (fire, ms) => {
+        armed.push({ fire, ms });
+        return setTimeout(() => {}, 0);
+      },
+    });
+    assertEquals(armed.map((a) => a.ms), [80]);
     sidecar.onShutdown(() => void order.push("handler"));
+    assertEquals(exits, [], "nothing ends it before its deadline");
+    armed[0].fire();
     assert(await waitFor(() => exits.length >= 1, 5000));
-    assert(Date.now() - started >= 1400);
     assertEquals(exits[0], 0);
     assertEquals(order, ["handler"]);
     assert(await waitFor(() => exits.length === 2, 2000));

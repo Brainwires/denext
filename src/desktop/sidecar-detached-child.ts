@@ -95,6 +95,11 @@ export interface RunDetachedChildOptions {
   readonly initTimeoutMs?: number;
   /** How long to wait for the first attachment (default 30 000 ms). */
   readonly firstAttachMs?: number;
+  /**
+   * Arms the first-attach deadline: calls `fire` after `ms` (default `setTimeout`). Tests pass
+   * their own to fire it at a moment they choose.
+   */
+  readonly armFirstAttach?: (fire: () => void, ms: number) => ReturnType<typeof setTimeout>;
 }
 
 /**
@@ -190,6 +195,23 @@ export async function rotateDetachedLog(path: string, rotateBytes: number): Prom
   }
 }
 
+/**
+ * Keep the log's size bound for as long as the process runs (days, across reattaches), as an
+ * ordinary sidecar's in-app log sink does on every write: a check every `logCheckMs`, on a timer
+ * that never keeps the process alive. None without a log file.
+ */
+function startLogRotation(init: DetachedChildInit): ReturnType<typeof setInterval> | undefined {
+  const logFile = init.logFile;
+  if (logFile === undefined) return undefined;
+  const rotateBytes = init.logRotateBytes ?? LOG_ROTATE_BYTES;
+  const timer = setInterval(
+    () => void rotateDetachedLog(logFile, rotateBytes),
+    init.logCheckMs ?? 10_000,
+  );
+  Deno.unrefTimer(timer as unknown as number);
+  return timer;
+}
+
 /** Whether the record at `path` still holds `key`. */
 async function recordHolds(path: string, key: string): Promise<boolean> {
   try {
@@ -226,7 +248,7 @@ export async function runDetachedSidecarChild(options: RunDetachedChildOptions):
   let ending = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let pollTimer: ReturnType<typeof setInterval> | undefined;
-  let logTimer: ReturnType<typeof setInterval> | undefined;
+  const logTimer = startLogRotation(init);
   /** Armed once the endpoint serves: no app attaching within the budget ends the process. */
   const firstAttach: { timer?: ReturnType<typeof setTimeout> } = {};
 
@@ -309,19 +331,7 @@ export async function runDetachedSidecarChild(options: RunDetachedChildOptions):
     onShutdown: (grace) => void shutdown(grace, "the app asked it to stop"),
     onAttachedChange,
   });
-  // The log keeps its size bound for as long as the process runs (days, across reattaches), as
-  // an ordinary sidecar's in-app log sink does on every write.
-  if (init.logFile !== undefined) {
-    const logFile = init.logFile;
-    const rotateBytes = init.logRotateBytes ?? LOG_ROTATE_BYTES;
-    logTimer = setInterval(
-      () => void rotateDetachedLog(logFile, rotateBytes),
-      init.logCheckMs ?? 10_000,
-    );
-    // Never what keeps the process alive.
-    Deno.unrefTimer(logTimer as unknown as number);
-  }
-  firstAttach.timer = setTimeout(
+  firstAttach.timer = (options.armFirstAttach ?? setTimeout)(
     () => void shutdown(graceMs, "no app attached after the start"),
     options.firstAttachMs ?? 30_000,
   );
