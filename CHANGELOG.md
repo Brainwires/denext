@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext runtime prune` says it prunes for one project.** It keeps what the project in the
+  current folder (and this machine's runtime selection) uses, and now says so, naming
+  `denext --cwd <folder> runtime prune` for another project; `--json` carries the `project`.
+
 - **A static file under a symlinked folder no longer lists that folder on every request.** The
   check that a file is named exactly as requested now reads each non-symlink component's own
   stored name, so a request below `public/uploads` (a link to a folder of many files) no longer
