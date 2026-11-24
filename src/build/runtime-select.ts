@@ -358,13 +358,13 @@ export async function fetchLockedReleaseDocument(
   lock: RuntimeLock,
   options: FetchLockedOptions,
 ): Promise<RuntimeReleaseDocument> {
-  const signal = AbortSignal.timeout(options.budgetMs ?? 10_000);
   const problems: string[] = [];
   for (const url of releaseDocumentUrls(lock.version, options.bases)) {
     try {
       const text = await fetchTextCapped(
         url,
-        signal,
+        // Each base its own budget: a stalled first base never leaves the mirror pre-aborted.
+        AbortSignal.timeout(options.budgetMs ?? 10_000),
         options.fetch ?? fetch,
         RELEASE_DOCUMENT_MAX_BYTES,
       );

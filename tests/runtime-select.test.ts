@@ -252,6 +252,33 @@ Deno.test("fetchLockedReleaseDocument: the first base whose copy hashes to the l
   });
 });
 
+Deno.test("fetchLockedReleaseDocument: a stalled first base leaves the mirror its own budget", async () => {
+  await withDirs(async (root) => {
+    const { text, lock } = await locked(docFor(NEWER));
+    const BODY = text;
+    const seen: Array<[string, boolean]> = [];
+    // denext.dev stalls until its budget aborts it; the mirror answers at once, with a budget
+    // of its own (a shared deadline would have started it already aborted).
+    const stalled = ((input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      seen.push([url, init?.signal?.aborted ?? false]);
+      if (url.startsWith(CHANNEL_BASES[0])) {
+        return new Promise<Response>((_, reject) =>
+          init?.signal?.addEventListener("abort", () => reject(init.signal!.reason))
+        );
+      }
+      return Promise.resolve(new Response(BODY));
+    }) as typeof fetch;
+    const doc = await fetchLockedReleaseDocument(lock, {
+      cacheRoot: root,
+      fetch: stalled,
+      budgetMs: 50,
+    });
+    assertEquals(doc.toolchain.version, NEWER);
+    assertEquals(seen.map(([, aborted]) => aborted), [false, false]);
+  });
+});
+
 // ---------------------------------------------------------------------------------------------
 // Compatibility.
 

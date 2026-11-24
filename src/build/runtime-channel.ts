@@ -1017,13 +1017,13 @@ export async function loadReleaseDocument(
     if (doc) return doc;
   }
   if (options.offline) throw badDocument(`${entry.version} is not cached (offline)`);
-  const signal = AbortSignal.timeout(options.budgetMs ?? FORCE_BUDGET_MS);
   const problems: string[] = [];
   for (const url of releaseDocumentUrls(entry.version, options.bases)) {
     try {
       const text = await fetchTextCapped(
         url,
-        signal,
+        // Each base its own budget: a stalled first base never leaves the mirror pre-aborted.
+        AbortSignal.timeout(options.budgetMs ?? FORCE_BUDGET_MS),
         options.fetch ?? fetch,
         RELEASE_DOCUMENT_MAX_BYTES,
       );

@@ -796,6 +796,29 @@ Deno.test("channelKeys: the compiled-in keys unless a test opts in to the keys f
   });
 });
 
+Deno.test("loadReleaseDocument: a stalled first base leaves the mirror its own budget", async () => {
+  const { entry: e, text } = await releaseEntryFor(bundledDocument(), META);
+  const BODY = text;
+  await withCache(async (root) => {
+    const seen: Array<[string, boolean]> = [];
+    // denext.dev stalls until its budget aborts it; the mirror answers at once, with a budget
+    // of its own (a shared deadline would have started it already aborted).
+    const stalled = ((input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      seen.push([url, init?.signal?.aborted ?? false]);
+      if (url.startsWith(CHANNEL_BASES[0])) {
+        return new Promise<Response>((_, reject) =>
+          init?.signal?.addEventListener("abort", () => reject(init.signal!.reason))
+        );
+      }
+      return Promise.resolve(new Response(BODY));
+    }) as typeof fetch;
+    const got = await loadReleaseDocument(e, { cacheRoot: root, fetch: stalled, budgetMs: 50 });
+    assertEquals(got.toolchain.version, e.version);
+    assertEquals(seen.map(([, aborted]) => aborted), [false, false]);
+  });
+});
+
 Deno.test("loadReleaseDocument: the first copy that hashes right, cached; a tampered or missing one is skipped", async () => {
   const doc = bundledDocument();
   const { entry: e, text } = await releaseEntryFor(doc, META);
