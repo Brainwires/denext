@@ -45986,12 +45986,12 @@
           "params": [
             {
               "name": "name",
-              "doc": "The library's name: an entry's name, else its file name without lib and the extension (librullama_audio_ffi.dylib → rullama_audio_ffi)."
+              "doc": "The library's name: an entry's name, else its file name without lib and the extension (libaudio_ffi.dylib → audio_ffi)."
             }
           ],
           "returns": "The absolute path, or null.",
           "examples": [
-            "```ts\nimport { bundledLibraryPath } from \"denext/desktop\";\nconst path = bundledLibraryPath(\"rullama_audio_ffi\");\nconst lib = path ? Deno.dlopen(path, { level: { parameters: [], result: \"f32\" } }) : null;\n```"
+            "```ts\nimport { bundledLibraryPath } from \"denext/desktop\";\nconst path = bundledLibraryPath(\"audio_ffi\");\nconst lib = path ? Deno.dlopen(path, { level: { parameters: [], result: \"f32\" } }) : null;\n```"
           ],
           "denextOnly": true
         },
@@ -57656,7 +57656,7 @@
               "kind": "property",
               "name": "reason",
               "signature": "readonly reason?: string",
-              "doc": "With `cancelled`: `\"cancelled\"` ({@linkcode DragSession.cancel}), `\"timeout\"` (ten minutes),\n`\"unavailable\"` (the OS stopped telling the pointer)."
+              "doc": "With `cancelled`: `\"cancelled\"` ({@linkcode DragSession.cancel}), `\"closed\"` (the window the\ndrag started in closed), `\"timeout\"` (ten minutes), `\"unavailable\"` (the OS stopped telling the\npointer)."
             }
           ]
         },

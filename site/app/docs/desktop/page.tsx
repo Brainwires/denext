@@ -3367,7 +3367,9 @@ tab.addEventListener("pointerdown", async () => {
 
 // Every window (the origin too: a drop on itself is a drop):
 onDragSession((e) => {
-  if (e.type === "enter" || e.type === "over") showDropMarker(e.clientX, e.clientY);
+  if ((e.type === "enter" || e.type === "over") && e.clientX !== undefined) {
+    showDropMarker(e.clientX, e.clientY!);
+  }
   if (e.type === "leave") hideDropMarker();
   if (e.type === "drop") adoptTab((e.data as { tab: string }).tab, e.clientX, e.clientY);
 });`}
@@ -4781,9 +4783,10 @@ await bounce({ critical: true }); // until the app is focused`}
           gets them, so a Dock menu can offer them:
           <Code lang="ts">
             {`// desktop.ts
-const app = await runDesktop({
+type OpenOptions = Parameters<typeof app.windows.open>[0];
+const app: Awaited<ReturnType<typeof runDesktop>> = await runDesktop({
   dockMenu: [{ id: "new-window", label: "New Window" }],
-  onDockMenuItem: (id) => {
+  onDockMenuItem: (id: string) => {
     if (id === "new-window") return void open({ url: "/", key: crypto.randomUUID() });
     const closed = app.windows.closed().find((c) => \`reopen:\${c.key}\` === id);
     if (closed) open({ url: closed.url, key: closed.key });
@@ -4796,7 +4799,7 @@ const refreshDock = () =>
     { label: "Reopen", submenu: app.windows.closed().map((c) =>
       ({ id: \`reopen:\${c.key}\`, label: c.title ?? c.key })) },
   ]);
-const open = (options) => app.windows.open(options).onClosed(refreshDock);`}
+const open = (options: OpenOptions) => app.windows.open(options).onClosed(refreshDock);`}
           </Code>
         </li>
         <li id="desktop-menu-read-back">
@@ -5736,7 +5739,7 @@ desktop: {
     libraries: [
       // {os} darwin | linux | windows, {arch} arm64 | x64, {ext} dylib | so | dll,
       // {target} the Rust triple (aarch64-apple-darwin, x86_64-unknown-linux-gnu, …)
-      "native/{target}/librullama_audio_ffi.{ext}", // name: "rullama_audio_ffi"
+      "native/{target}/libaudio_ffi.{ext}", // name: "audio_ffi"
       { path: "native/{os}-{arch}/libvad.{ext}", optional: true }, // skipped where missing
       // an explicit per-target map: a target with no entry ships without it
       { name: "audio", files: { "darwin-arm64": "native/mac/libaudio.dylib", "linux-x64": "native/linux/libaudio.so" } },
@@ -5747,7 +5750,7 @@ desktop: {
 
 // desktop.ts, or an extension module: the backend, never the page
 import { bundledLibraryPath } from "denext/desktop";
-const path = bundledLibraryPath("rullama_audio_ffi");
+const path = bundledLibraryPath("audio_ffi");
 const audio = path ? Deno.dlopen(path, { level: { parameters: [], result: "f32" } }) : null;`}
       </Code>
       <ul>
@@ -6337,7 +6340,11 @@ sc.ready();`}
           <code>listenLocalIpc</code>
         </a>{" "}
         instead of a loopback port: a Unix-domain socket or a named pipe that only the app&apos;s
-        user can reach on macOS and Linux, found again by name with <code>localIpcPath</code>.
+        user can reach on macOS and Linux, found again by name with{" "}
+        <code>localIpcPath</code>. The sidecar&apos;s process has no app identifier registered, so
+        it passes <code>appId</code> (the app&apos;s <code>desktop.app.identifier</code>, which{" "}
+        <code>localIpcPath</code> otherwise throws without) or, on macOS and Linux,{" "}
+        <code>dir</code>.
       </p>
       <h3 id="desktop-sidecars-login-shell">The user&apos;s login-shell environment</h3>
       <p>
@@ -6499,6 +6506,15 @@ for await (const chunk of conn.readable) console.log(chunk);`}
           <code>readable</code>, <code>writable</code> (closing it half-closes),{" "}
           <code>close()</code> (both directions at once) and <code>Symbol.asyncDispose</code>.
         </li>
+        <li>
+          <strong>On Windows both ends must be denext&apos;s.</strong>{" "}
+          A named pipe has no half-close, so on a pipe each write travels as frames: a 4-byte
+          little-endian length, then the bytes (at most 1 MiB a frame; a longer write is split), and
+          a zero-length frame means &quot;this side writes no more&quot;. A pipe channel therefore
+          talks only to another <code>listenLocalIpc</code> /{" "}
+          <code>connectLocalIpc</code>, or to a program that speaks the same framing. On macOS and
+          Linux the socket carries the bytes as written, so a client in any language can connect.
+        </li>
       </ul>
       <h4 id="desktop-local-ipc-permissions">Permissions</h4>
       <p>
@@ -6508,14 +6524,11 @@ for await (const chunk of conn.readable) console.log(chunk);`}
         <code>--allow-net-listen</code> / <code>--allow-net-connect</code>{" "}
         with the split flags), on Windows as on Unix. A refused check rejects with{" "}
         <code>NotCapable</code> naming the grants for that path. A <code>unix:</code>{" "}
-        grant names one exact path, and the runtime expands no folder token (<code>$APPDATA</code>,
-        {" "}
-        <code>$DENO_DESKTOP_DATA</code>) in a network grant, so a packaged app cannot bake the
-        per-user path: <code>desktop.extraPermissions.net</code> / <code>netListen</code> /{" "}
-        <code>netConnect</code> accept a <code>unix:</code>{" "}
-        entry only with an absolute path (anything else is a config error, since the runtime would
-        refuse to start). An app that serves a channel in its data folder grants the folder and the
-        direction:
+        grant names one exact path, and <code>desktop.extraPermissions.net</code> /{" "}
+        <code>netListen</code> / <code>netConnect</code> accept a <code>unix:</code>{" "}
+        entry only with an absolute path (anything else is a config error), so the per-user path of
+        a packaged app isn&apos;t baked there. An app that serves a channel in its data folder
+        grants the folder and the direction:
       </p>
       <Code lang="ts">
         {`desktop: {
@@ -6540,17 +6553,14 @@ for await (const chunk of conn.readable) console.log(chunk);`}
           users cannot connect; any process of the same user can.
         </li>
         <li>
-          Windows: the runtime creates the pipe&apos;s first instance with{" "}
+          Windows: the runtime creates every instance of the pipe with a security descriptor that
+          gives access to the creating user and LocalSystem only (no other account can open it or
+          add an instance), the first one with{" "}
           <code>FILE_FLAG_FIRST_PIPE_INSTANCE</code>, so a server never joins a pipe another process
           created (it fails with <code>AddrInUse</code>), and with{" "}
-          <code>PIPE_REJECT_REMOTE_CLIENTS</code>{" "}
-          (tokio&apos;s default, which the runtime keeps), so a client on another machine is
-          refused. The pipe is created with no security attributes, which gives it Windows&apos;
-          default security descriptor: full control for LocalSystem, Administrators and the creating
-          user, and read access for Everyone and the anonymous account. So another local user can
-          open the pipe for reading and receive what the server writes on that connection, and the
-          pipe namespace is machine-wide: a process (of any user) that creates the name first makes
-          the app&apos;s <code>listenLocalIpc</code>{" "}
+          <code>PIPE_REJECT_REMOTE_CLIENTS</code>, so a client on another machine is refused. The
+          pipe namespace is still machine-wide: a process (of any user) that creates the name first
+          makes the app&apos;s <code>listenLocalIpc</code>{" "}
           fail, and the app&apos;s clients then connect to that process instead.
         </li>
         <li>

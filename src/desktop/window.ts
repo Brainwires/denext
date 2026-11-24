@@ -1692,8 +1692,9 @@ export interface DragSessionEnd {
   /** It was cancelled: no window got a `drop`. */
   readonly cancelled: boolean;
   /**
-   * With `cancelled`: `"cancelled"` ({@linkcode DragSession.cancel}), `"timeout"` (ten minutes),
-   * `"unavailable"` (the OS stopped telling the pointer).
+   * With `cancelled`: `"cancelled"` ({@linkcode DragSession.cancel}), `"closed"` (the window the
+   * drag started in closed), `"timeout"` (ten minutes), `"unavailable"` (the OS stopped telling the
+   * pointer).
    */
   readonly reason?: string;
 }
