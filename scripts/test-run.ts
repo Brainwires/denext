@@ -391,10 +391,22 @@ export function tempRootEnv(root: string): Record<string, string> {
 }
 
 /**
+ * The variables that keep a test off the live runtime channel and revoked-runtimes list
+ * (src/build/runtime-channel.ts, runtime-revocations.ts): neither is read, fetched or trusted, so
+ * no test's outcome changes when the published documents (or this machine's cached copies) do.
+ * Tests of those checks inject their own keys, documents and environment.
+ */
+export const HERMETIC_ENV: Readonly<Record<string, string>> = {
+  DENEXT_REVOCATION_CHECK: "0",
+  DENEXT_RUNTIME_CHANNEL: "0",
+};
+
+/**
  * The environment every test pass runs with: the temp dir at `root`
- * ({@linkcode tempRootEnv}), and the runtime user default (`DENEXT_RUNTIME_DEFAULT_FILE`,
+ * ({@linkcode tempRootEnv}), the runtime user default (`DENEXT_RUNTIME_DEFAULT_FILE`,
  * src/build/runtime-select.ts) at a file under `root` that never exists — so no test, and no CLI
- * child a test starts, runs on the developer's own `denext runtime use | upgrade` choice.
+ * child a test starts, runs on the developer's own `denext runtime use | upgrade` choice — and
+ * {@linkcode HERMETIC_ENV}.
  *
  * @param root The run's temp root.
  * @returns The variables.
@@ -403,6 +415,7 @@ export function passEnv(root: string): Record<string, string> {
   return {
     ...tempRootEnv(root),
     DENEXT_RUNTIME_DEFAULT_FILE: join(root, "no-runtime-default.json"),
+    ...HERMETIC_ENV,
   };
 }
 

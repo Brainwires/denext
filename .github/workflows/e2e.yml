@@ -20,6 +20,13 @@ on:
 permissions:
   contents: read
 
+# No test reaches the live runtime channel or revoked-runtimes list: their answers change without
+# a code change. Tests that exercise them inject their own fixtures (scripts/test-run.ts sets the
+# same for every pass it runs; tests/hermetic-env.test.ts checks both).
+env:
+  DENEXT_REVOCATION_CHECK: "0"
+  DENEXT_RUNTIME_CHANNEL: "0"
+
 jobs:
   # Picks every job's runner (Brainwires/.github's pick-runners action): our self-hosted pools are the
   # first choice, never a bottleneck. In the order of `jobs`, a job takes our pool while it has a free
