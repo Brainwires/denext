@@ -25,6 +25,8 @@ import {
   localIpcPath,
   localIpcPermissionError,
   localIpcUserToken,
+  type PipeIdentityLookup,
+  pipeServerRefusal,
   registerLocalIpcAppId,
 } from "../src/desktop/local-ipc.ts";
 import { osDataDir } from "../src/desktop/app-dirs.ts";
@@ -750,6 +752,75 @@ Deno.test("local IPC: a pipe frame claiming more than the frame limit errors the
       await peerClosed.promise; // the connection was closed
     } finally {
       peer?.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  } finally {
+    await ch.cleanup();
+  }
+});
+
+Deno.test("pipeServerRefusal: only a pipe this user's process serves is taken", () => {
+  const path = "\\\\.\\pipe\\dev.denext.app.u.chan";
+  const me = "S-1-5-21-1-2-3-1001";
+  assertEquals(pipeServerRefusal({ userSid: me, pid: 7 }, me, path), null);
+  assertEquals(pipeServerRefusal({ userSid: me.toLowerCase() }, me, path), null);
+  assertMatch(
+    pipeServerRefusal({ userSid: "S-1-5-21-1-2-3-1002", pid: 9 }, me, path) ?? "",
+    /served by another user \(S-1-5-21-1-2-3-1002, process 9\)/,
+  );
+  assertMatch(pipeServerRefusal(null, me, path) ?? "", /could not verify who serves/);
+  assertMatch(pipeServerRefusal({ userSid: me }, null, path) ?? "", /could not verify/);
+});
+
+// The client's check of a pipe's server, driven on every OS: the connection is made for a pipe
+// path over this OS's real channel, with who serves it answered by an injected lookup (the runtime
+// exposes no pipe server identity yet).
+Deno.test("local IPC: a pipe served by another user (or one nobody can vouch for) is refused", async () => {
+  const ch = await channel();
+  try {
+    const peers: net.Socket[] = [];
+    const server = net.createServer({ allowHalfOpen: true }, (s) => {
+      peers.push(s);
+      s.on("error", () => {});
+      s.on("data", () => {});
+    });
+    await new Promise<void>((resolve) => server.listen(ch.path, () => resolve()));
+    const pipe = "\\\\.\\pipe\\dev.denext.squat.u.t";
+    const open = () => net.connect({ path: ch.path, allowHalfOpen: true });
+    const lookup = (sid: string | null, ownSid = "S-1-5-21-9-9-9-1001"): PipeIdentityLookup => ({
+      server: () => Promise.resolve(sid === null ? null : { userSid: sid, pid: 4242 }),
+      currentUserSid: () => Promise.resolve(ownSid),
+    });
+    try {
+      // Another user's process created the name first: refused, the connection closed.
+      const other = await assertRejects(
+        () => connectLocalIpcWith(open, pipe, {}, lookup("S-1-5-21-9-9-9-1002")),
+        Deno.errors.PermissionDenied,
+      );
+      assertMatch(other.message, /served by another user/);
+      // A lookup that cannot tell: refused too.
+      await assertRejects(
+        () => connectLocalIpcWith(open, pipe, {}, lookup(null)),
+        Deno.errors.PermissionDenied,
+        "could not verify",
+      );
+      // A failing lookup: refused, never an unhandled error.
+      const failing: PipeIdentityLookup = {
+        server: () => Promise.reject(new Error("token unreadable")),
+        currentUserSid: () => Promise.resolve("S-1-5-21-9-9-9-1001"),
+      };
+      await assertRejects(
+        () => connectLocalIpcWith(open, pipe, {}, failing),
+        Deno.errors.PermissionDenied,
+      );
+      // This user's own server: connected.
+      const conn = await connectLocalIpcWith(open, pipe, {}, lookup("S-1-5-21-9-9-9-1001"));
+      conn.close();
+      // A Unix socket path is never asked (its folder's ownership guards it).
+      const unix = await connectLocalIpcWith(open, ch.path, {}, lookup("S-1-5-21-9-9-9-1002"));
+      unix.close();
+    } finally {
+      for (const p of peers) p.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   } finally {

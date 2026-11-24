@@ -726,6 +726,79 @@ export async function listenLocalIpc(
   return { path, close, [Symbol.asyncDispose]: close };
 }
 
+/** Who serves a Windows pipe connection: its server process's user, as a SID string. */
+export interface PipeServerIdentity {
+  /** The server process's token user (`S-1-5-21-…`). */
+  readonly userSid: string;
+  /** The server process's id (`GetNamedPipeServerProcessId`), when known. */
+  readonly pid?: number;
+}
+
+/**
+ * How the client learns who serves a Windows pipe (`GetNamedPipeServerProcessId`, then the
+ * process token's user) and who it is itself. A lookup that answers `null` could not tell: the
+ * connection is refused rather than trusted.
+ */
+export interface PipeIdentityLookup {
+  /** The server at the other end of the connected `socket`. */
+  server(socket: net.Socket): Promise<PipeServerIdentity | null>;
+  /** This process's user SID. */
+  currentUserSid(): Promise<string | null>;
+}
+
+/**
+ * The runtime's {@linkcode PipeIdentityLookup}, or `undefined` where the runtime has none. denext's
+ * Deno runtime does not yet expose a pipe connection's server process or a token's user to
+ * script (it would be an op over the connected pipe's handle: `GetNamedPipeServerProcessId`,
+ * `OpenProcess` + `OpenProcessToken` + `GetTokenInformation(TokenUser)`, and the current
+ * process token's user), so a Windows client cannot yet check its server: same-machine users
+ * are trusted there (see the server side, which claims the name as its first instance).
+ *
+ * @returns The lookup, or `undefined`.
+ */
+function runtimePipeIdentity(): PipeIdentityLookup | undefined {
+  return undefined;
+}
+
+/**
+ * Why a pipe connection's server is not taken, or `null` when it is this user's.
+ *
+ * @param server Who serves it (`null`: the lookup could not tell).
+ * @param ownSid This process's user SID (`null`: unknown).
+ * @param path The pipe path, for the message.
+ * @returns The refusal's message, or `null`.
+ */
+export function pipeServerRefusal(
+  server: PipeServerIdentity | null,
+  ownSid: string | null,
+  path: string,
+): string | null {
+  if (server === null || ownSid === null) {
+    return `local IPC: could not verify who serves ${path}; refusing it`;
+  }
+  if (server.userSid.toUpperCase() === ownSid.toUpperCase()) return null;
+  return `local IPC: ${path} is served by another user (${server.userSid}${
+    server.pid !== undefined ? `, process ${server.pid}` : ""
+  }), not this one; refusing it`;
+}
+
+/** The connected pipe's server checked: `undefined` when it is this user's, else the error. */
+async function pipeServerCheck(
+  socket: net.Socket,
+  identity: PipeIdentityLookup,
+  path: string,
+): Promise<Error | undefined> {
+  let server: PipeServerIdentity | null = null;
+  let own: string | null = null;
+  try {
+    [server, own] = await Promise.all([identity.server(socket), identity.currentUserSid()]);
+  } catch {
+    // An answer the lookup could not give is treated as no answer: refused below.
+  }
+  const refusal = pipeServerRefusal(server, own, path);
+  return refusal === null ? undefined : new Deno.errors.PermissionDenied(refusal);
+}
+
 /**
  * Connect to the local IPC channel at `path` (from {@linkcode localIpcPath}).
  *
@@ -749,12 +822,15 @@ export function connectLocalIpc(
  * @param open Makes the connecting socket for a path.
  * @param path The socket or pipe path.
  * @param options A timeout (default 5000 ms) and an `AbortSignal`.
+ * @param identity Who serves a Windows pipe and who this process is
+ *   ({@linkcode PipeIdentityLookup}; default the runtime's, where it has one).
  * @returns The connection.
  */
 export function connectLocalIpcWith(
   open: (path: string) => net.Socket,
   path: string,
   options: LocalIpcConnectOptions = {},
+  identity: PipeIdentityLookup | undefined = runtimePipeIdentity(),
 ): Promise<LocalIpcConnection> {
   const { signal, timeoutMs = 5000 } = options;
   if (signal?.aborted) return Promise.reject(signal.reason);
@@ -766,7 +842,10 @@ export function connectLocalIpcWith(
       reject(mapError(err, path, "connect"));
       return;
     }
+    let settled = false;
     const settle = (err: unknown | undefined) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
       socket.off("error", onError);
@@ -779,7 +858,12 @@ export function connectLocalIpcWith(
         reject(err);
       }
     };
-    const onConnect = () => settle(undefined);
+    const onConnect = () => {
+      // A Windows pipe name is predictable: another local user who created it first would serve
+      // this connection. Where the runtime says who serves it, only this user's server is taken.
+      if (!isLocalIpcPipePath(path) || !identity) return settle(undefined);
+      void pipeServerCheck(socket, identity, path).then(settle, settle);
+    };
     const onError = (err: unknown) => settle(mapError(err, path, "connect"));
     const onAbort = () => settle(signal?.reason);
     const timer = setTimeout(

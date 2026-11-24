@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Fixed
 
+- **A local IPC client on Windows can check who serves its pipe.** A pipe connection now goes
+  through a server-identity check that refuses a server run by another user, or one whose user
+  can't be read. The runtime doesn't yet tell script who serves a pipe, so on Windows the check is
+  off by default and same-machine users stay trusted (the server already claims its pipe name as
+  the first instance).
+
 - **Two local IPC servers starting at once on one Unix socket can no longer orphan each other.**
   The stale-socket check and the bind were not atomic, so the second could remove the first's new
   socket. A server now holds an OS lock beside its socket (`<path>.lock`) for as long as it serves;
