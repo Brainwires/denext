@@ -339,6 +339,16 @@ Deno.test("checkRuntimeChannel: the payload's fields, and one entry per version"
   assertThrows(() => checkRuntimeChannel({ ...base, releases: {} }), RuntimeChannelError, "list");
   const twice = { ...base, releases: [entry("3.0.0-denext.27"), entry("3.0.0-denext.27")] };
   assertThrows(() => checkRuntimeChannel(twice), RuntimeChannelError, "listed twice");
+  // An entry on a version line this denext does not know (a later one) is left out; the index and
+  // its other entries still stand. A malformed entry on its own line still refuses the index.
+  const later = { ...entry("3.0.0-denext.27"), version: "4.0.0-denext.1", tag: "x" };
+  const mixed = checkRuntimeChannel({ ...base, releases: [later, entry("3.0.0-denext.27")] });
+  assertEquals(mixed.releases.map((r) => r.version), ["3.0.0-denext.27"]);
+  assertThrows(
+    () => checkRuntimeChannel({ ...base, releases: [{ ...entry("3.0.0-denext.27"), deno: 1 }] }),
+    RuntimeChannelError,
+    "deno",
+  );
 });
 
 Deno.test("freshRuntimeChannel: 45 days, a sequence above the previous whatever the clock, newest first", () => {
