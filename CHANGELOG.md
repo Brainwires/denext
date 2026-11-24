@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Fixed
 
+- **A web view download no listener decides is cancelled after 5 minutes.** With `downloads:
+  "app"`, an item the `will-download` listener neither saved nor cancelled stayed pending in the
+  runtime until the view closed; it is now cancelled at the same limit as an unanswered
+  permission request.
+
 - **`denext desktop package` refuses a macOS script that never copies `desktop.bundle.libraries`.**
   A `scripts/package-macos.ts` from before the libraries shipped the app without them, and only
   `denext desktop doctor` said so; the package run now stops with the regenerate command.
