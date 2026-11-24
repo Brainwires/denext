@@ -170,6 +170,20 @@ export async function writeMetadataFiles(ctx: ExportContext): Promise<void> {
   }
 }
 
+/**
+ * A `generateImageMetadata` / `generateSitemaps` id as the one URL segment it names, or `null`
+ * when it can't be one: empty, a dot segment, or holding a path separator of either kind, a
+ * percent sign or a NUL (each would make the exported file name differ from the id, on some OS
+ * name another folder). Such an id is skipped and listed.
+ *
+ * @param id The id the app returned.
+ * @returns The segment, or `null`.
+ */
+export function metadataIdSegment(id: unknown): string | null {
+  const s = String(id);
+  return s === "" || s === "." || s === ".." || /[/\\%\0]/.test(s) ? null : s;
+}
+
 /** A generated image's `generateImageMetadata` variant URLs, else just `path`. */
 async function imageVariants(ctx: ExportContext, path: string): Promise<string[]> {
   const file = imageFileFor(ctx.manifest, path);
@@ -179,7 +193,13 @@ async function imageVariants(ctx: ExportContext, path: string): Promise<string[]
   };
   if (typeof mod.generateImageMetadata !== "function") return [path];
   const entries = await mod.generateImageMetadata({ params: {} });
-  return entries.map((e) => `${path}/${String(e.id)}`);
+  const out: string[] = [];
+  for (const e of entries) {
+    const id = metadataIdSegment(e.id);
+    if (id === null) skip(ctx, `${path}/${String(e.id)}`, "an id that is not one path segment");
+    else out.push(`${path}/${id}`);
+  }
+  return out;
 }
 
 /** `sitemap.xml`, plus one `sitemap/<id>.xml` per `generateSitemaps` shard. */
@@ -191,7 +211,12 @@ async function writeSitemap(ctx: ExportContext): Promise<void> {
       generateSitemaps?: () => Promise<Array<{ id: unknown }>> | Array<{ id: unknown }>;
     };
     if (typeof mod.generateSitemaps === "function") {
-      for (const s of await mod.generateSitemaps()) paths.push(`/sitemap/${String(s.id)}.xml`);
+      for (const s of await mod.generateSitemaps()) {
+        const id = metadataIdSegment(s.id);
+        if (id === null) {
+          skip(ctx, `/sitemap/${String(s.id)}.xml`, "an id that is not one path segment");
+        } else paths.push(`/sitemap/${id}.xml`);
+      }
     }
   }
   for (const path of paths) {
