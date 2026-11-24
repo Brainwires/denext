@@ -582,6 +582,8 @@ export interface DetachedControlServer {
   readonly port: number;
   /** The open authenticated connections. */
   attached(): number;
+  /** The connections still in their handshake (at most `maxPending`). */
+  pending(): number;
   /** The sidecar is ready: told to every attached client now and in each later `ok`. */
   setReady(): void;
   /** Tell every attached client the sidecar is ending, and wait (briefly) for the writes. */
@@ -697,6 +699,7 @@ export async function serveDetachedControl(
   return {
     port: (listener.addr as Deno.NetAddr).port,
     attached: () => authed.size,
+    pending: () => pending,
     setReady() {
       if (ready) return;
       ready = true;

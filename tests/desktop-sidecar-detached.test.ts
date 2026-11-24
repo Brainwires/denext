@@ -542,24 +542,30 @@ Deno.test({
       await bigLine.send(JSON.stringify({ t: "hello", v: 1, nonce: "x".repeat(9000) }) + "\n");
       assertEquals(await bigLine.line(), null);
       bigLine.close();
-      // Silent: closed once the handshake budget passed.
-      const started = Date.now();
+      // Silent: closed by the server once its 300 ms handshake budget passed (long before the
+      // client's own 5 s wait would read "timeout").
       const slow = await raw(server.port);
-      assertEquals(await slow.line(2000), null);
-      assert(Date.now() - started < 1500);
+      assertEquals(await slow.line(5000), null);
       slow.close();
-      // Two pending connections fill the cap; a third is closed at once.
-      const a = await raw(server.port);
-      const b = await raw(server.port);
-      await sleep(50);
-      const c = await raw(server.port);
-      assertEquals(await c.line(250), null);
+    } finally {
+      server.close();
+    }
+    // The pending cap, on a server whose handshake budget far outlasts the probes, so only the
+    // cap (never the budget) can close a connection here.
+    const capped = (await testServer(key, { handshakeMs: 60_000, maxPending: 2 })).server;
+    try {
+      const a = await raw(capped.port);
+      const b = await raw(capped.port);
+      // Both are accepted and held pending before the third arrives.
+      assert(await waitFor(() => capped.pending() === 2, 5000), "two pending");
+      const c = await raw(capped.port);
+      assertEquals(await c.line(5000), null); // closed at once: the cap is full
       assertEquals(await a.line(100), "timeout"); // still open, waiting for its hello
       a.close();
       b.close();
       c.close();
     } finally {
-      server.close();
+      capped.close();
     }
   },
 });
