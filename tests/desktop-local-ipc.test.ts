@@ -881,7 +881,11 @@ Deno.test("local IPC: the runtime's pipe server identity decides which pipe a cl
         { userSid: me, ownerSid: other },
         /served by another user \(S-1-5-21-9-9-9-1002/,
       );
-      (await connect({ userSid: other, ownerSid: me })).close();
+      // Our pipe served by another user's process: refused too (both must be this user).
+      await refused(
+        { userSid: other, ownerSid: me },
+        /served by another user \(S-1-5-21-9-9-9-1002/,
+      );
       // No answer, or a field the runtime could not read: refused.
       await refused(null, /could not verify/);
       await refused({ userSid: null }, /could not verify/);
@@ -897,7 +901,7 @@ Deno.test("local IPC: the runtime's pipe server identity decides which pipe a cl
   }
 });
 
-Deno.test("pipeIdentityFrom: one read serves both answers; the owner stands in for another user's server", async () => {
+Deno.test("pipeIdentityFrom: one read serves both answers; a server and owner that differ name the one that is not this user", async () => {
   const socket = new net.Socket();
   try {
     let reads = 0;
@@ -910,7 +914,7 @@ Deno.test("pipeIdentityFrom: one read serves both answers; the owner stands in f
         currentUserSid: "S-1-5-21-1-2-3-1001",
       };
     });
-    assertEquals(await lookup.server(socket), { userSid: "S-1-5-21-1-2-3-1001", pid: 7 });
+    assertEquals(await lookup.server(socket), { userSid: "S-1-5-18", pid: 7 });
     assertEquals(await lookup.currentUserSid(socket), "S-1-5-21-1-2-3-1001");
     assertEquals(reads, 1);
     const none = pipeIdentityFrom(() => null);

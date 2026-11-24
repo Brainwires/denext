@@ -803,11 +803,15 @@ export function pipeIdentityFrom(read: PipeServerIdentityReader): PipeIdentityLo
       if (!found || typeof found.userSid !== "string" || typeof found.ownerSid !== "string") {
         return Promise.resolve(null);
       }
+      // The server's user and the pipe's owner must be one user: a pipe whose owner differs from
+      // the process serving it is named by the user that isn't this one, so it is refused unless
+      // both are this user.
       const sameOwner = found.ownerSid.toUpperCase() === found.userSid.toUpperCase();
-      return Promise.resolve({
-        userSid: sameOwner ? found.userSid : found.ownerSid,
-        pid: found.pid,
-      });
+      const mine = once(socket)?.currentUserSid?.toUpperCase();
+      const userSid = sameOwner || found.userSid.toUpperCase() !== mine
+        ? found.userSid
+        : found.ownerSid;
+      return Promise.resolve({ userSid, pid: found.pid });
     },
     currentUserSid(socket) {
       const own = once(socket)?.currentUserSid;
