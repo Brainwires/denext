@@ -46,6 +46,7 @@
           "bad_rp.invalid"
         ]
       },
+      "pty": true,
       "shell": {
         "openExternal": [
           "https:"
