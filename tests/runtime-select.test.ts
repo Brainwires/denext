@@ -602,7 +602,22 @@ Deno.test("resolveRuntimeRelease: a lock not cached is fetched by its hash; offl
     assertEquals(fetched, [NEWER]);
     await Deno.remove(join(root, "releases"), { recursive: true });
     const offline = { ...o, fetchLocked: () => Promise.reject(new Error("offline")) };
-    await assertRejects(() => resolveRuntimeRelease(offline), RuntimeSelectError, "not installed");
+    const err = await assertRejects(
+      () => resolveRuntimeRelease(offline),
+      RuntimeSelectError,
+      "not installed",
+    );
+    // The fetch's own cause is named, and the fix is not the install that fails the same way.
+    assertStringIncludes(err.message, "could not be fetched: offline");
+    assert(!err.message.includes("denext runtime install"), err.message);
+    assertStringIncludes(err.message, `denext runtime use ${NEWER} --project`);
+    // A copy that does not hash to the pin's integrity reads as that.
+    const mismatch = {
+      ...o,
+      fetchLocked: () => Promise.reject(new RuntimeSelectError("no copy … hashes to sha256-x")),
+    };
+    const bad = await assertRejects(() => resolveRuntimeRelease(mismatch), RuntimeSelectError);
+    assertStringIncludes(bad.message, "could not be fetched: no copy … hashes to sha256-x");
   });
 });
 
