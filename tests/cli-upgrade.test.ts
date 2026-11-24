@@ -13,7 +13,8 @@ import {
   satisfies,
   type UpgradeLookups,
 } from "../src/build/upgrade.ts";
-import { denoDirExcludeUpdate, runUpgrade } from "../src/cli/commands/upgrade.ts";
+import { denoDirExcludeUpdate, runtimePinNotice, runUpgrade } from "../src/cli/commands/upgrade.ts";
+import type { RuntimeChannelRelease } from "../src/build/runtime-channel.ts";
 import type { CommandContext } from "../src/cli/command.ts";
 import CATALOG from "../src/plugin/catalog.json" with { type: "json" };
 import { renderMarkedTemplate } from "../src/build/native-template-marker.ts";
@@ -536,4 +537,54 @@ Deno.test("denext upgrade: names the out-of-date native templates and the comman
     [ios]: await renderMarkedTemplate("auth-session", AUTH_SESSION_TEMPLATE_VERSION, "// p\n"),
   });
   assertEquals(JSON.parse(current.out).nativeTemplates, undefined);
+});
+
+Deno.test("runtimePinNotice: a project runtime pin the new denext refuses is named with its fix", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_upgrade_pin_" });
+  try {
+    const plan = {
+      ok: true as const,
+      changed: true,
+      steps: [{ name: "@denext/denext", from: "4.22.0", to: "5.0.0" }],
+    };
+    const pinned = "3.0.0-denext.27";
+    const entry = (maxDenext?: string): RuntimeChannelRelease => ({
+      version: pinned,
+      tag: `denext-runtime-v${pinned}`,
+      deno: "2.9.8",
+      releasedAt: "2026-11-01T00:00:00Z",
+      minDenext: "4.20.0",
+      ...(maxDenext ? { maxDenext } : {}),
+      esbuild: "0.25.5",
+      laufeyApi: 58,
+      minGlibc: "2.27",
+      doc: { sha256: "a".repeat(64), size: 1000 },
+    });
+    let reads = 0;
+    const entries = (list: RuntimeChannelRelease[]) => () => {
+      reads++;
+      return Promise.resolve(list);
+    };
+    // No pin: nothing to say, and the channel is not read.
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    assertEquals(await runtimePinNotice(dir, plan as never, entries([entry("4.99.0")])), null);
+    assertEquals(reads, 0);
+    const lock = { version: pinned, integrity: `sha256-${"b".repeat(64)}` };
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ denext: { runtime: lock } }));
+    // The channel says the pinned release runs only up to 4.99.0: refused after the upgrade.
+    const refused = await runtimePinNotice(dir, plan as never, entries([entry("4.99.0")]));
+    assert(refused?.includes(`pins runtime ${pinned}`), String(refused));
+    assert(refused?.includes("runs only up to denext 4.99.0"), String(refused));
+    assert(refused?.includes("denext runtime use <version> --project"), String(refused));
+    // Within its range: nothing to say.
+    assertEquals(await runtimePinNotice(dir, plan as never, entries([entry()])), null);
+    // No entry to judge by: a reminder of the same fix.
+    const unknown = await runtimePinNotice(dir, plan as never, entries([]));
+    assert(unknown?.includes("does not move"), String(unknown));
+    // denext does not move: nothing to say.
+    const same = { ...plan, steps: [{ name: "@denext/denext", from: "5.0.0", to: "5.0.0" }] };
+    assertEquals(await runtimePinNotice(dir, same as never, entries([entry("4.99.0")])), null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
