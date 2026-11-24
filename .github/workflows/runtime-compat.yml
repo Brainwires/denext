@@ -4,7 +4,10 @@
 # minor before it (scripts/ci/runtime-compat-legs.ts). Each leg checks out that denext tag, points
 # DENEXT_TOOLCHAIN_PIN_FILE at the candidate's toolchain pin (built from the release's manifest and
 # SHA256SUMS by scripts/runtime-channel.ts `release-doc --unverified`; the toolchain install
-# re-checks every archive's SHA-256) and runs ci.yml's type check, unit and integration suites on it.
+# re-checks every archive's SHA-256) and runs ci.yml's type check, unit and integration suites on it,
+# hermetically (no live revoked-runtimes list or channel, no user default), the unit pass without
+# the files scripts/ci/runtime-compat-suite.ts names for that release (tests of its bundled pin or
+# release-time state, not of the runtime).
 #
 # `deno task runtime:publish <tag>` dispatches it on the maintainer machine and waits once; it signs
 # nothing until every leg is green, and records the oldest green leg as the entry's `minDenext`.
@@ -119,7 +122,14 @@ jobs:
           pin="$RUNNER_TEMP/candidate-toolchain-pin.json"
           deno run -A scripts/runtime-channel.ts release-doc "$TAG" --unverified \
             --toolchain-pin-out "$pin"
-          echo "DENEXT_TOOLCHAIN_PIN_FILE=$pin" >> "$GITHUB_ENV"
+          {
+            echo "DENEXT_TOOLCHAIN_PIN_FILE=$pin"
+            # Hermetic: no test reaches the live revoked-runtimes list or runtime channel (their
+            # contents change without a code change), and no user default leaks in.
+            echo "DENEXT_REVOCATION_CHECK=0"
+            echo "DENEXT_RUNTIME_CHANNEL=0"
+            echo "DENEXT_RUNTIME_DEFAULT_FILE=$RUNNER_TEMP/runtime-default.json"
+          } >> "$GITHUB_ENV"
 
       - name: Read the Gleam pin
         # As ci.yml's check job: the unit suites that compile real Gleam run on the pinned Gleam.
@@ -147,7 +157,10 @@ jobs:
 
       - name: Install the pinned Gleam compiler
         working-directory: app
-        run: deno run -A cli.ts runtime install --with gleam
+        # `denext runtime` exists from 4.21; a 4.20 leg has `toolchain install`.
+        run: |
+          if [ -f src/cli/commands/runtime.ts ]; then verb=runtime; else verb=toolchain; fi
+          deno run -A cli.ts "$verb" install --with gleam
 
       - name: Type check
         working-directory: app
@@ -155,8 +168,13 @@ jobs:
 
       - name: Unit tests
         working-directory: app
-        run: deno task test:unit
+        # The release's own unit pass, minus the files that assert its bundled pin or release-time
+        # state rather than runtime behaviour (scripts/ci/runtime-compat-suite.ts names each).
+        run: |
+          ignore=$(cd ../tooling && deno run -A scripts/ci/runtime-compat-suite.ts "$DENEXT" ../app)
+          deno run -A scripts/test-run.ts "--ignore=$ignore"
         env:
+          DENEXT: ${{ matrix.denext }}
           DENEXT_TEST_GLEAM: ${{ steps.gleam-pin.outputs.path }}/gleam
 
       - name: Integration tests

@@ -778,6 +778,11 @@ Deno.test("activeRuntimeRelease: the process's own resolution is remembered; the
     integrity: releaseIntegrity("c".repeat(64)),
     notices: [],
   };
+  // The process's own environment is what this reads: a pin file in it (the runtime-compat
+  // workflow points DENEXT_TOOLCHAIN_PIN_FILE at the candidate's pin) wins over any remembered
+  // resolution by design, so it is set aside for the test.
+  const pinFile = Deno.env.get("DENEXT_TOOLCHAIN_PIN_FILE");
+  Deno.env.delete("DENEXT_TOOLCHAIN_PIN_FILE");
   try {
     rememberRuntimeRelease(remembered);
     assertEquals(activeRuntimeRelease(), remembered);
@@ -785,6 +790,27 @@ Deno.test("activeRuntimeRelease: the process's own resolution is remembered; the
     assertEquals(activeDesktopRuntimePinOrBundled().version, NEWER);
   } finally {
     rememberRuntimeRelease(null);
+    if (pinFile !== undefined) Deno.env.set("DENEXT_TOOLCHAIN_PIN_FILE", pinFile);
+  }
+});
+
+Deno.test("activeRuntimeRelease: a pin file in the environment wins over a remembered resolution", () => {
+  const remembered = {
+    source: "project" as const,
+    version: NEWER,
+    ...(docFor(NEWER) as unknown as RuntimePins),
+    integrity: releaseIntegrity("c".repeat(64)),
+    notices: [],
+  };
+  const file = Deno.makeTempFileSync({ suffix: ".json" });
+  try {
+    Deno.writeTextFileSync(file, JSON.stringify(docFor(NEWEST).toolchain));
+    rememberRuntimeRelease(remembered);
+    const release = activeRuntimeRelease(envOf({ DENEXT_TOOLCHAIN_PIN_FILE: file }));
+    assertEquals(release.toolchain.version, NEWEST);
+  } finally {
+    rememberRuntimeRelease(null);
+    Deno.removeSync(file);
   }
 });
 
