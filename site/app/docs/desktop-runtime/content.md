@@ -556,7 +556,8 @@ so denext binds them as they are (runtime `3.0.0-denext.6`, laufey API 50):
   privacy switch). On Linux WebKitGTK does not say which frame asks, so a sub-frame the page
   delegates the device to (`allow="microphone"`) gets it. denext's packager writes the grant for
   the app origin alone when `desktop.capabilities.microphone` / `camera` is on, with the macOS
-  usage strings and entitlements, and refuses to package either on an older runtime; `deno
+  usage strings and entitlements, and refuses to package either on a runtime that doesn't
+  grant capture; `deno
   desktop` writes it from deno.json's `desktop.app.mediaCapture`. In a denext app that deno.json
   key has no effect: denext writes `laufey-launch.json` after `deno desktop` and replaces whatever
   `mediaCapture` it held with its own grant, the app origin alone for the kinds
@@ -1108,21 +1109,19 @@ From `3.0.0-rc.3` denext tells its own Deno from stock Deno by an identity marke
 | `3.0.0-denext.27` | The content first tagged `3.0.0-denext.26`. The [kernel sandbox](/docs/kernel-sandbox) reaches the processes a program starts: a nested `deno` intersects its grant with the inherited policy, `--kernel-sandbox-exec=strict` limits the whole tree to the `--allow-run` programs, and a sandboxed run's caches live in `DENO_DIR/sandboxed/`. WebRTC Encoded Transform (`RTCRtpScriptTransform`) and SFrame, `navigator.mediaDevices` with fake devices (`DENO_FAKE_MEDIA_DEVICES=1`), and WebRTC conformance fixes. The Linux lifecycle-script jail resolves a script's metadata changes within its own root ([GHSA-488g-7qvv-g92h](https://github.com/Brainwires/denext/security/advisories/GHSA-488g-7qvv-g92h)). Deno Desktop: laufey 0.8.2.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `3.0.0-denext.28` | The kernel sandbox's supervising broker (`--kernel-sandbox=broker`, and `enforce` for a host-scoped `--allow-net` or a write deny inside a write allow), warn mode's observer, Linux listeners bound before the sandbox applies, and `deno compile --kernel-sandbox=enforce` (Linux, macOS, and Windows' job object and Low integrity). `Deno.Pty.foreground()` / `ttyName`, cache databases per runtime version, and the fix for RUSTSEC-2026-0592. Deno Desktop (laufey 0.9.0, API 60, CEF 156.0.31): web view downloads and permission requests, `Deno.desktop.windowOrder()` / `pointer()`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
-denext needs `2.9.7-denext.14`. Under an older runtime a child the app starts from its own
-executable (a sidecar's `spawnSelf`) begins its stdout with the runtime loader's launch messages
-and needs `permissions.run` over the executable; under one older than `2.9.7-denext.9` the page
-also gets no relay URL (its WebSockets fail), the runtime refuses the update manifests denext
-publishes (it doesn't know `expiresAt` and `sequence`), and its laufey ignores the launch file's
-`bridgeOrigins`. No release number is readable at run time, so denext detects only that last
-case: an app at its custom origin whose runtime publishes no `DENO_DESKTOP_WS_URL` prints one
-warning that names the runtime as older than `2.9.7-denext.14`, says the page's WebSockets,
+denext needs the runtime it pins. A runtime supplied some other way may lack what denext relies
+on: a quiet launch for a child the app starts from its own executable (a sidecar's `spawnSelf`,
+which otherwise begins its stdout with the loader's launch messages and needs `permissions.run`
+over the executable), the relay URL the page's WebSockets use, the update manifests' `expiresAt`
+and `sequence`, and the launch file's `bridgeOrigins`. No release number is readable at run time,
+so denext detects only one of these by what the runtime offers: an app at its custom origin whose
+runtime publishes no `DENO_DESKTOP_WS_URL` prints one warning that says the page's WebSockets,
 full-app updates and `spawnSelf` won't work as documented, and gives the fix (repackage with the
-runtime denext pins). The endpoints stay up there, since a `denext.7` or `denext.8` runtime still
-marks relayed requests. A runtime from `denext.9` to `denext.13` is not detected; the fix is the
-same.
+runtime denext pins). The endpoints stay up there as long as the runtime marks relayed requests.
+The other gaps aren't detected; the fix is the same.
 
-A runtime older than `2.9.7-denext.7` is refused outright wherever the app runs at its custom
-origin. The relay mark is how the app tells a request any local process sent through the relay
+A runtime that doesn't mark relayed requests is refused outright wherever the app runs at its
+custom origin. The relay mark is how the app tells a request any local process sent through the relay
 from one its own page made, so a window on such a runtime (supplied through
 `DENORT_DESKTOP_BIN` / `LAUFEY_DEV_DIR`, `DENEXT_DESKTOP_RUNTIME_DIR` or an older build) gets no
 per-launch token and every `/_denext/desktop/*` endpoint is refused, with a startup message naming
