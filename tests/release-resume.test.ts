@@ -123,7 +123,7 @@ function deps(
   git: FakeGit,
   jsr: FakeJsr,
   onSleep: (now: number) => void = () => {},
-  run: { current: PublishRun } = { current: { state: "success" } },
+  run: { current: PublishRun } = { current: { state: "success", downstream: "success" } },
 ) {
   let now = 0;
   const sleeps: number[] = [];
@@ -357,7 +357,11 @@ Deno.test("release resume: a failed publish run is never reported as released", 
 });
 
 Deno.test("release resume: a successful run that JSR does not list is not a release", async () => {
-  const { d, logs } = await prResume({ state: "success" }, false, 10 * MINUTE);
+  const { d, logs } = await prResume(
+    { state: "success", downstream: "success" },
+    false,
+    10 * MINUTE,
+  );
   const err = await assertRejects(() => publishFrom(TARGET, "pr", d), ReleaseAbort);
   assertStringIncludes(err.message, "not confirmed released");
   assertStringIncludes(err.message, "on jsr.io: no");
@@ -377,7 +381,7 @@ Deno.test("release resume: a publish still running is waited for, then reported 
   const waited = deps(made.git, jsr, (now) => {
     if (now >= 20 * MINUTE) {
       jsr.list("@denext/denext", VERSION);
-      state.current = { state: "success" };
+      state.current = { state: "success", downstream: "success" };
     }
   }, state);
   await publishFrom(TARGET, "pr", { ...waited.d, jsrWaitMs: 3 * 60 * MINUTE });
@@ -387,7 +391,7 @@ Deno.test("release resume: a publish still running is waited for, then reported 
 });
 
 Deno.test("release resume: a published release on JSR with a green run hands over the PR", async () => {
-  const { d, logs } = await prResume({ state: "success" }, true);
+  const { d, logs } = await prResume({ state: "success", downstream: "success" }, true);
   await publishFrom(TARGET, "pr", d);
   assert(logs.some((l) => l.includes(`✓ Released ${VERSION}`)));
   assert(logs.some((l) => l.includes("gh pr create --base main --head development")));
@@ -416,7 +420,7 @@ Deno.test("release resume: only a publish run on the tag's own commit counts", a
   const own = { databaseId: 1, url: "u1", headSha: TAG_SHA };
   assertEquals(
     await ghPublishRun("v9.9.9", fake([other, own], { "2": ok, "1": ok })),
-    { state: "success", id: "1", url: "u1" },
+    { state: "success", id: "1", url: "u1", downstream: "pending" },
   );
   const list = calls.find((c) => c[1] === "list")!;
   assertStringIncludes(list.join(" "), "--branch v9.9.9");
@@ -441,4 +445,63 @@ Deno.test("release resume: only a publish run on the tag's own commit counts", a
       .state,
     "failed",
   );
+});
+
+Deno.test("release resume: the jobs after the JSR publish decide whether the release is done", async () => {
+  type Job = { name: string; status: string; conclusion: string };
+  const run = (jobs: Job[]) =>
+    ghPublishRun("v9.9.9", {
+      gh: (...args: string[]) =>
+        Promise.resolve(
+          args[1] === "list"
+            ? JSON.stringify([{ databaseId: 7, url: "u7", headSha: "a".repeat(40) }])
+            : JSON.stringify({ jobs }),
+        ),
+      tagCommit: () => Promise.resolve("a".repeat(40)),
+    });
+  const done = (name: string, conclusion = "success") => ({
+    name,
+    status: "completed",
+    conclusion,
+  });
+  const publish = done("publish");
+  const all = [
+    publish,
+    done("binaries (x86_64-unknown-linux-gnu)"),
+    done("binaries (aarch64-apple-darwin)"),
+    done("smoke (linux)"),
+    done("release"),
+    done("package-managers"),
+  ];
+  assertEquals((await run(all)).downstream, "success");
+  // Only the publish job so far: the binaries are still to come.
+  assertEquals((await run([publish])).downstream, "pending");
+  const running = all.map((j) => j.name === "release" ? { ...j, status: "in_progress" } : j);
+  assertEquals((await run(running)).downstream, "pending");
+  const failed = await run(
+    all.map((j) => j.name.startsWith("binaries (aarch64") ? done(j.name, "failure") : j),
+  );
+  assertEquals(failed.downstream, "failed");
+  assertStringIncludes(failed.downstreamDetail ?? "", "binaries (aarch64-apple-darwin): failure");
+  const skipped = await run(all.map((j) => j.name === "release" ? done("release", "skipped") : j));
+  assertEquals(skipped.downstream, "failed");
+});
+
+Deno.test("release resume: JSR published but the binaries failed is its own stop, not a release", async () => {
+  const { d, logs } = await prResume(
+    { state: "success", id: "42", downstream: "failed", downstreamDetail: "release: failure" },
+    true,
+  );
+  const err = await assertRejects(() => publishFrom(TARGET, "pr", d), ReleaseAbort);
+  assertStringIncludes(err.message, "JSR published, binaries failed");
+  assertStringIncludes(err.message, "release: failure");
+  assertStringIncludes(err.message, "gh run rerun 42 --failed");
+  assertStringIncludes(err.message, resumeCommand(TARGET, "pr"));
+  assert(!err.message.includes("burned"), err.message);
+  assert(!logs.some((l) => l.includes("✓ Released")), logs.join("\n"));
+  // Still running after the JSR publish: waited for, never reported released at the deadline.
+  const pending = await prResume({ state: "success", downstream: "pending" }, true, 10 * MINUTE);
+  const late = await assertRejects(() => publishFrom(TARGET, "pr", pending.d), ReleaseAbort);
+  assertStringIncludes(late.message, "binaries/release: pending");
+  assert(!pending.logs.some((l) => l.includes("✓ Released")));
 });

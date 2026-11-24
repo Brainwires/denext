@@ -57,7 +57,23 @@ export interface PublishRun {
   url?: string;
   /** Why `unknown`, or the job's conclusion. */
   detail?: string;
+  /**
+   * Once the publish job succeeded: the jobs after it ({@linkcode DOWNSTREAM_JOBS}: the
+   * binaries, their smoke test, the GitHub release, the package managers). `success` when every
+   * one finished green, `pending` while any is still to run, `failed` when any failed, was
+   * cancelled or was skipped. A release is done only when this is `success`.
+   */
+  downstream?: "success" | "pending" | "failed";
+  /** The downstream jobs that did not succeed, with their conclusions. */
+  downstreamDetail?: string;
 }
+
+/**
+ * publish.yml's jobs after the JSR publish that a release needs: without them JSR has the
+ * version but the installers, Homebrew, Scoop and winget stay on the previous one. A matrix job
+ * (`binaries (aarch64-apple-darwin)`) counts under its base name.
+ */
+export const DOWNSTREAM_JOBS = ["binaries", "smoke", "release", "package-managers"] as const;
 
 /**
  * How long the corpus step waits for JSR to list the version it pushed. publish.yml re-runs the
@@ -264,6 +280,25 @@ export function publishFailedMessage(target: ReleaseTarget, run: PublishRun): st
     "branch, cut the next patch, and do NOT merge main.";
 }
 
+/**
+ * The stop for a release JSR has but whose binaries, GitHub release or package managers failed.
+ * The version is not burned (it is on JSR and stays), so the failed jobs are re-run; no new patch.
+ *
+ * @param target The release.
+ * @param run The run (publish succeeded, downstream failed).
+ * @returns The message.
+ */
+export function downstreamFailedMessage(target: ReleaseTarget, run: PublishRun): string {
+  const rerun = run.id ? `gh run rerun ${run.id} --failed` : "gh run rerun <run-id> --failed";
+  const detail = run.downstreamDetail ? ` (${run.downstreamDetail})` : "";
+  return `JSR published, binaries failed: ${RELEASE_PACKAGE}@${target.version} is on JSR, but ` +
+    `the publish run for ${target.tag}${run.url ? ` (${run.url})` : ""} did not finish its ` +
+    `binaries / GitHub release / package managers${detail}, so the installers still serve the ` +
+    "previous version.\n" +
+    `  Re-run the failed jobs (${rerun}), then resume:\n    ${resumeCommand(target, "pr")}\n` +
+    "  Do NOT merge main until the release is complete.";
+}
+
 /** Throw when the tag's publish run failed or cannot be read; a run in any other state goes on. */
 function refuseBadRun(target: ReleaseTarget, run: PublishRun): void {
   if (run.state === "failed") throw new ReleaseAbort(publishFailedMessage(target, run));
@@ -285,8 +320,26 @@ function releaseListed(target: ReleaseTarget, deps: PublishDeps): Promise<boolea
 }
 
 /**
- * Stop unless `@denext/denext` <version> is on JSR and the tag's publish job succeeded, waiting
- * (as the corpus step does) while the run is still going or JSR has not listed it yet.
+ * Whether the release is complete: on JSR, the publish job green and every job after it green.
+ * Throws when JSR has it but a job after the publish failed (its own stop, see
+ * {@linkcode downstreamFailedMessage}).
+ */
+function releaseComplete(target: ReleaseTarget, run: PublishRun, listed: boolean): boolean {
+  if (!listed || run.state !== "success") return false;
+  if (run.downstream === "failed") throw new ReleaseAbort(downstreamFailedMessage(target, run));
+  return run.downstream === "success";
+}
+
+/** What one poll saw, for the wait and stop lines. */
+function seenLine(run: PublishRun, listed: boolean): string {
+  const after = run.state === "success" ? `; binaries/release: ${run.downstream ?? "pending"}` : "";
+  return `publish run: ${run.state}${after}; on jsr.io: ${listed ? "yes" : "no"}`;
+}
+
+/**
+ * Stop unless `@denext/denext` <version> is on JSR and the tag's publish run succeeded, its
+ * binaries, GitHub release and package managers included, waiting (as the corpus step does)
+ * while the run is still going or JSR has not listed it yet.
  */
 async function verifyPublished(target: ReleaseTarget, deps: PublishDeps): Promise<void> {
   const deadline = deps.now() + (deps.jsrWaitMs ?? JSR_WAIT_MS);
@@ -295,9 +348,9 @@ async function verifyPublished(target: ReleaseTarget, deps: PublishDeps): Promis
     const run = await deps.publishRun(target.tag);
     refuseBadRun(target, run);
     const listed = await releaseListed(target, deps);
-    if (listed && run.state === "success") return;
+    if (releaseComplete(target, run, listed)) return;
     const left = deadline - deps.now();
-    const seen = `publish run: ${run.state}; on jsr.io: ${listed ? "yes" : "no"}`;
+    const seen = seenLine(run, listed);
     if (left <= 0) {
       throw new ReleaseAbort(
         `${target.tag} is pushed but ${RELEASE_PACKAGE}@${target.version} is not confirmed ` +
@@ -317,7 +370,7 @@ async function prStep(target: ReleaseTarget, deps: PublishDeps): Promise<void> {
   await verifyPublished(target, deps);
   deps.log(
     `\n✓ Released ${target.version}: ${RELEASE_PACKAGE}@${target.version} is on JSR and the ` +
-      `${target.tag} publish run succeeded.\n` +
+      `${target.tag} publish run succeeded (binaries, GitHub release, package managers).\n` +
       "  REQUIRED next: open a PR so `main` catches up to this tag —\n" +
       `    gh pr create --base main --head ${target.branch}\n` +
       "  (every release tag gets a `development → main` PR; see AGENTS.md).\n" +
@@ -430,11 +483,32 @@ export async function ghPublishRun(tag: string, deps: GhPublishRunDeps): Promise
     const job = view.jobs.find((j) => j.name === "publish");
     if (!job) return { state: "pending", id, url };
     if (job.status !== "completed") return { state: "pending", id, url };
-    if (job.conclusion === "success") return { state: "success", id, url };
-    return { state: "failed", id, url, detail: `the publish job ${job.conclusion}` };
+    if (job.conclusion !== "success") {
+      return { state: "failed", id, url, detail: `the publish job ${job.conclusion}` };
+    }
+    return { state: "success", id, url, ...downstreamOf(view.jobs) };
   } catch (err) {
     return { state: "unknown", detail: (err as Error).message };
   }
+}
+
+/** The jobs after the publish job, as one state (see {@linkcode PublishRun.downstream}). */
+function downstreamOf(
+  jobs: Array<{ name: string; status: string; conclusion: string }>,
+): Pick<PublishRun, "downstream" | "downstreamDetail"> {
+  const bad: string[] = [];
+  let pending = false;
+  for (const base of DOWNSTREAM_JOBS) {
+    const mine = jobs.filter((j) => j.name === base || j.name.startsWith(`${base} (`));
+    // A job that needs another is listed only once it is queued: none yet is still to come.
+    if (mine.length === 0) pending = true;
+    for (const j of mine) {
+      if (j.status !== "completed") pending = true;
+      else if (j.conclusion !== "success") bad.push(`${j.name}: ${j.conclusion || "no result"}`);
+    }
+  }
+  if (bad.length) return { downstream: "failed", downstreamDetail: bad.join(", ") };
+  return { downstream: pending ? "pending" : "success" };
 }
 
 /**
