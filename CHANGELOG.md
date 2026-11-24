@@ -10,6 +10,19 @@ and this project adheres to
 
 ### Fixed
 
+- **The installer refuses a binary this machine can't run.** On a musl Linux (Alpine) it stops
+  before downloading, and the downloaded `denext` must answer `--version` before it is installed,
+  so `curl … | sh` no longer exits 0 with a binary an older glibc can't start. A shell under Rosetta
+  on Apple silicon gets the arm64 build.
+- **The installer tells a failed attestation check apart from tampering.** A GitHub CLI without
+  `gh attestation` counts as no `gh` (installed on the checksum, with a note; refused under
+  `DENEXT_REQUIRE_ATTESTATION=1`), and a failed `gh attestation verify` shows gh's own message and
+  its likely causes. The checksum is still required.
+- **The installer's PATH edits are safer.** A PATH block whose end marker was removed by hand no
+  longer deletes the rest of the startup file, a startup file it can't write is a warning with the
+  lines to add, a download cut short in its last line runs nothing, and a failed
+  `--runtime=<version>` after the binary was installed still puts it on PATH and says so.
+
 - **A detached sidecar survives a failed read of its registry record.** It ended itself on any
   error reading the record; now only a record that is gone, malformed or names another start ends
   it, and a read that fails otherwise (a scanner holding the file, no free descriptors) is retried
