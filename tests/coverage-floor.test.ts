@@ -156,7 +156,13 @@ Deno.test("main: exit 1 naming the files under the floor, 0 when all pass, --rep
 });
 
 Deno.test("flooredFiles --full: the whole-suite floor adds the 4.x files raised past 50% lines", async () => {
-  assertEquals(FLOORED_FULL.map((f) => f.dir), ["src/cli", "packages/tanstack-start/src"]);
+  assertEquals(FLOORED_FULL.map((f) => f.dir), [
+    "src/cli",
+    "src/build",
+    "src/client",
+    "src/jsx",
+    "packages/tanstack-start/src",
+  ]);
   const root = await Deno.makeTempDir();
   try {
     for (
@@ -166,6 +172,13 @@ Deno.test("flooredFiles --full: the whole-suite floor adds the 4.x files raised 
         "src/cli/run-verb.ts",
         "packages/tanstack-start/src/use-server.ts",
         "packages/tanstack-start/src/toolchain.ts",
+        "src/build/runtime-channel.ts",
+        "src/build/runtime-select.ts",
+        "src/build/signed-envelope.ts",
+        "src/build/runtime-revocations.ts",
+        "src/client/nav-scheme.ts",
+        "src/client/router.ts",
+        "src/jsx/host-tag.ts",
       ]
     ) {
       await Deno.mkdir(join(root, f, ".."), { recursive: true });
@@ -173,17 +186,25 @@ Deno.test("flooredFiles --full: the whole-suite floor adds the 4.x files raised 
     }
     // The desktop run (coverage:desktop) loads only the desktop suites: it keeps its own set.
     assertEquals(await flooredFiles(root), ["src/desktop/a.ts"]);
-    assertEquals(await flooredFiles(root, true), [
+    // The whole-suite run adds the listed files, and only those (the runtime channel's checks and
+    // the client-side guards among them).
+    const full = [
       "packages/tanstack-start/src/use-server.ts",
+      "src/build/runtime-channel.ts",
+      "src/build/runtime-select.ts",
+      "src/build/signed-envelope.ts",
       "src/cli/cli-cache.ts",
+      "src/client/nav-scheme.ts",
       "src/desktop/a.ts",
-    ]);
+      "src/jsx/host-tag.ts",
+    ];
+    assertEquals(await flooredFiles(root, true), full);
     // `--full` holds them to the floor: one no test loaded fails the run.
     const file = join(root, "lcov.info");
     const abs = (f: string) => resolve(root, f);
     await Deno.writeTextFile(
       file,
-      ["src/desktop/a.ts", "src/cli/cli-cache.ts"].map((f) =>
+      full.filter((f) => f !== "packages/tanstack-start/src/use-server.ts").map((f) =>
         `SF:${abs(f)}\nDA:1,1\nend_of_record\n`
       )
         .join(""),
