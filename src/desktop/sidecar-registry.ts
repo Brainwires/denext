@@ -16,10 +16,14 @@
  */
 export type SidecarKillReason = "exit" | "update";
 
-/** How the host ends its sidecars: `kill` now (synchronously), `stop` gracefully. */
+/**
+ * How the host ends its sidecars: `kill` now (synchronously), `stop` gracefully, `update` before a
+ * full-app update (every sidecar stopped and waited for; rejects when one is still running).
+ */
 interface SidecarStopper {
   readonly kill: (reason: SidecarKillReason) => void;
   readonly stop: () => Promise<void>;
+  readonly update?: () => Promise<void>;
 }
 
 const stoppers = new Set<SidecarStopper>();
@@ -58,9 +62,26 @@ export function killSidecarsNow(reason: SidecarKillReason = "exit"): void {
 }
 
 /**
+ * End every registered sidecar before a full-app update is installed, and wait for them: each
+ * sidecar is stopped (its `shutdown.graceMs`, then a forced kill where the app may signal
+ * processes), detached ones included, their records removed. Nothing may still run the old
+ * executable from the install folder when the swap starts (Windows refuses to replace files a
+ * running process holds).
+ *
+ * @returns Once every sidecar is gone; rejects with the first sidecar that is still running.
+ */
+export async function endSidecarsForUpdate(): Promise<void> {
+  const results = await Promise.allSettled(
+    [...stoppers].map((s) => s.update ? s.update() : Promise.resolve(s.kill("update"))),
+  );
+  const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failed) throw failed.reason;
+}
+
+/**
  * Stop every sidecar of the app gracefully (their `shutdown.graceMs`), e.g. before
- * `installAppUpdateAndRelaunch()` so a backend can finish writing first. The install itself still
- * ends whatever is left. Detached sidecars (`detached: true`) are stopped too, their processes
+ * `installAppUpdateAndRelaunch()` so a backend can finish writing first. The install itself also
+ * stops every sidecar and waits for them before it quits. Detached sidecars (`detached: true`) are stopped too, their processes
  * ended and their registry records removed: there is one behaviour, everything stops.
  *
  * @returns Once every sidecar has stopped.
@@ -70,7 +91,7 @@ export function killSidecarsNow(reason: SidecarKillReason = "exit"): void {
  * import { installAppUpdateAndRelaunch } from "denext/desktop/updater";
  *
  * await stopSidecars();
- * installAppUpdateAndRelaunch();
+ * await installAppUpdateAndRelaunch();
  * ```
  */
 export async function stopSidecars(): Promise<void> {

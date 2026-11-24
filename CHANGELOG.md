@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Fixed
 
+- **A full-app update stops every sidecar, detached ones included, before it quits.**
+  `installAppUpdateAndRelaunch()` now returns a promise: it stops the app's sidecars and waits for
+  them (a detached sidecar's shutdown went out from a promise continuation that a `force` quit
+  never ran, so the sidecar kept running the old executable and, on Windows, held the install
+  folder the swap must replace). A sidecar that cannot be stopped refuses the install with the new
+  `AppUpdateError` code `sidecars_running`. Callers `await` it.
+
 - **A detached sidecar's log is rotated while it runs.** `logs: "file"` / `"both"` kept the
   documented 5 MB bound only when a fresh process started; the process now checks its own log
   every 10 s and rotates it to `.1` in place (copy, then truncate), so a sidecar that runs for days
