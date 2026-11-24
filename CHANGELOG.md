@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext/desktop` and `denext/desktop/client` export every type their public types refer to**
+  (`DesktopWindowLevel`, `TrayMouseDetail` and its `TrayModifiers` / `TrayEventType`,
+  `StandardSchemaV1` and its result types, `SpaProxyConfig`, `DesktopUpdaterConfig`,
+  `DesktopLinuxDesktopEntryConfig`, `SidecarExit`, `SidecarExposedValue`), so each is documented
+  and nameable from there.
 - **`WindowCapabilities` types `windowOrder` and `pointer`** as booleans (they were reachable only
   through the index signature), and `windowCapabilities()` reports both `false` until the runtime
   says otherwise.

@@ -152,6 +152,19 @@ export type {
 /** `desktop.webViews` as resolved ({@linkcode RunDesktopOptions.webViews}). */
 export type { DesktopWebViewSettings } from "../desktop/webview-config.ts";
 /**
+ * Types the public options and handles below refer to (re-exported so each is documentable from
+ * this entry point): the window level, the tray's mouse events, a capability method's Standard
+ * Schema, the dev proxy, the UI updater and the Linux desktop entry.
+ */
+export type {
+  DesktopLinuxDesktopEntryConfig,
+  DesktopWindowLevel,
+  SpaProxyConfig,
+} from "../server/config.ts";
+export type { TrayEventType, TrayModifiers, TrayMouseDetail } from "../desktop/tray-events.ts";
+export type { StandardIssue, StandardResult, StandardSchemaV1 } from "../runtime/define-action.ts";
+export type { DesktopUpdaterConfig } from "../desktop/updater.ts";
+/**
  * The embedded web views `DesktopWindowRef.createWebView` opens (the same handle a page gets from
  * `createWebView` in `denext/desktop/window`).
  */
