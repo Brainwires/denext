@@ -35,6 +35,8 @@ import {
   appCapabilities,
   bounce,
   createTray,
+  getAppMenu,
+  getDockMenu,
   getLaunchAtLogin,
   isDesktopBridgeError,
   listShortcuts,
@@ -52,9 +54,12 @@ import {
   onDesktopEvent,
 } from "denext/desktop/client";
 import {
+  currentWindowId,
   focusWindow,
+  getPointer,
   getScreens,
   getTitleBarPreferences,
+  getWindowOrder,
   getWindows,
   getWindowState,
   maximizeWindow,
@@ -152,6 +157,9 @@ export interface CheckContext {
   readonly links: DeepLinkEvent[];
   readonly files: OpenedFile[];
 }
+
+/** A native menu item as `getAppMenu()` / `getDockMenu()` read it back. */
+type MenuItemRead = NonNullable<Awaited<ReturnType<typeof getAppMenu>>>[number];
 
 /** Thrown by a check that does not apply here; reported as `skip` with the reason. */
 class Skip extends Error {}
@@ -1804,6 +1812,125 @@ const appChecks: Check[] = [
         await refocusMain({ focus: focusWindow, hasFocus: () => document.hasFocus() });
       }
       return `title "${SECONDARY_TITLE}"; click → ${got[0]} (${win.id})`;
+    },
+  ],
+  [
+    "windows: the stacking order puts the focused window in front, from the OS where it tells",
+    async ({ setup }) => {
+      if (!setup.pinnedRuntime) throw new Skip("the stock runtime has no window order");
+      const caps = await windowCapabilities();
+      // Wayland tells no app the stacking order: the focus order stands in for it there.
+      const expected = onWayland(caps, setup) ? "focus" : "os";
+      const main = await currentWindowId();
+      const win = await openWindow({
+        url: "/second",
+        title: "Kitchen order",
+        width: 360,
+        height: 240,
+      });
+      try {
+        await win.focus();
+        // The runtime's window ids map onto denext's: the window just focused is in front.
+        const order = await waitFor(
+          async () => {
+            const o = await getWindowOrder();
+            return o.ids[0] === win.id ? o : null;
+          },
+          `${win.id} in front`,
+          10_000,
+          async () => JSON.stringify(await getWindowOrder()),
+        );
+        eq(order.source, expected, "getWindowOrder().source");
+        assert(order.ids.includes(main), `the main window (${main}) is listed: ${order.ids}`);
+        return `${order.ids.join(" > ")} (${order.source})`;
+      } finally {
+        await win.close().catch(() => {});
+        await refocusMain({ focus: focusWindow, hasFocus: () => document.hasFocus() });
+      }
+    },
+  ],
+  [
+    "windows: the pointer, asked of the OS (null where the session does not tell)",
+    async ({ setup }) => {
+      if (!setup.pinnedRuntime) throw new Skip("the stock runtime has no pointer read");
+      const caps = await windowCapabilities();
+      const p = await getPointer();
+      if (onWayland(caps, setup)) {
+        eq(p, null, "getPointer() under Wayland");
+        return "null (Wayland)";
+      }
+      assert(p, "getPointer() answered null outside Wayland");
+      assert(Number.isFinite(p.x) && Number.isFinite(p.y), `coordinates ${p.x},${p.y}`);
+      assert(Number.isInteger(p.buttons) && p.buttons >= 0, `buttons ${p.buttons}`);
+      // The window under it is one of the app's (by denext's id) or none: never a runtime id.
+      if (p.window !== null) {
+        const ids = (await getWindows()).map((w) => w.id);
+        assert(ids.includes(p.window), `window ${p.window} is not one of ${ids}`);
+        assert(
+          Number.isFinite(p.clientX) && Number.isFinite(p.clientY),
+          `client coordinates for ${p.window}: ${p.clientX},${p.clientY}`,
+        );
+      }
+      return `${p.x},${p.y} buttons ${p.buttons} over ${p.window ?? "no app window"}`;
+    },
+  ],
+  [
+    "menus: the native app menu and Dock menu read back what was set",
+    async ({ setup }) => {
+      const caps = await appCapabilities();
+      if (caps.menuSnapshot !== true) {
+        throw new Skip(`this runtime has no menu read-back (menuSnapshot: ${caps.menuSnapshot})`);
+      }
+      await setAppMenu([
+        {
+          label: "Kitchen",
+          submenu: [{
+            id: "kitchen-readback",
+            label: "Read Back",
+            accelerator: "CommandOrControl+Shift+R",
+          }],
+        },
+      ]);
+      const find = (
+        items: readonly MenuItemRead[] | null,
+        id: string,
+      ): MenuItemRead | undefined => {
+        for (const item of items ?? []) {
+          if (item.id === id) return item;
+          const inner = find(item.submenu ?? null, id);
+          if (inner) return inner;
+        }
+        return undefined;
+      };
+      const item = await waitFor(
+        async () => find(await getAppMenu(), "kitchen-readback"),
+        "the app menu item read back",
+        5000,
+        async () => JSON.stringify(await getAppMenu()),
+      );
+      eq(item.label, "Read Back", "the item's label");
+      assert(item.accelerator?.endsWith("+R"), `the item's accelerator ${item.accelerator}`);
+      let dock = "n/a here";
+      if (setup.os === "darwin") {
+        await setQuickActions([{ id: "kitchen-readback-dock", title: "Read Back" }]);
+        try {
+          const entry = await waitFor(
+            async () =>
+              (await getDockMenu())?.find((i) =>
+                i.id === "kitchen-readback-dock" || i.label === "Read Back"
+              ),
+            "the Dock menu item read back",
+            5000,
+            async () => JSON.stringify(await getDockMenu()),
+          );
+          dock = `Dock "${entry.label}"`;
+        } finally {
+          await setQuickActions([]);
+        }
+      } else {
+        eq(await getDockMenu(), null, "getDockMenu() off macOS");
+      }
+      return `app menu "${item.label}" ${item.accelerator}; ${dock}`;
     },
   ],
   [
