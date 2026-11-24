@@ -42,6 +42,7 @@ import {
   maybeReexecToolchain,
   type ReexecToolchainDeps,
   revocationCheckFor,
+  runtimeNoticeFor,
 } from "../src/cli/self-exec.ts";
 import { runtimeRevocationsCheck } from "../src/cli/commands/doctor.ts";
 import {
@@ -301,6 +302,15 @@ Deno.test("the list is not consulted for a pin override or a given pin; the tool
   } finally {
     await w.close();
   }
+});
+
+Deno.test("start and job never ask for the newer-runtime notice (it may read the network)", () => {
+  assertEquals(runtimeNoticeFor({ name: "start" }), false);
+  assertEquals(runtimeNoticeFor({ name: "job" }), false);
+  assertEquals(runtimeNoticeFor({ name: "dev" }), true);
+  assertEquals(runtimeNoticeFor({ name: "build" }), true);
+  // A project or plugin verb that happens to be named so is not the production boot.
+  assertEquals(runtimeNoticeFor({ name: "start", source: "project" }), true);
 });
 
 Deno.test("start and job read only the cached list: a stale list is never fetched at boot", async () => {

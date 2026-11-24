@@ -893,6 +893,33 @@ Deno.test("newestAvailableRelease: compatible, not yanked, and past the dependen
   assertEquals([none.pick, none.held?.version], [null, "3.0.0-denext.35"]);
 });
 
+Deno.test("runtimeUpdateNotice: a cache it can't record in asks nothing (no repeat, no fetch)", async () => {
+  await withDirs(async (root) => {
+    const channel = channelOf([await entryFor(docFor(NEWEST))]);
+    const now = Date.parse("2026-11-20T00:00:00Z");
+    const selected = activeRuntimeRelease(envOf(), { cacheRoot: root, projectDir: root });
+    // The cache root sits under a regular file: nothing can be created there.
+    await Deno.writeTextFile(join(root, "file"), "");
+    let loads = 0;
+    const o = {
+      selected,
+      env: envOf(),
+      cacheRoot: join(root, "file", "cache"),
+      now: () => now,
+      loadChannel: () => {
+        loads++;
+        return Promise.resolve(loaded(channel));
+      },
+      rule: () => Promise.resolve({ cutoff: new Date(now - 86_400_000) }),
+    };
+    assertEquals(await runtimeUpdateNotice(o), null);
+    assertEquals(await runtimeUpdateNotice(o), null);
+    assertEquals(loads, 0, "the channel is never loaded");
+    // The same release with a writable cache: said once.
+    assertStringIncludes((await runtimeUpdateNotice({ ...o, cacheRoot: root }))!, NEWEST);
+  });
+});
+
 Deno.test("runtimeUpdateNotice: once a day per release, per process tree, never for an explicit choice", async () => {
   await withDirs(async (root) => {
     const channel = channelOf([await entryFor(docFor(NEWEST)), await entryFor(docFor(NEWER))]);

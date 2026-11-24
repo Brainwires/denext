@@ -791,6 +791,20 @@ export function revocationCheckFor(
 }
 
 /**
+ * Whether a verb's switch to the toolchain asks for the "newer runtime available" notice: never
+ * for `start` and `job`, which boot production work (the notice reads the runtime channel, which
+ * may touch the network), as {@linkcode revocationCheckFor} keeps them on the cached list.
+ *
+ * @param command The verb's name and where it came from.
+ * @returns Whether the notice is asked.
+ */
+export function runtimeNoticeFor(
+  command: { readonly name: string; readonly source?: "core" | "plugin" | "project" },
+): boolean {
+  return !((command.source ?? "core") === "core" && BOOT_VERBS.has(command.name));
+}
+
+/**
  * The core verbs that serve HTTP from their own process (`Deno.serve`), and so are the ones
  * Deno's legacy `request.signal` abort reaches: `dev`, `start` and `profile` (which serves the
  * build it profiles). `export` renders without a server; `mobile dev` / `desktop dev` start a

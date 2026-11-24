@@ -1481,8 +1481,8 @@ const NOTICE_SOURCES: ReadonlySet<RuntimeSource> = new Set(["project", "default"
  * The one line that says a newer runtime is available — `denext: runtime 3.0.0-denext.31 is
  * available: denext runtime upgrade` (`--project` for a project pin) — or `null`: already said in
  * this process tree (`DENEXT_RUNTIME_NOTICED`), an explicit `DENEXT_RUNTIME` / pin file, no channel
- * (off, offline, unsigned, expired), nothing newer the hold lets in, or the same release announced
- * within a day. Never throws and never waits past the channel's fetch budget. The caller sets
+ * (off, offline, unsigned, expired), nothing newer the hold lets in, the same release announced
+ * within a day, or a cache it can't record that in (it would repeat, and fetch, every command). Never throws and never waits past the channel's fetch budget. The caller sets
  * `DENEXT_RUNTIME_NOTICED=1` after saying it.
  *
  * @param options The selected release and the seams.
@@ -1519,10 +1519,31 @@ function noticeChannel(o: RuntimeNoticeOptions, env: EnvGet, cacheRoot: string) 
   return (o.loadChannel ?? (() => loadRuntimeChannel({ env, cacheRoot })))();
 }
 
-async function noticeLine(o: RuntimeNoticeOptions): Promise<string | null> {
-  const env = o.env ?? processEnv;
+/**
+ * Whether the notice can record that it was said: without that (a read-only cache) it would be
+ * said, and its channel fetched, by every command, so it is not asked at all.
+ */
+function noticeStateWritable(cacheRoot: string): boolean {
+  try {
+    Deno.mkdirSync(cacheRoot, { recursive: true });
+    Deno.openSync(join(cacheRoot, NOTICE_STATE_FILE), { append: true, create: true }).close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The cache the notice records itself in, when a notice may be said at all; else `null`. */
+function noticeCacheRoot(o: RuntimeNoticeOptions, env: EnvGet): string | null {
   if (!noticeWanted(o, env)) return null;
   const cacheRoot = o.cacheRoot ?? toolchainCacheRoot(env);
+  return noticeStateWritable(cacheRoot) ? cacheRoot : null;
+}
+
+async function noticeLine(o: RuntimeNoticeOptions): Promise<string | null> {
+  const env = o.env ?? processEnv;
+  const cacheRoot = noticeCacheRoot(o, env);
+  if (cacheRoot === null) return null;
   const { channel } = await noticeChannel(o, env, cacheRoot);
   if (!channel) return null;
   const now = (o.now ?? Date.now)();
