@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Fixed
 
+- **The taint check walks each object of a result once.** Once anything was tainted, a Server
+  Action result or Live data value with shared or cyclic references (an ORM parent whose children
+  point back) was walked per path and could block the event loop; it is now walked per object.
+
 - **A full-app update stops every sidecar, detached ones included, before it quits.**
   `installAppUpdateAndRelaunch()` now returns a promise: it stops the app's sidecars and waits for
   them (a detached sidecar's shutdown went out from a promise continuation that a `force` quit
