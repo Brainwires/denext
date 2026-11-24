@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext export` fails when copying `public/` fails.** Every error copying it read as "no
+  `public/`", so a full disk or an unreadable file left an export without its public files and no
+  error; only a missing `public/` is skipped now.
+
 - **A web view download no listener decides is cancelled after 5 minutes.** With `downloads:
   "app"`, an item the `will-download` listener neither saved nor cancelled stayed pending in the
   runtime until the view closed; it is now cancelled at the same limit as an unanswered
