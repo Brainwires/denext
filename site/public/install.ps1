@@ -350,7 +350,19 @@ function Assert-Attestation([string]$zip, [string]$asset, [string]$repo) {
       'to verify it; DENEXT_REQUIRE_ATTESTATION=1 makes it required)')
     return
   }
-  & $gh.Source attestation verify $zip --repo $repo --signer-workflow "$repo/.github/workflows/publish.yml" *> $null
+  # A gh from before `gh attestation` (2.49) can't verify one: as if there were no gh.
+  & $gh.Source attestation verify --help *> $null
+  if ($LASTEXITCODE -ne 0) {
+    if ($env:DENEXT_REQUIRE_ATTESTATION -eq '1') {
+      throw ('denext: DENEXT_REQUIRE_ATTESTATION=1, but this GitHub CLI has no ' +
+        '`gh attestation`; update gh - not installing.')
+    }
+    Write-Host ('denext: build attestation not checked (this GitHub CLI has no `gh attestation`; ' +
+      'update gh to verify it; DENEXT_REQUIRE_ATTESTATION=1 makes it required)')
+    return
+  }
+  $ghOut = (& $gh.Source attestation verify $zip --repo $repo --signer-workflow "$repo/.github/workflows/publish.yml" 2>&1 |
+    ForEach-Object { "$_" }) -join "`n"
   if ($LASTEXITCODE -eq 0) {
     Write-Host "denext: build attestation verified (built by $repo's publish workflow)"
     return
@@ -359,10 +371,12 @@ function Assert-Attestation([string]$zip, [string]$asset, [string]$repo) {
     Write-Warning "denext: the build attestation of $asset could not be verified; installing on the checksum alone because DENEXT_INSECURE=1 is set."
     return
   }
-  throw ("denext: build attestation verification FAILED for $asset - not installing. " +
-    "``gh attestation verify $asset --repo $repo`` found no attestation from $repo's publish " +
-    'workflow. denext 4.9.0 and earlier carry none: DENEXT_INSECURE=1 installs one on its ' +
-    'checksum alone.')
+  $said = ($ghOut -split "`n" | ForEach-Object { "    $_" }) -join "`n"
+  throw ("denext: the build attestation of $asset could not be verified - not installing.`n" +
+    "  ``gh attestation verify $asset --repo $repo`` said:`n$said`n" +
+    '  A network problem (gh reaches GitHub and Sigstore), a gh token without access, or a ' +
+    'release with no attestation (denext 4.9.0 and earlier) fails this as well as a tampered ' +
+    'archive: retry once the cause is fixed. DENEXT_INSECURE=1 installs on the checksum alone.')
 }
 
 # The extracted denext.exe's Authenticode signature: a signed binary must verify (a signature

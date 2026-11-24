@@ -65,9 +65,10 @@
 # every new shell has it, and print the command that puts it on PATH in the current one. On a
 # terminal it asks first. A re-run replaces the block, never adds a second one.
 #
-# Everything lives in main(), called on the last line, so a download that is cut short runs
-# nothing: `sh` executes a truncated script only up to where it stopped, and that is never
-# past the call.
+# Everything lives in main(), called on the last line inside `{ …; }`, so a download that is
+# cut short runs nothing: `sh` executes a truncated script only up to where it stopped, never
+# past the call, and a call cut inside that line is an unclosed `{`, which sh refuses to run
+# (a bare `main "$@"` cut to `main` would run main without its flags: `--uninstall` would install).
 set -eu
 
 REPO="Brainwires/denext"
@@ -132,6 +133,16 @@ fetch_wget() {
 target() {
   os="$(uname -s)"
   arch="$(uname -m)"
+  # A shell under Rosetta 2 reports x86_64 on an Apple silicon Mac: install the native build.
+  if [ "$os-$arch" = "Darwin-x86_64" ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = "1" ]; then
+    arch=arm64
+  fi
+  if [ "$os" = "Linux" ] && is_musl; then
+    echo "denext: this Linux uses musl libc (Alpine, say); denext's Linux binaries and its Deno" >&2
+    echo "  runtime are built for glibc and do not run here. Use a glibc-based system or image" >&2
+    echo "  (Debian, Ubuntu, Fedora, the distroless/cc images…)." >&2
+    exit 1
+  fi
   case "$os-$arch" in
     Darwin-arm64) echo "aarch64-apple-darwin" ;;
     Darwin-x86_64) echo "x86_64-apple-darwin" ;;
@@ -144,6 +155,17 @@ target() {
       exit 1
       ;;
   esac
+}
+
+# Whether this Linux's C library is musl: what `ldd --version` names, else (no ldd) the musl
+# loader's presence.
+is_musl() {
+  if command -v ldd >/dev/null 2>&1; then
+    case "$(ldd --version 2>&1 || true)" in *musl* | *MUSL* | *Musl*) return 0 ;; esac
+    return 1
+  fi
+  for loader in /lib/ld-musl-*; do [ -e "$loader" ] && return 0; done
+  return 1
 }
 
 # One release file ($1, by name) into $2: from DENEXT_ARTIFACTS when it is set, else downloaded
@@ -257,6 +279,17 @@ verify_attestation() {
     echo "  verify it; DENEXT_REQUIRE_ATTESTATION=1 makes it required)"
     return 0
   fi
+  # A gh from before `gh attestation` (2.49) can't verify one: as if there were no gh.
+  if ! gh attestation verify --help >/dev/null 2>&1; then
+    if [ "${DENEXT_REQUIRE_ATTESTATION:-}" = "1" ]; then
+      echo "denext: DENEXT_REQUIRE_ATTESTATION=1, but this GitHub CLI ($(gh --version 2>/dev/null |
+        head -n 1)) has no \`gh attestation\`; update gh — not installing." >&2
+      exit 1
+    fi
+    echo "denext: build attestation not checked (this GitHub CLI has no \`gh attestation\`;"
+    echo "  update gh to verify it; DENEXT_REQUIRE_ATTESTATION=1 makes it required)"
+    return 0
+  fi
   if gh_out="$(gh attestation verify "$1" --repo "$REPO" \
     --signer-workflow "$REPO/.github/workflows/publish.yml" 2>&1)"; then
     echo "denext: build attestation verified (built by $REPO's publish workflow)"
@@ -280,9 +313,12 @@ verify_attestation() {
     echo "  the checksum alone because DENEXT_INSECURE=1 is set." >&2
     return 0
   fi
-  echo "denext: build attestation verification FAILED for $ASSET — not installing." >&2
-  echo "  \`gh attestation verify $ASSET --repo $REPO\` found no attestation from $REPO's publish" >&2
-  echo "  workflow. denext 4.9.0 and earlier carry none: DENEXT_INSECURE=1 installs one on its" >&2
+  echo "denext: the build attestation of $ASSET could not be verified — not installing." >&2
+  echo "  \`gh attestation verify $ASSET --repo $REPO\` said:" >&2
+  printf '%s\n' "$gh_out" | sed 's/^/    /' >&2
+  echo "  A network problem (gh reaches GitHub and Sigstore), a gh token without access, or a" >&2
+  echo "  release with no attestation (denext 4.9.0 and earlier) fails this as well as a" >&2
+  echo "  tampered archive: retry once the cause is fixed. DENEXT_INSECURE=1 installs on the" >&2
   echo "  checksum alone." >&2
   exit 1
 }
@@ -386,17 +422,25 @@ main() {
   fi
   verify_attestation "$TMP/$ASSET"
 
-  mkdir -p "$BIN_DIR"
   tar xzf "$TMP/$ASSET" -C "$TMP"
-  mv "$TMP/denext" "$BIN_DIR/denext"
-  chmod +x "$BIN_DIR/denext"
-
+  chmod +x "$TMP/denext"
   # An unsigned macOS download carries the quarantine attribute; strip it so the binary runs.
   if [ "$(uname -s)" = "Darwin" ]; then
-    xattr -d com.apple.quarantine "$BIN_DIR/denext" 2>/dev/null || true
+    xattr -d com.apple.quarantine "$TMP/denext" 2>/dev/null || true
   fi
+  # The binary must run here before it replaces anything: a C library it can't load (an older
+  # glibc than it was built for) fails this, and the install with it.
+  if ! installed_version="$("$TMP/denext" --version 2>&1)"; then
+    echo "denext: the downloaded denext does not run on this machine — not installing." >&2
+    printf '  %s\n' "$installed_version" >&2
+    echo "  denext's Linux build needs glibc 2.27 or newer (\`ldd --version\` shows this system's)." >&2
+    exit 1
+  fi
+  mkdir -p "$BIN_DIR"
+  mv "$TMP/denext" "$BIN_DIR/denext"
+  BINARY_INSTALLED=1
 
-  echo "denext: installed $("$BIN_DIR/denext" --version) to $BIN_DIR/denext"
+  echo "denext: installed $installed_version to $BIN_DIR/denext"
 
   install_runtime "$BIN_DIR/denext"
   setup_path
@@ -406,6 +450,7 @@ main() {
 # UNINSTALL. DENEXT_MODIFY_PATH is the same choice as an environment variable; a flag wins.
 parse_args() {
   UNINSTALL=0
+  BINARY_INSTALLED=0
   RUNTIME_ONLY=0
   [ "${DENEXT_RUNTIME_ONLY:-}" = "1" ] && RUNTIME_ONLY=1
   RUNTIME_VERSION="${DENEXT_RUNTIME_VERSION:-}"
@@ -561,34 +606,52 @@ path_block() {
   echo "$BLOCK_END"
 }
 
-# File $1 without the marked block, on stdout.
+# File $1 without the marked block, on stdout. A start marker with no end marker after it (an
+# edited file) drops only that marker line: every line after it is kept.
 without_block() {
   awk -v s="$BLOCK_START" -v e="$BLOCK_END" '
-    $0 == s { skip = 1; next }
-    skip && $0 == e { skip = 0; next }
-    !skip { print }
+    !skip && $0 == s { skip = 1; n = 0; next }
+    skip && $0 == e { skip = 0; n = 0; next }
+    skip { held[++n] = $0; next }
+    { print }
+    END { for (i = 1; i <= n; i++) print held[i] }
   ' "$1"
 }
 
 # Write stdin over file $1 in place (`cat >` keeps a symlinked dotfile a symlink, and its mode).
 overwrite() {
   tmp_rc="$1.denext-tmp.$$"
-  cat >"$tmp_rc" && cat "$tmp_rc" >"$1"
+  status=0
+  { cat >"$tmp_rc" && cat "$tmp_rc" >"$1"; } 2>/dev/null || status=1
   rm -f "$tmp_rc"
+  return "$status"
 }
 
-# Add the block to file $1 (replacing an earlier one); prints what it did.
+# Add the block to file $1 (replacing an earlier one); prints what it did. A file it can't
+# write (read-only, owned by root) is one warning with the lines to add by hand, never a failed
+# install: the binary is already in place.
 add_block() {
   rc="$1"
-  mkdir -p "$(dirname "$rc")"
-  if has_block "$rc"; then
-    { without_block "$rc"; path_block "$rc"; } | overwrite "$rc"
-    echo "denext: updated the PATH block in $(pretty "$rc")"
+  if ! write_block "$rc"; then
+    echo "denext: warning — could not write $(pretty "$rc"); add these lines to it yourself:" >&2
+    path_block "$rc" | sed 's/^/  /' >&2
+  fi
+}
+
+# add_block's write: status 1 when file $1 (or its folder) can't be written.
+write_block() {
+  mkdir -p "$(dirname "$1")" 2>/dev/null || return 1
+  if has_block "$1"; then
+    { without_block "$1"; path_block "$1"; } | overwrite "$1" || return 1
+    echo "denext: updated the PATH block in $(pretty "$1")"
     return 0
   fi
-  if [ -s "$rc" ] && [ -n "$(tail -c 1 "$rc")" ]; then echo >>"$rc"; fi
-  path_block "$rc" >>"$rc"
-  echo "denext: added denext to PATH in $(pretty "$rc")"
+  if [ -e "$1" ] && [ ! -w "$1" ]; then return 1; fi
+  if [ -s "$1" ] && [ -n "$(tail -c 1 "$1")" ]; then
+    { echo >>"$1"; } 2>/dev/null || return 1
+  fi
+  { path_block "$1" >>"$1"; } 2>/dev/null || return 1
+  echo "denext: added denext to PATH in $(pretty "$1")"
 }
 
 # Remove the block from file $1 (and the file, when it is fish's conf.d file and now empty).
@@ -805,7 +868,16 @@ install_runtime() {
 # --runtime=<version>), else one warning naming the command to run later.
 runtime_failed() {
   if [ "$RUNTIME_ONLY" = "1" ] || [ -n "$RUNTIME_VERSION" ]; then
-    echo "denext: the runtime could not be installed (see above); nothing else changed." >&2
+    if [ "$BINARY_INSTALLED" = "1" ]; then
+      # The binary is in place: it still goes on PATH, and the message says so.
+      setup_path
+      echo "denext: denext is installed at $BIN_DIR/denext, but the runtime could not be" \
+        "installed (see above)." >&2
+    else
+      echo "denext: the runtime could not be installed (see above); nothing else changed." >&2
+    fi
+    [ -n "$RUNTIME_VERSION" ] &&
+      echo "  Check the version: \`denext runtime list\` shows the releases this denext can use." >&2
     echo "  Fix the cause and run \`$1\` (or this installer again)." >&2
     exit 1
   fi
@@ -861,4 +933,4 @@ runtime_version() {
   echo "${v:-the pinned build}"
 }
 
-main "$@"
+{ main "$@"; exit; }
