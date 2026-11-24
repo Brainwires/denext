@@ -847,7 +847,7 @@ Local IPC with no loopback port (app, sidecar, CLI): `localIpcPath(name)` / `lis
 `connectLocalIpc(path, { timeoutMs })` from `denext/desktop` (a `0600` Unix socket in `<app data>/ipc`, a
 `\\.\pipe\<appId>.<user hash>.<name>` pipe on Windows, whose writes are framed, so both ends must be these
 functions there; web-stream connections; a packaged app grants `netListen` / `netConnect: ["*"]`; a
-detached sidecar passes `appId`): https://denext.dev/docs/desktop#desktop-local-ipc
+detached sidecar gets the app's `appId` from the app, a CLI passes it): https://denext.dev/docs/desktop#desktop-local-ipc
 Under the pinned runtime: `desktop.preload` (Electron's preload: bundled and inlined first into every
 top-level page; trusted, same world as the page); `desktop.app.deepLinks` / `singleInstance` deliver
 links to `onDeepLink` and opened files to `onOpenFile` (read-only handles); `openAuthSession` takes a

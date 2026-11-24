@@ -37,6 +37,7 @@
 
 import type { spawn as nodeSpawn } from "node:child_process";
 import type { Writable } from "node:stream";
+import { registeredLocalIpcAppId } from "./local-ipc.ts";
 import { basename, dirname, fromFileUrl, isAbsolute, join } from "@std/path";
 import {
   detachedOptions,
@@ -635,15 +636,29 @@ function controlMessage(
 }
 
 /** What one fresh start has made: the key and its moment. */
-interface DetachedStart {
+export interface DetachedStart {
   readonly key: string;
   readonly startedAt: number;
 }
 
-/** The `init` message a fresh detached process gets over its IPC channel (the key travels only here). */
-function detachedInit(o: DetachedLauncherOptions, ctx: SidecarLaunchContext, start: DetachedStart) {
+/**
+ * The `init` message a fresh detached process gets over its IPC channel (the key travels only
+ * here). It carries the app's identifier when this process registered one, so the sidecar's
+ * `localIpcPath(name)` needs no `appId`.
+ *
+ * @param o The launcher's options.
+ * @param ctx The launch.
+ * @param start The fresh start's key and moment.
+ * @returns The message.
+ */
+export function detachedInit(
+  o: DetachedLauncherOptions,
+  ctx: SidecarLaunchContext,
+  start: DetachedStart,
+) {
   const def = ctx.definition;
   const { exitAfterMs } = detachedOptions(def);
+  const appId = registeredLocalIpcAppId();
   return {
     t: "init",
     name: def.name,
@@ -657,6 +672,7 @@ function detachedInit(o: DetachedLauncherOptions, ctx: SidecarLaunchContext, sta
     recordPath: detachedRecordPath(o.registryDir, def.name),
     ...(o.recordPollMs !== undefined ? { recordPollMs: o.recordPollMs } : {}),
     graceMs: def.shutdown?.graceMs ?? SIDECAR_DEFAULTS.graceMs,
+    ...(appId !== undefined ? { appId } : {}),
   };
 }
 

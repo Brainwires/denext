@@ -24,6 +24,7 @@
  * @module
  */
 
+import { registerLocalIpcAppId } from "./local-ipc.ts";
 import {
   DETACHED_MAX_GRACE_MS,
   parseDetachedRecord,
@@ -57,6 +58,8 @@ interface DetachedChildInit {
   readonly recordPollMs?: number;
   /** The grace of a shutdown it starts itself (its `shutdown.graceMs`). */
   readonly graceMs?: number;
+  /** The app's identifier (`desktop.app.identifier`), registered for `localIpcPath`. */
+  readonly appId?: string;
 }
 
 /** The `node:process` parts this module drives. */
@@ -98,20 +101,27 @@ export interface RunDetachedChildOptions {
  * @returns The first bad field (`"init.key"`), or `null`.
  */
 export function detachedChildInitError(msg: unknown): string | null {
-  const m = msg as Partial<DetachedChildInit> | null;
+  const m = msg as Record<string, unknown> | null;
   if (typeof m !== "object" || m === null || m.t !== "init") return "not an init message";
-  if (typeof m.name !== "string" || m.name === "") return "init.name";
-  if (typeof m.key !== "string") return "init.key";
-  if (typeof m.recordPath !== "string" || m.recordPath === "") return "init.recordPath";
-  if (typeof m.appVersion !== "string") return "init.appVersion";
-  if (typeof m.startedAt !== "number") return "init.startedAt";
-  if (typeof m.secrets !== "object" || m.secrets === null) return "init.secrets";
-  if (m.port !== undefined && typeof m.port !== "number") return "init.port";
-  if (m.exitAfterMs !== undefined && !(typeof m.exitAfterMs === "number" && m.exitAfterMs >= 0)) {
-    return "init.exitAfterMs";
-  }
-  return null;
+  const bad = INIT_FIELD_CHECKS.find(([field, ok]) => !ok(m[field]));
+  return bad ? `init.${bad[0]}` : null;
 }
+
+/** A non-empty string. */
+const nonEmpty = (v: unknown): boolean => typeof v === "string" && v !== "";
+
+/** Each init field with what it must be, in the order a problem is reported. */
+const INIT_FIELD_CHECKS: ReadonlyArray<readonly [string, (v: unknown) => boolean]> = [
+  ["name", nonEmpty],
+  ["key", (v) => typeof v === "string"],
+  ["recordPath", nonEmpty],
+  ["appVersion", (v) => typeof v === "string"],
+  ["startedAt", (v) => typeof v === "number"],
+  ["secrets", (v) => typeof v === "object" && v !== null],
+  ["port", (v) => v === undefined || typeof v === "number"],
+  ["exitAfterMs", (v) => v === undefined || (typeof v === "number" && v >= 0)],
+  ["appId", (v) => v === undefined || nonEmpty(v)],
+];
 
 /** Wait for the app's `init` over the IPC channel. */
 function receiveInit(proc: DetachedChildProcess, timeoutMs: number): Promise<DetachedChildInit> {
@@ -169,6 +179,8 @@ export async function runDetachedSidecarChild(options: RunDetachedChildOptions):
   if (init.name !== options.name) {
     throw new Error(`sidecar ${options.name}: the init names another sidecar (${init.name})`);
   }
+  // The app's identifier, so `localIpcPath(name)` finds the app's channels here as in the app.
+  if (init.appId !== undefined) registerLocalIpcAppId(init.appId);
   const graceMs = Math.min(init.graceMs ?? SIDECAR_DEFAULTS.graceMs, DETACHED_MAX_GRACE_MS);
   const handlers: Array<() => unknown> = [];
   const attachedListeners = new Set<(attached: boolean) => void>();

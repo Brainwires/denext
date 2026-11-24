@@ -10,6 +10,8 @@ and this project adheres to
 
 ### Fixed
 
+- **`localIpcPath(name)` works inside a detached sidecar.** The app hands its identifier to the
+  sidecar it starts, so the sidecar's process finds the app's channels by name without `appId`.
 - **A detached sidecar whose module fails to load exits once.** When the first-attach deadline (or
   the app's stop) had already begun ending the sidecar while its module was still loading, the
   load failure no longer starts a second exit with code 1, and a load failure no longer leaves the

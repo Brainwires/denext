@@ -6341,10 +6341,8 @@ sc.ready();`}
         </a>{" "}
         instead of a loopback port: a Unix-domain socket or a named pipe that only the app&apos;s
         user can reach on macOS and Linux, found again by name with{" "}
-        <code>localIpcPath</code>. The sidecar&apos;s process has no app identifier registered, so
-        it passes <code>appId</code> (the app&apos;s <code>desktop.app.identifier</code>, which{" "}
-        <code>localIpcPath</code> otherwise throws without) or, on macOS and Linux,{" "}
-        <code>dir</code>.
+        <code>localIpcPath</code>: the app hands its identifier to the sidecar when it starts it, so
+        <code>localIpcPath(name)</code> needs no <code>appId</code> there either.
       </p>
       <h3 id="desktop-sidecars-login-shell">The user&apos;s login-shell environment</h3>
       <p>
@@ -6486,8 +6484,9 @@ for await (const chunk of conn.readable) console.log(chunk);`}
           name), so two users of one machine never share a pipe name. <code>appId</code> defaults to
           {" "}
           <code>desktop.app.identifier</code>, as <code>resolveDesktopCapabilities</code>{" "}
-          registered it; a process where it did not run (a module sidecar&apos;s worker, a CLI)
-          passes <code>appId</code> (or, on Unix, <code>dir</code>).
+          registered it (a detached sidecar gets it from the app that starts it); a process where
+          neither happened (a module sidecar&apos;s worker, a CLI) passes <code>appId</code>{" "}
+          (or, on Unix, <code>dir</code>).
         </li>
         <li>
           <code>listenLocalIpc(path, onConnection, {"{"} signal? {"}"})</code>{" "}
