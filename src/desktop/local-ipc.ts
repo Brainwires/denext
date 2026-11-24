@@ -365,10 +365,15 @@ function frame(chunk: Uint8Array): Uint8Array[] {
 /** The end-of-writes frame (a zero length). */
 const END_FRAME = new Uint8Array(FRAME_HEADER);
 
-/** Reassembles frames from pipe chunks: `onData` per payload, `onEnd` at the end frame. */
+/**
+ * Reassembles frames from pipe chunks: `onData` per payload, `onEnd` at the end frame, `onBad`
+ * (once, then nothing more is read) for a header naming more than {@linkcode FRAME_MAX} bytes,
+ * which this module never writes: nothing is buffered for it.
+ */
 function frameDecoder(
   onData: (bytes: Uint8Array) => void,
   onEnd: () => void,
+  onBad: (err: Error) => void,
 ): (chunk: Uint8Array) => void {
   let buffered = new Uint8Array(0);
   let ended = false;
@@ -381,6 +386,16 @@ function frameDecoder(
         ended = true;
         buffered = new Uint8Array(0);
         onEnd();
+        return;
+      }
+      if (length > FRAME_MAX) {
+        ended = true;
+        buffered = new Uint8Array(0);
+        onBad(
+          new Deno.errors.InvalidData(
+            `local IPC: a frame of ${length} bytes exceeds the ${FRAME_MAX}-byte limit`,
+          ),
+        );
         return;
       }
       if (buf.length < FRAME_HEADER + length) break;
@@ -429,7 +444,12 @@ function wrapSocket(socket: net.Socket, framed: boolean): LocalIpcConnection {
         controller.enqueue(bytes);
         if ((controller.desiredSize ?? 1) <= 0) socket.pause();
       };
-      const decode = framed ? frameDecoder(deliver, () => finish()) : undefined;
+      const decode = framed
+        ? frameDecoder(deliver, () => finish(), (err) => {
+          finish(err);
+          socket.destroy();
+        })
+        : undefined;
       socket.on("data", (chunk: Uint8Array) => {
         if (decode) decode(new Uint8Array(chunk));
         else deliver(new Uint8Array(chunk));

@@ -645,3 +645,46 @@ Deno.test("local IPC: a pipe connection frames each write and ends with a zero-l
     await ch.cleanup();
   }
 });
+
+Deno.test("local IPC: a pipe frame claiming more than the frame limit errors the read and closes", async () => {
+  const ch = await channel();
+  try {
+    let peer: net.Socket | undefined;
+    const peerClosed = Promise.withResolvers<void>();
+    const server = net.createServer({ allowHalfOpen: true }, (s) => {
+      peer = s;
+      s.on("error", () => {});
+      s.on("data", () => {}); // flowing, so the client's close reaches it as `end`
+      s.once("end", () => peerClosed.resolve());
+    });
+    await new Promise<void>((resolve) => server.listen(ch.path, () => resolve()));
+    try {
+      const conn = await connectLocalIpcWith(
+        () => net.connect({ path: ch.path, allowHalfOpen: true }),
+        "\\\\.\\pipe\\dev.denext.framing.u.t",
+      );
+      const read = readAll(conn.readable);
+      assert(peer);
+      // A header naming 4 GiB - 1, then a few bytes: refused at the header, nothing buffered.
+      peer.write(concat([header(0xffff_ffff), new Uint8Array([1, 2, 3])]));
+      // (Bounded, so a decoder that waits for the 4 GiB instead fails here rather than hangs.)
+      let bound: ReturnType<typeof setTimeout> | undefined;
+      const err = await assertRejects(() =>
+        Promise.race([
+          read,
+          new Promise((_, reject) =>
+            bound = setTimeout(() => reject(new Error("still reading")), 10_000)
+          ),
+        ]).finally(() => clearTimeout(bound))
+      );
+      assert(err instanceof Deno.errors.InvalidData, String(err));
+      assertMatch(err.message, /exceeds the 1048576-byte limit/);
+      await peerClosed.promise; // the connection was closed
+    } finally {
+      peer?.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  } finally {
+    await ch.cleanup();
+  }
+});

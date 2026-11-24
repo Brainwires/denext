@@ -10,6 +10,10 @@ and this project adheres to
 
 ### Fixed
 
+- **Local IPC on a Windows pipe refuses an oversized frame.** A frame header naming more than the
+  1 MiB frame limit now errors the connection's read and closes it, instead of buffering until
+  that many bytes arrive.
+
 - **The taint check walks each object of a result once.** Once anything was tainted, a Server
   Action result or Live data value with shared or cyclic references (an ORM parent whose children
   point back) was walked per path and could block the event loop; it is now walked per object.
