@@ -20,11 +20,12 @@ and this project adheres to
   reads the whole folder; a symlink's own name and any other spelling are still checked by
   listing its parent.
 
-- **A local IPC client on Windows can check who serves its pipe.** A pipe connection now goes
-  through a server-identity check that refuses a server run by another user, or one whose user
-  can't be read. The runtime doesn't yet tell script who serves a pipe, so on Windows the check is
-  off by default and same-machine users stay trusted (the server already claims its pipe name as
-  the first instance).
+- **A local IPC client on Windows refuses a pipe served by another user.** Where the runtime
+  reports who serves a pipe connection (`Deno.pipeServerIdentity`), `connectLocalIpc` takes only a
+  pipe this user serves: a server run by another user, a pipe another user owns, or one whose
+  identity can't be read is refused with `PermissionDenied` and the connection closed. On a runtime
+  that doesn't report it the check is skipped: the client takes whichever process serves the name
+  (the server still claims its pipe name as the first instance).
 
 - **Two local IPC servers starting at once on one Unix socket can no longer orphan each other.**
   The stale-socket check and the bind were not atomic, so the second could remove the first's new
