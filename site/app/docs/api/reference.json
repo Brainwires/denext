@@ -60377,6 +60377,18 @@
               "name": "toolbarStyle",
               "signature": "readonly toolbarStyle: boolean",
               "doc": "{@linkcode setToolbarStyle} works (macOS 11 and later)."
+            },
+            {
+              "kind": "property",
+              "name": "windowOrder",
+              "signature": "readonly windowOrder: boolean",
+              "doc": "`getWindowOrder()` reads the real stacking order from the OS (macOS, Windows, Linux on X11; on\nWayland, or a runtime without it, it falls back to the focus order)."
+            },
+            {
+              "kind": "property",
+              "name": "pointer",
+              "signature": "readonly pointer: boolean",
+              "doc": "`getPointer()` answers where the pointer is on the screen (macOS, Windows, Linux on X11; not\non Wayland, or on a runtime without it)."
             }
           ]
         },

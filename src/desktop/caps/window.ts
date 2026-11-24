@@ -408,6 +408,8 @@ async function reportedCapabilities(
     // Reported by the runtime's windowCapabilities() where it has the setters; false before.
     titleVisibility: false,
     toolbarStyle: false,
+    windowOrder: false,
+    pointer: false,
     windowButtonPosition: false,
     mica: false,
     acrylic: false,

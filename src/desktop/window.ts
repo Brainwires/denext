@@ -250,6 +250,16 @@ export interface WindowCapabilities {
   readonly titleVisibility: boolean;
   /** {@linkcode setToolbarStyle} works (macOS 11 and later). */
   readonly toolbarStyle: boolean;
+  /**
+   * `getWindowOrder()` reads the real stacking order from the OS (macOS, Windows, Linux on X11; on
+   * Wayland, or a runtime without it, it falls back to the focus order).
+   */
+  readonly windowOrder: boolean;
+  /**
+   * `getPointer()` answers where the pointer is on the screen (macOS, Windows, Linux on X11; not
+   * on Wayland, or on a runtime without it).
+   */
+  readonly pointer: boolean;
   /** Any other key the runtime reports. */
   readonly [key: string]: boolean | string | null;
 }
