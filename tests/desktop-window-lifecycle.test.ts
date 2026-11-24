@@ -661,7 +661,7 @@ Deno.test("updater: an install held for the quit hooks is issued again as the in
   });
   try {
     assertEquals(
-      installAppUpdateAndRelaunch(),
+      await installAppUpdateAndRelaunch(),
       { quitting: true },
       "held for the hooks: it goes on",
     );
@@ -678,7 +678,7 @@ Deno.test("updater: an install held for the quit hooks is issued again as the in
         relaunches.push(o);
         return { quitting: refused.api.quit!() };
       };
-    assertEquals(installAppUpdateAndRelaunch({ force: true }), { quitting: true });
+    assertEquals(await installAppUpdateAndRelaunch({ force: true }), { quitting: true });
     await until(() => refused.cancels.length > 0);
     assertEquals([relaunches, refused.quits, cancels], [[{ force: true }], [], []]);
   } finally {

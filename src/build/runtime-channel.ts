@@ -305,8 +305,18 @@ export function checkChannelRelease(raw: unknown): RuntimeChannelRelease {
 }
 
 /**
- * Check a schema-1 payload and keep what this denext reads (unknown fields dropped). Entries are
- * returned newest first; two entries for one version are refused.
+ * Whether an index entry is on a version line this denext does not know (a later runtime line, a
+ * version string it cannot parse): left out of what it reads, never a reason to drop the index.
+ */
+function onUnknownLine(raw: unknown): boolean {
+  const version = (raw as { version?: unknown } | null)?.version;
+  return typeof version === "string" && !CHANNEL_RELEASE_VERSION.test(version);
+}
+
+/**
+ * Check a schema-1 payload and keep what this denext reads (unknown fields dropped, and entries
+ * on a version line it does not know: a later denext may list a new runtime line beside this
+ * one). Entries are returned newest first; two entries for one version are refused.
  *
  * @param raw The parsed payload.
  * @returns The index.
@@ -316,7 +326,7 @@ export function checkRuntimeChannel(raw: unknown): RuntimeChannel {
   const header = checkPayloadHeader(raw, invalid);
   const p = raw as Record<string, unknown>;
   if (!Array.isArray(p.releases)) throw invalid("releases must be a list");
-  const releases = p.releases.map(checkChannelRelease);
+  const releases = p.releases.filter((r) => !onUnknownLine(r)).map(checkChannelRelease);
   const seen = new Set<string>();
   for (const r of releases) {
     if (seen.has(r.version)) throw invalid(`${r.version} is listed twice`);
@@ -1017,13 +1027,13 @@ export async function loadReleaseDocument(
     if (doc) return doc;
   }
   if (options.offline) throw badDocument(`${entry.version} is not cached (offline)`);
-  const signal = AbortSignal.timeout(options.budgetMs ?? FORCE_BUDGET_MS);
   const problems: string[] = [];
   for (const url of releaseDocumentUrls(entry.version, options.bases)) {
     try {
       const text = await fetchTextCapped(
         url,
-        signal,
+        // Each base its own budget: a stalled first base never leaves the mirror pre-aborted.
+        AbortSignal.timeout(options.budgetMs ?? FORCE_BUDGET_MS),
         options.fetch ?? fetch,
         RELEASE_DOCUMENT_MAX_BYTES,
       );

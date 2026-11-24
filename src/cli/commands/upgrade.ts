@@ -30,6 +30,12 @@ import { setJsonValue } from "../../build/json-edit.ts";
 import { applyJailExceptions, type JailReport } from "../../build/jail-scripts.ts";
 import { commandMeta } from "../command-meta.ts";
 import type { StaleNativeTemplate } from "../../build/native-template-status.ts";
+import {
+  factsOfEntry,
+  readProjectRuntimePin,
+  runtimeIncompatibility,
+} from "../../build/runtime-select.ts";
+import { loadRuntimeChannel, type RuntimeChannelRelease } from "../../build/runtime-channel.ts";
 
 /** The project config `upgrade` edits: `deno.json`, else `deno.jsonc`. */
 async function configPath(dir: string): Promise<string | null> {
@@ -128,6 +134,8 @@ interface UpgradeOutcome {
   readonly jail: JailReport | null;
   /** The native template families in `ios/` / `android/` older than this denext writes. */
   readonly nativeTemplates: readonly StaleNativeTemplate[];
+  /** What the project's runtime pin means for the denext it moves to (`null`: nothing to say). */
+  readonly runtimePin: string | null;
 }
 
 /** Whether an `exclude` entry already keeps the runtime's `.deno/` directory out. */
@@ -228,6 +236,7 @@ function outcomeJson(
     denoExclude: o.denoExclude,
     jailExceptions: o.jail && { action: o.jail.action, lines: o.jail.lines },
     nativeTemplates: nonEmpty(o.nativeTemplates),
+    runtimePin: o.runtimePin,
     unresolvedMembers: nonEmpty(files.unresolved),
     outsideMembers: nonEmpty(files.outside),
   };
@@ -262,6 +271,7 @@ function printOutcome(
   reportEditor(o.dir, o.editor);
   reportProjectRepairs(o);
   reportNativeTemplates(o.nativeTemplates);
+  if (o.runtimePin) console.error(o.runtimePin);
   if (o.lock === true) console.log("deno.lock refreshed.");
   if (o.lock === false) {
     console.error(
@@ -309,11 +319,68 @@ async function hasLockfile(dir: string): Promise<boolean> {
  * @param options The dependency-age rule and clock (injected by tests; default: the project's).
  * @returns The process exit code.
  */
+/** The runtime channel's cached entries (never the network): what the runtime-pin check reads. */
+async function cachedChannelEntries(): Promise<readonly RuntimeChannelRelease[]> {
+  const loaded = await loadRuntimeChannel({ mode: "cache-only" }).catch(() => null);
+  return loaded?.channel?.releases ?? [];
+}
+
+const DENEXT_PACKAGE = "@denext/denext";
+
+/** The project's runtime pin, or `null` (none, or malformed: every command reports that). */
+function projectPinOf(dir: string): ReturnType<typeof readProjectRuntimePin> {
+  try {
+    return readProjectRuntimePin(dir);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What the project's runtime pin (`"denext": { "runtime" }` in its deno.json) means for the
+ * denext the plan moves it to: `denext upgrade` never moves the pin, so a pinned release the new
+ * denext refuses (the cached channel entry's `minDenext` / `maxDenext`, or a floor this denext
+ * already has) would fail every command after it. With no channel entry to judge by, a short
+ * reminder of the same fix. `null` without a pin, or when denext does not move.
+ *
+ * @param dir The project.
+ * @param plan The upgrade plan.
+ * @param entries Reads the channel's entries (cached; tests pass their own), only with a pin.
+ * @returns The line, or `null`.
+ */
+export async function runtimePinNotice(
+  dir: string,
+  plan: UpgradePlan,
+  entries: () => Promise<readonly RuntimeChannelRelease[]> = cachedChannelEntries,
+): Promise<string | null> {
+  const step = plan.ok
+    ? plan.steps.find((s) => s.name === DENEXT_PACKAGE && s.to !== s.from)
+    : undefined;
+  const pin = step ? projectPinOf(dir) : null;
+  if (!step || !pin) return null;
+  const head = `denext upgrade: the project pins runtime ${pin.lock.version} (${pin.configPath})`;
+  const fix =
+    `  Fix: \`denext runtime use <version> --project\` pins a release denext ${step.to} ` +
+    "runs on (`denext runtime use bundled --project` pins the one it bundles).";
+  const entry = (await entries()).find((e) => e.version === pin.lock.version);
+  if (!entry) {
+    return `${head}, which this upgrade does not move; if denext ${step.to} refuses it:\n${fix}`;
+  }
+  const bad = runtimeIncompatibility(factsOfEntry(entry), { denext: step.to });
+  return bad
+    ? `${head}, but ${bad.message}: every command refuses it after this upgrade.\n${fix}`
+    : null;
+}
+
 export async function runUpgrade(
   ctx: CommandContext,
   lookups: UpgradeLookups = jsrLookups(),
   refreshLock: (dir: string) => Promise<boolean> = refreshLockfile,
-  options: { rule?: DepAgeRule; now?: Date } = {},
+  options: {
+    rule?: DepAgeRule;
+    now?: Date;
+    channelEntries?: () => Promise<readonly RuntimeChannelRelease[]>;
+  } = {},
 ): Promise<number> {
   const dir = projectDir(ctx);
   const path = await configPath(dir);
@@ -352,6 +419,7 @@ export async function runUpgrade(
   const repairs = await projectRepairs(dir, path, plan.ok, !check && ctx.flags["dry-run"] !== true);
   const lock = written && await hasLockfile(dir) ? await refreshLock(dir) : undefined;
   const nativeTemplates = await nativeTemplatesBehind(dir);
+  const runtimePin = await runtimePinNotice(dir, plan, options.channelEntries);
   const outcome = {
     dir,
     path,
@@ -364,6 +432,7 @@ export async function runUpgrade(
     now,
     ...repairs,
     nativeTemplates,
+    runtimePin,
   };
   printOutcome(ctx.global.json === true, outcome, { changedFiles, unresolved, outside });
   if (!plan.ok) return 1;

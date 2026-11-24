@@ -37,6 +37,11 @@ export const FLOORED: readonly { dir: string; match: RegExp }[] = [
  */
 export const FLOORED_FULL: readonly { dir: string; match: RegExp }[] = [
   { dir: "src/cli", match: /^cli-cache\.ts$/ }, // the remote CLI's offline module cache
+  // the runtime channel's signature, replay and selection checks, and the client-side guards
+  // (navigation schemes, the element brand): security code that must not quietly lose coverage
+  { dir: "src/build", match: /^(runtime-channel|runtime-select|signed-envelope)\.ts$/ },
+  { dir: "src/client", match: /^nav-scheme\.ts$/ },
+  { dir: "src/jsx", match: /^host-tag\.ts$/ },
   { dir: "packages/tanstack-start/src", match: /^use-server\.ts$/ }, // a "use server" module's browser half
 ];
 

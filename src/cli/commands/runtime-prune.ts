@@ -296,6 +296,8 @@ interface RemovalRun {
   /** A prune that kept everything because the project's pins are unknown. */
   readonly blind: boolean;
   readonly unknownProject: string | null;
+  /** The project whose pins decided what is in use (the one directory a prune looks at). */
+  readonly projectDir: string;
   readonly force: boolean;
   readonly dryRun: boolean;
   readonly json: boolean;
@@ -312,7 +314,8 @@ async function runRemoval(
   const force = ctx.flags.force === true;
   const dryRun = ctx.flags["dry-run"] === true;
   const roots = deps.roots ?? toolchainCacheRoots();
-  const { inUse, unknownProject } = await versionsInUse(commandCwd(ctx), deps);
+  const projectDir = commandCwd(ctx);
+  const { inUse, unknownProject } = await versionsInUse(projectDir, deps);
   const plan = planToolchainRemoval(await listToolchainCache(roots), request, inUse, force);
   // A prune that can't tell what the project here needs removes nothing (unless --force).
   const blind = request.action === "prune" && unknownProject !== null && !force;
@@ -327,6 +330,7 @@ async function runRemoval(
     outcomes,
     blind,
     unknownProject,
+    projectDir,
     force,
     dryRun,
     json: ctx.global.json === true,
@@ -344,6 +348,7 @@ function printJson(r: RemovalRun): void {
       kept: [...r.plan.inUse, ...(r.blind ? r.plan.remove : [])].map((e) => entryJson(e)),
       notCached: r.plan.notCached,
       freedBytes: r.freed,
+      project: r.projectDir,
       ...(r.unknownProject ? { warning: r.unknownProject } : {}),
     },
     null,
@@ -366,7 +371,19 @@ function report(r: RemovalRun): void {
     console.log(`  ! ${r.unknownProject}${kept}`);
   }
   console.log(totalLine(r));
+  if (r.request.action !== "uninstall") console.log(scopeLine(r));
   console.log("");
+}
+
+/**
+ * What a prune looked at: the project in one directory (and this machine's runtime selection),
+ * never other projects or running processes, and how to prune for another project.
+ */
+function scopeLine(r: RemovalRun): string {
+  return `  Kept what the project in ${r.projectDir} uses; other projects' pins (and a running ` +
+    "`denext dev` elsewhere) are not seen, and a runtime they need that was removed is " +
+    "downloaded again on their next use. For another project: `denext --cwd <its folder> " +
+    "runtime prune`, or run it from that folder.";
 }
 
 /** One removed entry's line. */

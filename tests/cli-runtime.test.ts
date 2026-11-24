@@ -336,7 +336,17 @@ Deno.test("runtime upgrade --project: pins version + integrity in deno.json, com
       join(w.project, "deno.json"),
       '{\n  // the app\n  "tasks": { "dev": "denext dev" }\n}\n',
     );
+    // A hard link to the old file: an in-place write would change it too; the pin is written to a
+    // temp file renamed over deno.json, so the link keeps the old text (never a half-written file).
+    const before = join(w.project, "deno.json.before");
+    await Deno.link(join(w.project, "deno.json"), before);
     assertEquals(await run(w, ["upgrade"], { project: true }), 0, text(w.err));
+    assert(!(await Deno.readTextFile(before)).includes("integrity"), "written by rename");
+    assertEquals(
+      [...Deno.readDirSync(w.project)].filter((e) => e.name.endsWith(".tmp")),
+      [],
+      "no temp file is left",
+    );
     const raw = await Deno.readTextFile(join(w.project, "deno.json"));
     assertStringIncludes(raw, "// the app");
     const { parse } = await import("@std/jsonc");

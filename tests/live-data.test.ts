@@ -32,6 +32,7 @@ import { makeDom } from "./helpers/dom.ts";
 import { useLive, useLiveOptimistic, usePresence } from "../src/client/live-data.ts";
 import { configureLive, subscribeLiveData } from "../src/client/live-client.ts";
 import { useState } from "../src/runtime/hooks.ts";
+import { experimental_taintUniqueValue } from "../src/runtime/taint.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;
@@ -117,6 +118,45 @@ Deno.test("useLive hub: pushes the initial value, then recomputes on tag invalid
     assertEquals(frames[1], { type: "data", subId: "s1", value: 2 });
     ws.close();
   } finally {
+    uninstallLiveHub();
+    await server.shutdown();
+  }
+});
+
+Deno.test("useLive hub: a data value holding a tainted value is refused; the socket keeps serving", async () => {
+  const SECRET = `live-taint-${crypto.randomUUID()}`;
+  experimental_taintUniqueValue("the live secret stays on the server", globalThis, SECRET);
+  liveReadable(serverAction("livedata#tainted", () => ({ ok: true, nested: { secret: SECRET } })));
+  liveReadable(serverAction("livedata#plain", () => 7));
+  const { server, port } = startHub();
+  const raw: string[] = [];
+  const original = console.error;
+  console.error = () => {}; // the server logs the refusal
+  try {
+    const subscribe = (ws: WebSocket, subId: string, actionId: string) =>
+      ws.send(JSON.stringify({ type: "data-subscribe", subId, actionId, args: [], tags: [] }));
+    const { ws, frames } = await collect(
+      port,
+      "data",
+      1,
+      (ws) => {
+        ws.addEventListener("message", (ev) => raw.push(String(ev.data)));
+        subscribe(ws, "s1", "livedata#tainted");
+      },
+      (msg, ws) => {
+        // The refusal for s1 arrived: the same socket still takes and serves a subscription.
+        if (msg.type === "error" && msg.subId === "s1") subscribe(ws, "s2", "livedata#plain");
+      },
+    );
+    const errors = raw.map((r) => JSON.parse(r)).filter((m) => m.type === "error");
+    assertEquals(errors.map((e) => [e.subId, e.code]), [["s1", "failed"]]);
+    assertEquals(frames, [{ type: "data", subId: "s2", value: 7 }]);
+    // No frame carries the tainted value, or any of the value it sat in.
+    for (const r of raw) assert(!r.includes(SECRET) && !r.includes('"nested"'), r);
+    assertEquals(ws.readyState, WebSocket.OPEN);
+    ws.close();
+  } finally {
+    console.error = original;
     uninstallLiveHub();
     await server.shutdown();
   }

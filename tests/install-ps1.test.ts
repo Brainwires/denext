@@ -155,6 +155,8 @@ Deno.test("install.ps1 harness: only a PowerShell host crash is retried, never t
  */
 const GH_STUB = [
   "@echo off",
+  // The installer's probe for `gh attestation` (a gh before 2.49 has none: STUB_GH_OLD).
+  'if "%1 %2 %3"=="attestation verify --help" (if defined STUB_GH_OLD (echo unknown command "attestation" for "gh" 1>&2& exit /b 1) else (exit /b 0))',
   'if defined STUB_GH_LOG echo %* >> "%STUB_GH_LOG%"',
   // The real CLI writes its refusals to stderr, which Windows PowerShell 5.1 turns into a
   // terminating NativeCommandError under ErrorActionPreference 'Stop'; the stub does the same.
@@ -425,8 +427,27 @@ Deno.test("install.ps1: a signed-in gh must verify the archive's build attestati
     // A release whose archive does not verify (swapped with a matching SHA256SUMS): nothing.
     const bad = await install(release, join(dir, "bad"), { ...quiet, STUB_GH_AUTH: "1" });
     assert(bad.code !== 0, bad.out);
-    assertStringIncludes(bad.out, "build attestation verification FAILED");
+    assertStringIncludes(bad.out, `the build attestation of ${ASSET} could not be verified`);
+    // gh's own words are shown, and the causes besides tampering are named.
+    assertStringIncludes(bad.out, "no attestations found");
+    assertStringIncludes(bad.out, "A network problem");
     assert(!(await exists(join(dir, "bad", "bin", "denext.exe"))));
+    // A gh without `gh attestation`: installed on the checksum with a note; required, refused.
+    const old = await install(release, join(dir, "old"), {
+      ...quiet,
+      STUB_GH_AUTH: "1",
+      STUB_GH_OLD: "1",
+    });
+    assertEquals(old.code, 0, old.out);
+    assertStringIncludes(old.out, "this GitHub CLI has no `gh attestation`");
+    const oldRequired = await install(release, join(dir, "old-required"), {
+      ...quiet,
+      STUB_GH_AUTH: "1",
+      STUB_GH_OLD: "1",
+      DENEXT_REQUIRE_ATTESTATION: "1",
+    });
+    assert(oldRequired.code !== 0, oldRequired.out);
+    assertStringIncludes(oldRequired.out, "has no `gh attestation`; update gh");
     const forced = await install(release, join(dir, "forced"), {
       ...quiet,
       STUB_GH_AUTH: "1",

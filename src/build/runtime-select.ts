@@ -358,13 +358,13 @@ export async function fetchLockedReleaseDocument(
   lock: RuntimeLock,
   options: FetchLockedOptions,
 ): Promise<RuntimeReleaseDocument> {
-  const signal = AbortSignal.timeout(options.budgetMs ?? 10_000);
   const problems: string[] = [];
   for (const url of releaseDocumentUrls(lock.version, options.bases)) {
     try {
       const text = await fetchTextCapped(
         url,
-        signal,
+        // Each base its own budget: a stalled first base never leaves the mirror pre-aborted.
+        AbortSignal.timeout(options.budgetMs ?? 10_000),
         options.fetch ?? fetch,
         RELEASE_DOCUMENT_MAX_BYTES,
       );
@@ -441,19 +441,35 @@ export function bundledRuntimeReleases(bundled: RuntimePins = BUNDLED_RUNTIME): 
   return bundledReleases(bundled);
 }
 
-/** The bundled release, and its rollback release when both pins name the same one. */
+/** The keys a release document's pins start with, in their published order. */
+const DOCUMENT_HEAD_KEYS = ["schema", "version", "tag", "repository"];
+
+/** `pin` with {@linkcode DOCUMENT_HEAD_KEYS} first, then its other keys in their own order. */
+function inDocumentOrder<T extends object>(pin: T): T {
+  const src = pin as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const key of DOCUMENT_HEAD_KEYS) if (key in src) out[key] = src[key];
+  for (const [key, value] of Object.entries(src)) if (!(key in out)) out[key] = value;
+  return out as T;
+}
+
+/**
+ * The bundled release, and its rollback release when both pins name the same one. The
+ * rollback's pins are rebuilt in the published release document's key order (`schema`,
+ * `version`, `tag`, `repository`, then the rest as recorded): its lock hashes that text, so any
+ * other order would give an integrity no other denext, and no channel entry, accepts.
+ */
 function bundledReleases(bundled: RuntimePins): RuntimePins[] {
   const out: RuntimePins[] = [bundled];
   const t = bundled.toolchain.rollback;
   const d = bundled.desktop.rollback;
   if (t && d && t.version === d.version) {
+    const repository = bundled.toolchain.repository;
     out.push({
-      toolchain: {
-        schema: 1,
-        ...(bundled.toolchain.repository ? { repository: bundled.toolchain.repository } : {}),
-        ...t,
-      } as DenoToolchainPin,
-      desktop: { schema: 1, ...d } as DesktopRuntimePin,
+      toolchain: inDocumentOrder(
+        { schema: 1, ...(repository ? { repository } : {}), ...t } as DenoToolchainPin,
+      ),
+      desktop: inDocumentOrder({ schema: 1, ...d } as DesktopRuntimePin),
     });
   }
   return out;
@@ -767,6 +783,11 @@ export interface ResolveRuntimeSyncOptions extends ResolveRuntimeOptions {
   readonly envLock?: RuntimeLock;
   /** Channel entries by version, for `minDenext` / `maxDenext` / `yanked`. */
   readonly entries?: ReadonlyMap<string, RuntimeChannelRelease>;
+  /**
+   * Why fetching the project pin's release document failed just now (the async resolver's
+   * prefetch): the project-pin refusal names it instead of a fix that fails the same way.
+   */
+  readonly projectFetchError?: string;
 }
 
 /** What every rung reads, resolved once. */
@@ -780,6 +801,7 @@ interface Ctx {
   readonly compat: CompatTarget;
   readonly envLock?: RuntimeLock;
   readonly entries: ReadonlyMap<string, RuntimeChannelRelease>;
+  readonly projectFetchError?: string;
 }
 
 function ctxOf(o: ResolveRuntimeSyncOptions): Ctx {
@@ -793,6 +815,7 @@ function ctxOf(o: ResolveRuntimeSyncOptions): Ctx {
     compat: o.compat ?? {},
     ...(o.envLock ? { envLock: o.envLock } : {}),
     entries: o.entries ?? new Map(),
+    ...(o.projectFetchError ? { projectFetchError: o.projectFetchError } : {}),
   };
 }
 
@@ -923,16 +946,30 @@ function projectPinRefusal(pin: ProjectRuntimePin, bad: RuntimeIncompatibility):
     `${bad.message}.${fix}`;
 }
 
+/**
+ * Why a project pin's release is not here: with the fetch that just failed, its cause (offline, a
+ * copy that does not hash to the pin's integrity, a refused document) and a fix that does not
+ * fail the same way; without one, the install that fetches it.
+ */
+function projectPinMissing(pin: ProjectRuntimePin, fetchError: string | undefined): string {
+  const head =
+    `denext: the project pins runtime ${pin.lock.version} (${pin.configPath}), which is ` +
+    "not installed here";
+  if (fetchError === undefined) {
+    return `${head} (or its cached release document no longer matches the pin's integrity).\n` +
+      "  Fix: run `denext runtime install` (online), then retry.";
+  }
+  return `${head}, and its release document could not be fetched: ${fetchError}.\n` +
+    "  Fix: retry once denext.dev or the GitHub mirror is reachable. If a copy was served but " +
+    "does not match the pin's integrity, the pin is not that release's: `denext runtime use " +
+    `${pin.lock.version} --project\` pins it again from the channel (or \`denext runtime use ` +
+    "bundled --project` pins the bundled one).";
+}
+
 /** Rung 3: the project pin. */
 function projectRung(pin: ProjectRuntimePin, ctx: Ctx): RuntimeRelease {
   const pins = lockedPinsSync(pin.lock, ctx.bundled, ctx.cacheRoot);
-  if (!pins) {
-    throw new RuntimeSelectError(
-      `denext: the project pins runtime ${pin.lock.version} (${pin.configPath}), which is not ` +
-        "installed here (or its cached release document no longer matches the pin's integrity).\n" +
-        "  Fix: run `denext runtime install` (online), then retry.",
-    );
-  }
+  if (!pins) throw new RuntimeSelectError(projectPinMissing(pin, ctx.projectFetchError));
   const bad = runtimeIncompatibility(factsFor(pins, ctx), ctx.compat);
   if (bad) throw new RuntimeSelectError(projectPinRefusal(pin, bad));
   return lockedRelease(pins, "project", pin.lock, yankedNotices(pin.lock.version, ctx));
@@ -1102,17 +1139,27 @@ async function prefetchEnvLock(
   }
 }
 
-/** Fetch what the project pin and the user default name when it is not cached. */
-async function prefetchLocks(o: ResolveRuntimeAsyncOptions, s: AsyncSeams): Promise<void> {
-  if (s.env(RUNTIME_ENV)?.trim() || s.env(PIN_FILE_ENV)) return;
+/**
+ * Fetch what the project pin and the user default name when it is not cached: why the project
+ * pin's fetch failed, when it did (the sync rung reports it, with its fix).
+ */
+async function prefetchLocks(
+  o: ResolveRuntimeAsyncOptions,
+  s: AsyncSeams,
+): Promise<string | undefined> {
+  if (s.env(RUNTIME_ENV)?.trim() || s.env(PIN_FILE_ENV)) return undefined;
   const project = readProjectRuntimePin(o.projectDir ?? cwdOr("."));
   if (project) {
-    // A failure is reported by the sync rung, with its fix.
-    await ensureLocked(project.lock, s).catch(() => {});
-    return;
+    try {
+      await ensureLocked(project.lock, s);
+      return undefined;
+    } catch (err) {
+      return errText(err);
+    }
   }
   const d = userDefaultIn(s.defaultFile);
   if (d) await ensureLocked(d, s).catch(() => {});
+  return undefined;
 }
 
 /**
@@ -1134,13 +1181,14 @@ export async function resolveRuntimeRelease(
   const held = await heldChannel(s);
   const entries = entriesOf(held);
   const envLock = await prefetchEnvLock(options, s, entries);
-  await prefetchLocks(options, s);
+  const projectFetchError = await prefetchLocks(options, s);
   const release = resolveRuntimeReleaseSync({
     ...options,
     env: s.env,
     bundled: s.bundled,
     ...(envLock ? { envLock } : {}),
     entries,
+    ...(projectFetchError ? { projectFetchError } : {}),
   });
   if (!options.revocations) return release;
   return await revocationFallback(release, options, s, held);
@@ -1433,8 +1481,8 @@ const NOTICE_SOURCES: ReadonlySet<RuntimeSource> = new Set(["project", "default"
  * The one line that says a newer runtime is available — `denext: runtime 3.0.0-denext.31 is
  * available: denext runtime upgrade` (`--project` for a project pin) — or `null`: already said in
  * this process tree (`DENEXT_RUNTIME_NOTICED`), an explicit `DENEXT_RUNTIME` / pin file, no channel
- * (off, offline, unsigned, expired), nothing newer the hold lets in, or the same release announced
- * within a day. Never throws and never waits past the channel's fetch budget. The caller sets
+ * (off, offline, unsigned, expired), nothing newer the hold lets in, the same release announced
+ * within a day, or a cache it can't record that in (it would repeat, and fetch, every command). Never throws and never waits past the channel's fetch budget. The caller sets
  * `DENEXT_RUNTIME_NOTICED=1` after saying it.
  *
  * @param options The selected release and the seams.
@@ -1471,10 +1519,31 @@ function noticeChannel(o: RuntimeNoticeOptions, env: EnvGet, cacheRoot: string) 
   return (o.loadChannel ?? (() => loadRuntimeChannel({ env, cacheRoot })))();
 }
 
-async function noticeLine(o: RuntimeNoticeOptions): Promise<string | null> {
-  const env = o.env ?? processEnv;
+/**
+ * Whether the notice can record that it was said: without that (a read-only cache) it would be
+ * said, and its channel fetched, by every command, so it is not asked at all.
+ */
+function noticeStateWritable(cacheRoot: string): boolean {
+  try {
+    Deno.mkdirSync(cacheRoot, { recursive: true });
+    Deno.openSync(join(cacheRoot, NOTICE_STATE_FILE), { append: true, create: true }).close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The cache the notice records itself in, when a notice may be said at all; else `null`. */
+function noticeCacheRoot(o: RuntimeNoticeOptions, env: EnvGet): string | null {
   if (!noticeWanted(o, env)) return null;
   const cacheRoot = o.cacheRoot ?? toolchainCacheRoot(env);
+  return noticeStateWritable(cacheRoot) ? cacheRoot : null;
+}
+
+async function noticeLine(o: RuntimeNoticeOptions): Promise<string | null> {
+  const env = o.env ?? processEnv;
+  const cacheRoot = noticeCacheRoot(o, env);
+  if (cacheRoot === null) return null;
   const { channel } = await noticeChannel(o, env, cacheRoot);
   if (!channel) return null;
   const now = (o.now ?? Date.now)();

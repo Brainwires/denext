@@ -26,6 +26,7 @@
 import net from "node:net";
 import { createHash } from "node:crypto";
 import { dirname } from "@std/path";
+import { acquireOsLock, type OsLock } from "./os-lock.ts";
 import { join as posixJoin } from "@std/path/posix";
 import { type DesktopOsName, env, osDataDir } from "./app-dirs.ts";
 
@@ -365,10 +366,15 @@ function frame(chunk: Uint8Array): Uint8Array[] {
 /** The end-of-writes frame (a zero length). */
 const END_FRAME = new Uint8Array(FRAME_HEADER);
 
-/** Reassembles frames from pipe chunks: `onData` per payload, `onEnd` at the end frame. */
+/**
+ * Reassembles frames from pipe chunks: `onData` per payload, `onEnd` at the end frame, `onBad`
+ * (once, then nothing more is read) for a header naming more than {@linkcode FRAME_MAX} bytes,
+ * which this module never writes: nothing is buffered for it.
+ */
 function frameDecoder(
   onData: (bytes: Uint8Array) => void,
   onEnd: () => void,
+  onBad: (err: Error) => void,
 ): (chunk: Uint8Array) => void {
   let buffered = new Uint8Array(0);
   let ended = false;
@@ -381,6 +387,16 @@ function frameDecoder(
         ended = true;
         buffered = new Uint8Array(0);
         onEnd();
+        return;
+      }
+      if (length > FRAME_MAX) {
+        ended = true;
+        buffered = new Uint8Array(0);
+        onBad(
+          new Deno.errors.InvalidData(
+            `local IPC: a frame of ${length} bytes exceeds the ${FRAME_MAX}-byte limit`,
+          ),
+        );
         return;
       }
       if (buf.length < FRAME_HEADER + length) break;
@@ -429,7 +445,12 @@ function wrapSocket(socket: net.Socket, framed: boolean): LocalIpcConnection {
         controller.enqueue(bytes);
         if ((controller.desiredSize ?? 1) <= 0) socket.pause();
       };
-      const decode = framed ? frameDecoder(deliver, () => finish()) : undefined;
+      const decode = framed
+        ? frameDecoder(deliver, () => finish(), (err) => {
+          finish(err);
+          socket.destroy();
+        })
+        : undefined;
       socket.on("data", (chunk: Uint8Array) => {
         if (decode) decode(new Uint8Array(chunk));
         else deliver(new Uint8Array(chunk));
@@ -525,11 +546,8 @@ function probeUnixSocket(path: string): Promise<boolean> {
   });
 }
 
-/**
- * Make `path` bindable on Unix: create its folder (`0700`) when missing, refuse an unsafe folder,
- * and clear a stale socket file (nothing answers on it), refusing a live one or a non-socket.
- */
-async function prepareUnixPath(path: string): Promise<void> {
+/** Create the socket's folder (`0700`) when missing, and refuse an unsafe one. */
+async function prepareUnixDir(path: string): Promise<void> {
   const dir = dirname(path);
   let info: Deno.FileInfo;
   try {
@@ -548,6 +566,13 @@ async function prepareUnixPath(path: string): Promise<void> {
   }
   const problem = localIpcDirError(dir, info, uid);
   if (problem) throw new Deno.errors.PermissionDenied(problem);
+}
+
+/**
+ * Make `path` bindable on Unix (its folder already checked): clear a stale socket file (nothing
+ * answers on it), refusing a live one or a non-socket.
+ */
+async function prepareUnixPath(path: string): Promise<void> {
   let existing: Deno.FileInfo;
   try {
     existing = await Deno.lstat(path);
@@ -568,6 +593,28 @@ async function prepareUnixPath(path: string): Promise<void> {
   } catch (err) {
     if (!(err instanceof Deno.errors.NotFound)) throw err;
   }
+}
+
+/** The lock file a Unix socket's server holds: `<socket path>.lock`, beside it. */
+export function localIpcLockPath(path: string): string {
+  return `${path}.lock`;
+}
+
+/**
+ * Take the server lock of the socket at `path` ({@linkcode localIpcLockPath}): `AddrInUse` when
+ * another server holds it. A process whose grants reach only the socket path itself (not its
+ * folder) cannot create the lock file: it serves without one, as before the lock existed.
+ */
+async function serverLock(path: string): Promise<OsLock | null> {
+  let lock: OsLock | null;
+  try {
+    lock = await acquireOsLock(localIpcLockPath(path), { timeoutMs: 0 });
+  } catch (err) {
+    if (isNotCapable(err) || err instanceof Deno.errors.PermissionDenied) return null;
+    throw err;
+  }
+  if (!lock) throw new Deno.errors.AddrInUse(`local IPC: another server listens on ${path}`);
+  return lock;
 }
 
 /** Remove the socket file at `path` if it is still a socket (a missing one is fine). */
@@ -603,12 +650,26 @@ export async function listenLocalIpc(
 ): Promise<LocalIpcServer> {
   options.signal?.throwIfAborted();
   const pipe = isLocalIpcPipePath(path);
+  // On Unix the server holds an OS lock beside its socket for as long as it serves: the stale
+  // check, the bind and the removal at close are one server's alone, so two starting at once can
+  // never remove each other's socket (a pipe name is claimed by its first instance instead).
+  let lock: OsLock | null = null;
   try {
-    if (!pipe) await prepareUnixPath(path);
+    if (!pipe) {
+      await prepareUnixDir(path);
+      lock = await serverLock(path);
+      await prepareUnixPath(path);
+    }
   } catch (err) {
+    lock?.release();
     throw mapError(err, path, "listen");
   }
-  options.signal?.throwIfAborted();
+  try {
+    options.signal?.throwIfAborted();
+  } catch (err) {
+    lock?.release();
+    throw err;
+  }
   const sockets = new Set<net.Socket>();
   const server = net.createServer({ allowHalfOpen: true }, (socket: net.Socket) => {
     sockets.add(socket);
@@ -630,6 +691,9 @@ export async function listenLocalIpc(
     } catch (err) {
       reject(mapError(err, path, "listen"));
     }
+  }).catch((err) => {
+    lock?.release();
+    throw err;
   });
   // A later server error (none is expected once listening) must not crash the process.
   server.on("error", () => {});
@@ -640,7 +704,11 @@ export async function listenLocalIpc(
       const done = new Promise<void>((resolve) => server.close(() => resolve()));
       for (const socket of sockets) socket.destroy();
       await done;
-      if (!pipe) await removeSocketFile(path);
+      try {
+        if (!pipe) await removeSocketFile(path);
+      } finally {
+        lock?.release();
+      }
     })();
     return closing;
   };
@@ -656,6 +724,79 @@ export async function listenLocalIpc(
   }
   if (options.signal?.aborted) await close();
   return { path, close, [Symbol.asyncDispose]: close };
+}
+
+/** Who serves a Windows pipe connection: its server process's user, as a SID string. */
+export interface PipeServerIdentity {
+  /** The server process's token user (`S-1-5-21-…`). */
+  readonly userSid: string;
+  /** The server process's id (`GetNamedPipeServerProcessId`), when known. */
+  readonly pid?: number;
+}
+
+/**
+ * How the client learns who serves a Windows pipe (`GetNamedPipeServerProcessId`, then the
+ * process token's user) and who it is itself. A lookup that answers `null` could not tell: the
+ * connection is refused rather than trusted.
+ */
+export interface PipeIdentityLookup {
+  /** The server at the other end of the connected `socket`. */
+  server(socket: net.Socket): Promise<PipeServerIdentity | null>;
+  /** This process's user SID. */
+  currentUserSid(): Promise<string | null>;
+}
+
+/**
+ * The runtime's {@linkcode PipeIdentityLookup}, or `undefined` where the runtime has none. denext's
+ * Deno runtime does not yet expose a pipe connection's server process or a token's user to
+ * script (it would be an op over the connected pipe's handle: `GetNamedPipeServerProcessId`,
+ * `OpenProcess` + `OpenProcessToken` + `GetTokenInformation(TokenUser)`, and the current
+ * process token's user), so a Windows client cannot yet check its server: same-machine users
+ * are trusted there (see the server side, which claims the name as its first instance).
+ *
+ * @returns The lookup, or `undefined`.
+ */
+function runtimePipeIdentity(): PipeIdentityLookup | undefined {
+  return undefined;
+}
+
+/**
+ * Why a pipe connection's server is not taken, or `null` when it is this user's.
+ *
+ * @param server Who serves it (`null`: the lookup could not tell).
+ * @param ownSid This process's user SID (`null`: unknown).
+ * @param path The pipe path, for the message.
+ * @returns The refusal's message, or `null`.
+ */
+export function pipeServerRefusal(
+  server: PipeServerIdentity | null,
+  ownSid: string | null,
+  path: string,
+): string | null {
+  if (server === null || ownSid === null) {
+    return `local IPC: could not verify who serves ${path}; refusing it`;
+  }
+  if (server.userSid.toUpperCase() === ownSid.toUpperCase()) return null;
+  return `local IPC: ${path} is served by another user (${server.userSid}${
+    server.pid !== undefined ? `, process ${server.pid}` : ""
+  }), not this one; refusing it`;
+}
+
+/** The connected pipe's server checked: `undefined` when it is this user's, else the error. */
+async function pipeServerCheck(
+  socket: net.Socket,
+  identity: PipeIdentityLookup,
+  path: string,
+): Promise<Error | undefined> {
+  let server: PipeServerIdentity | null = null;
+  let own: string | null = null;
+  try {
+    [server, own] = await Promise.all([identity.server(socket), identity.currentUserSid()]);
+  } catch {
+    // An answer the lookup could not give is treated as no answer: refused below.
+  }
+  const refusal = pipeServerRefusal(server, own, path);
+  return refusal === null ? undefined : new Deno.errors.PermissionDenied(refusal);
 }
 
 /**
@@ -681,12 +822,15 @@ export function connectLocalIpc(
  * @param open Makes the connecting socket for a path.
  * @param path The socket or pipe path.
  * @param options A timeout (default 5000 ms) and an `AbortSignal`.
+ * @param identity Who serves a Windows pipe and who this process is
+ *   ({@linkcode PipeIdentityLookup}; default the runtime's, where it has one).
  * @returns The connection.
  */
 export function connectLocalIpcWith(
   open: (path: string) => net.Socket,
   path: string,
   options: LocalIpcConnectOptions = {},
+  identity: PipeIdentityLookup | undefined = runtimePipeIdentity(),
 ): Promise<LocalIpcConnection> {
   const { signal, timeoutMs = 5000 } = options;
   if (signal?.aborted) return Promise.reject(signal.reason);
@@ -698,7 +842,10 @@ export function connectLocalIpcWith(
       reject(mapError(err, path, "connect"));
       return;
     }
+    let settled = false;
     const settle = (err: unknown | undefined) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
       socket.off("error", onError);
@@ -711,7 +858,12 @@ export function connectLocalIpcWith(
         reject(err);
       }
     };
-    const onConnect = () => settle(undefined);
+    const onConnect = () => {
+      // A Windows pipe name is predictable: another local user who created it first would serve
+      // this connection. Where the runtime says who serves it, only this user's server is taken.
+      if (!isLocalIpcPipePath(path) || !identity) return settle(undefined);
+      void pipeServerCheck(socket, identity, path).then(settle, settle);
+    };
     const onError = (err: unknown) => settle(mapError(err, path, "connect"));
     const onAbort = () => settle(signal?.reason);
     const timer = setTimeout(

@@ -1,7 +1,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { parseRanges, serveStatic } from "../src/server/static.ts";
-import { FILE_SYMLINKS } from "./helpers/symlink.ts";
+import { FILE_SYMLINKS, symlinkDir } from "./helpers/symlink.ts";
 
 async function withPublicDir(
   files: Record<string, string>,
@@ -240,5 +240,32 @@ Deno.test("multi-range: a file cut short while its parts stream errors the body"
       failed = true;
     }
     assert(failed, "the second part's bytes are gone");
+  });
+});
+
+Deno.test("a file under a symlinked folder is served without listing that folder per request", async () => {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 200; i++) files[`store/f${i}.txt`] = `${i}`;
+  await withPublicDir(files, async (dir) => {
+    // public/uploads -> public/store: the real path differs from the requested one, so each
+    // component's spelling is checked on its own.
+    await symlinkDir(join(dir, "store"), join(dir, "uploads"));
+    const realReadDir = Deno.readDir;
+    const listed: string[] = [];
+    (Deno as { readDir: typeof Deno.readDir }).readDir = (path) => {
+      listed.push(String(path));
+      return realReadDir(path);
+    };
+    try {
+      const res = await serveStatic(dir, "/uploads/f7.txt");
+      assertEquals(await res?.text(), "7");
+      // public/ itself is listed for the link's own name; the folder of many files never is.
+      assert(!listed.some((p) => /(uploads|store)$/.test(p)), listed.join());
+      // A spelling the folder does not hold is still refused.
+      assertEquals(await serveStatic(dir, "/UPLOADS/f7.txt"), null);
+      assertEquals(await serveStatic(dir, "/uploads/F7.txt"), null);
+    } finally {
+      (Deno as { readDir: typeof Deno.readDir }).readDir = realReadDir;
+    }
   });
 });

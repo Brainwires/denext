@@ -9,6 +9,7 @@
 import {
   assert,
   assertEquals,
+  assertMatch,
   assertRejects,
   assertStringIncludes,
   assertThrows,
@@ -46,6 +47,7 @@ import {
   syncDesktopAppConfigAt,
 } from "../src/build/desktop-app-config.ts";
 import { desktopBuildFlags } from "../src/build/desktop-capabilities.ts";
+import { registerSidecarStopper } from "../src/desktop/sidecar-registry.ts";
 import {
   AppUpdateError,
   appUpdateStatus,
@@ -539,7 +541,7 @@ Deno.test("wrappers: outside the pinned runtime → unsupported (confirm and sta
       AppUpdateError,
     );
     assertEquals(e.code, "unsupported");
-    assertThrows(() => installAppUpdateAndRelaunch(), AppUpdateError);
+    await assertRejects(() => installAppUpdateAndRelaunch(), AppUpdateError);
     assertEquals(confirmAppUpdate(), false);
     assertEquals(appUpdateStatus(), null);
   });
@@ -662,7 +664,7 @@ Deno.test("wrappers: download stages with the dev opt-out only when asked, and f
     const staged = await downloadAppUpdate(config);
     assertEquals(staged, { version: "2.0.0", signatureMode: "team", signer: "TEAM1" });
     await downloadAppUpdate({ ...config, allowUnsignedDev: true });
-    assertEquals(installAppUpdateAndRelaunch({ force: true }), { quitting: true });
+    assertEquals(await installAppUpdateAndRelaunch({ force: true }), { quitting: true });
     assertEquals(confirmAppUpdate(), true);
   });
   assertEquals(calls[0], ["check", "https://x/a.json", {
@@ -673,6 +675,53 @@ Deno.test("wrappers: download stages with the dev opt-out only when asked, and f
   assertEquals(calls[2], ["stage", {}]);
   assertEquals(calls[4], ["stage", { allowUnsignedDev: true }]);
   assertEquals(calls[5], ["apply", { force: true }]);
+});
+
+Deno.test("install: every sidecar has stopped before the install is issued, the forced one too", async () => {
+  const order: string[] = [];
+  const applied: unknown[] = [];
+  await withRuntime({
+    applyAndRelaunch: (o: unknown) => {
+      order.push("apply");
+      applied.push(o);
+      return { quitting: true };
+    },
+  }, async () => {
+    // A detached sidecar's stop answers only after its shutdown went over its control connection,
+    // a turn of the event loop later: the install waits for it, so a `force` quit (which exits in
+    // the same call) cannot end the app before the stop was sent.
+    const unregister = registerSidecarStopper({
+      kill: () => order.push("kill"),
+      stop: () => Promise.resolve(),
+      update: async () => {
+        order.push("stop sent");
+        await new Promise((r) => setTimeout(r, 20));
+        order.push("stopped");
+      },
+    });
+    try {
+      assertEquals(await installAppUpdateAndRelaunch({ force: true }), { quitting: true });
+      assertEquals(order, ["stop sent", "stopped", "apply"]);
+      assertEquals(applied, [{ force: true }]);
+    } finally {
+      unregister();
+    }
+    // A sidecar that cannot be stopped: nothing is installed, and the refusal names it.
+    order.length = 0;
+    const stuck = registerSidecarStopper({
+      kill: () => {},
+      stop: () => Promise.resolve(),
+      update: () => Promise.reject(new Error("sidecar daemon: did not end within 0 ms")),
+    });
+    try {
+      const err = await assertRejects(() => installAppUpdateAndRelaunch(), AppUpdateError);
+      assertEquals(err.code, "sidecars_running");
+      assertMatch(err.message, /sidecar daemon: did not end/);
+      assertEquals(order, []);
+    } finally {
+      stuck();
+    }
+  });
 });
 
 Deno.test("wrappers: progress, signal and timeout are forwarded only when given", async () => {
@@ -700,7 +749,7 @@ Deno.test("wrappers: progress, signal and timeout are forwarded only when given"
     assertEquals([check.sequence, check.expiresAt], [null, null]);
     await downloadAppUpdate({ manifestUrl: "https://x/a.json" }, { onProgress, signal });
     // A refusing app reports quitting: false; without `force` the runtime gets no force flag.
-    assertEquals(installAppUpdateAndRelaunch(), { quitting: false });
+    assertEquals(await installAppUpdateAndRelaunch(), { quitting: false });
   });
   assertEquals(calls[0], ["https://x/a.json", { timeoutMs: 0 }]);
   assertEquals(calls[1], [{ onProgress, signal }]);
@@ -732,7 +781,7 @@ Deno.test("wrappers: install / confirm / stage failures rethrow as AppUpdateErro
       AppUpdateError,
     );
     assertEquals(staged.code, "integrity");
-    const install = assertThrows(() => installAppUpdateAndRelaunch(), AppUpdateError);
+    const install = await assertRejects(() => installAppUpdateAndRelaunch(), AppUpdateError);
     assertEquals(install.code, "not_staged");
     assertEquals(install.message, "nothing staged");
     const confirm = assertThrows(() => confirmAppUpdate(), AppUpdateError);

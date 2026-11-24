@@ -188,6 +188,24 @@ export interface LibrariesDoctorFinding {
 const LIBRARY_COPIERS = /\bbundleDesktopLibraries\b/;
 
 /**
+ * Why a macOS package script cannot package this project: it predates `desktop.bundle.libraries`
+ * (it never calls {@linkcode bundleDesktopLibraries}), while the project configures libraries,
+ * so its `.app` would ship without them. `denext desktop package` refuses it with this message;
+ * `denext desktop doctor` reports it.
+ *
+ * @param config The loaded project config (`{ desktop }`).
+ * @param scriptText The text of `scripts/package-macos.ts`.
+ * @returns The message, or `null` (no library configured, or a current script).
+ */
+export function staleLibrariesScriptProblem(config: unknown, scriptText: string): string | null {
+  if (LIBRARY_COPIERS.test(scriptText)) return null;
+  const bundle = bundleOf(config);
+  if (bundle === undefined || desktopBundleProblem(bundle)) return null;
+  if (librariesOf(config).length === 0) return null;
+  return "scripts/package-macos.ts predates desktop.bundle.libraries: its .app ships without them";
+}
+
+/**
  * The `libraries` check of `denext desktop doctor`, from the project's `desktop` config as data:
  * an invalid `desktop.bundle` (an error), a library whose file is missing for the host target
  * (packaging for it fails), a baked `--allow-ffi` that cannot load them
@@ -244,12 +262,12 @@ export async function desktopLibrariesDoctorFindings(
   const script = await Deno.readTextFile(join(dir, "scripts", "package-macos.ts")).catch(() =>
     null
   );
-  if (script !== null && !LIBRARY_COPIERS.test(script)) {
+  const stale = script === null ? null : staleLibrariesScriptProblem(config, script);
+  if (stale) {
     findings.push({
       check: "libraries",
       level: "warning",
-      message:
-        "scripts/package-macos.ts predates desktop.bundle.libraries: its .app ships without them",
+      message: stale,
       fix: "regenerate it: denext desktop package --regenerate-scripts",
     });
   }

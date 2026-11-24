@@ -1892,7 +1892,8 @@ const updates = { manifestUrl: "https://updates.example.com/myapp/app-update.jso
 const found = await checkForAppUpdate(updates);
 if (found.available) {
   await downloadAppUpdate(updates, { onProgress: (p) => console.log(p.transferred, p.total) });
-  installAppUpdateAndRelaunch(); // quits; the new version starts
+  // Stops the app's sidecars (detached ones too) and waits, then quits; the new version starts.
+  await installAppUpdateAndRelaunch();
 }`}
       </Code>
       <p>
@@ -6403,10 +6404,9 @@ sc.ready();`}
       <p>
         The app controls them from <code>desktop.ts</code> (<code>app.sidecar("server")</code>:{" "}
         <code>status</code>, <code>onStatus</code>, <code>restart</code>, <code>stop</code>,{" "}
-        <code>whenReady</code>; <code>stopSidecars()</code> before{" "}
-        <code>installAppUpdateAndRelaunch()</code>{" "}
-        gives them their graceful stop, detached ones included, and the install ends whatever is
-        left), and the page from{" "}
+        <code>whenReady</code>; <code>await installAppUpdateAndRelaunch()</code>{" "}
+        stops every sidecar, detached ones included, and waits for them before it quits, and refuses
+        with <code>sidecars_running</code> when one cannot be stopped), and the page from{" "}
         <code>denext/desktop/client</code>, token-gated like every bridge call:
       </p>
       <Code lang="ts">

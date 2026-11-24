@@ -339,6 +339,16 @@ Deno.test("checkRuntimeChannel: the payload's fields, and one entry per version"
   assertThrows(() => checkRuntimeChannel({ ...base, releases: {} }), RuntimeChannelError, "list");
   const twice = { ...base, releases: [entry("3.0.0-denext.27"), entry("3.0.0-denext.27")] };
   assertThrows(() => checkRuntimeChannel(twice), RuntimeChannelError, "listed twice");
+  // An entry on a version line this denext does not know (a later one) is left out; the index and
+  // its other entries still stand. A malformed entry on its own line still refuses the index.
+  const later = { ...entry("3.0.0-denext.27"), version: "4.0.0-denext.1", tag: "x" };
+  const mixed = checkRuntimeChannel({ ...base, releases: [later, entry("3.0.0-denext.27")] });
+  assertEquals(mixed.releases.map((r) => r.version), ["3.0.0-denext.27"]);
+  assertThrows(
+    () => checkRuntimeChannel({ ...base, releases: [{ ...entry("3.0.0-denext.27"), deno: 1 }] }),
+    RuntimeChannelError,
+    "deno",
+  );
 });
 
 Deno.test("freshRuntimeChannel: 45 days, a sequence above the previous whatever the clock, newest first", () => {
@@ -555,9 +565,10 @@ const granted = () => Promise.resolve(true);
  * The loader's replay floor, injected: the fixtures are dated `NOW`, and `deno task release`
  * raises the compiled-in {@linkcode RUNTIME_CHANNEL_MIN_SEQUENCE} to the live index's sequence at
  * every release, so a test that left the default in place would start failing the day a release
- * passed `NOW`. The default itself is pinned by its own test below, relative to the floor.
+ * passed `NOW`. The default itself is pinned by its own test below, relative to the floor. The
+ * environment is injected too (empty), so the machine's `DENEXT_RUNTIME_CHANNEL` never decides.
  */
-const NO_FLOOR = { minSequence: 0 } as const;
+const NO_FLOOR = { minSequence: 0, env: () => undefined } as const;
 
 async function withCache(fn: (root: string) => Promise<void>): Promise<void> {
   const root = await Deno.makeTempDir({ prefix: "denext-channel-" });
@@ -742,6 +753,7 @@ Deno.test("loadRuntimeChannel: the default floor is the compiled-in minimum sequ
     await withCache(async (root) => {
       const index = await signed(fresh(undefined, at(sequence)), a.priv);
       const got = await loadRuntimeChannel({
+        env: () => undefined,
         keys: [a.pub],
         revokedKeys: [],
         cacheRoot: root,
@@ -791,6 +803,29 @@ Deno.test("channelKeys: the compiled-in keys unless a test opts in to the keys f
     } finally {
       honourChannelKeysFileForTests(false);
     }
+  });
+});
+
+Deno.test("loadReleaseDocument: a stalled first base leaves the mirror its own budget", async () => {
+  const { entry: e, text } = await releaseEntryFor(bundledDocument(), META);
+  const BODY = text;
+  await withCache(async (root) => {
+    const seen: Array<[string, boolean]> = [];
+    // denext.dev stalls until its budget aborts it; the mirror answers at once, with a budget
+    // of its own (a shared deadline would have started it already aborted).
+    const stalled = ((input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      seen.push([url, init?.signal?.aborted ?? false]);
+      if (url.startsWith(CHANNEL_BASES[0])) {
+        return new Promise<Response>((_, reject) =>
+          init?.signal?.addEventListener("abort", () => reject(init.signal!.reason))
+        );
+      }
+      return Promise.resolve(new Response(BODY));
+    }) as typeof fetch;
+    const got = await loadReleaseDocument(e, { cacheRoot: root, fetch: stalled, budgetMs: 50 });
+    assertEquals(got.toolchain.version, e.version);
+    assertEquals(seen.map(([, aborted]) => aborted), [false, false]);
   });
 });
 

@@ -29,6 +29,7 @@ import {
   desktopBundledLibraryTable,
   desktopLibrariesDoctorFindings,
   desktopLibrariesFfiNote,
+  staleLibrariesScriptProblem,
 } from "../src/build/desktop-bundle-libraries.ts";
 import { syncDesktopRuntimeConfig } from "../src/build/desktop-app-config.ts";
 import { desktopPeFiles } from "../src/build/desktop-package-script.ts";
@@ -802,4 +803,17 @@ Deno.test("package-linux.ts / package-windows.ts: the copy is buildDesktopBundle
     launch > 0 && launch < copy && copy < stamp,
     "copied after the launch file, before the tree manifest",
   );
+});
+
+Deno.test("desktop package: a macOS script that never copies the configured libraries is refused", () => {
+  const withLibs = { desktop: { bundle: { libraries: ["native/{target}/libaudio.{ext}"] } } };
+  const old = 'await buildDesktopBundle({ os: "macos" });\n';
+  const current = old + "await bundleDesktopLibraries(app, config);\n";
+  assertStringIncludes(
+    staleLibrariesScriptProblem(withLibs, old) ?? "",
+    "predates desktop.bundle.libraries: its .app ships without them",
+  );
+  assertEquals(staleLibrariesScriptProblem(withLibs, current), null, "a current script");
+  assertEquals(staleLibrariesScriptProblem({ desktop: {} }, old), null, "no libraries configured");
+  assertEquals(staleLibrariesScriptProblem({}, old), null, "no desktop config");
 });

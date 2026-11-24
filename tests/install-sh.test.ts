@@ -65,6 +65,9 @@ if [ -n "$out" ]; then cp "$STUB_DIR/$name" "$out"; else cat "$STUB_DIR/$name"; 
 
 /** The released `denext` stand-in (see {@linkcode Release.create}). */
 const DENEXT_STUB = `#!/bin/sh
+# A binary this machine can't run (a glibc older than it needs): every exec fails, as the
+# loader's would.
+[ -n "$STUB_EXEC_FAIL" ] && { echo "denext: /lib/x86_64-linux-gnu/libc.so.6: version 'GLIBC_2.27' not found" >&2; exit 1; }
 [ "$1" = "--version" ] && { echo "denext \${STUB_VERSION:-9.9.9} (binary)"; exit 0; }
 # Its help names the runtime verb it has: none before 4.0, \`toolchain\` from 4.0 until the
 # runtime channel (STUB_VERSION=4.x), \`runtime\` after.
@@ -97,6 +100,12 @@ exit 0
  * when `STUB_GH_VERIFY=ok`.
  */
 const GH_STUB = `#!/bin/sh
+# The installer's probe for \`gh attestation\` (a gh before 2.49 has none: STUB_GH_OLD).
+if [ "$1 $2 $3" = "attestation verify --help" ]; then
+  [ -n "$STUB_GH_OLD" ] && { echo 'unknown command "attestation" for "gh"' >&2; exit 1; }
+  exit 0
+fi
+[ "$1" = "--version" ] && { echo "gh version 2.40.0 (stub)"; exit 0; }
 echo "$*" >> "$STUB_LOG.gh"
 case "$1 $2" in
   "auth status") [ -n "$STUB_GH_AUTH" ] || exit 1; exit 0 ;;
@@ -714,7 +723,25 @@ Deno.test("install.sh: a signed-in gh must verify the archive's build attestatio
     await Deno.remove(r.install, { recursive: true });
     const bad = await r.run({ STUB_GH_AUTH: "1", STUB_GH_VERIFY: "no" });
     assertEquals(bad.code, 1);
-    assertStringIncludes(bad.stderr, "build attestation verification FAILED");
+    assertStringIncludes(bad.stderr, `the build attestation of ${ASSET} could not be verified`);
+    // gh's own words are shown, and the causes besides tampering are named.
+    assertStringIncludes(bad.stderr, "    no attestations found");
+    assertStringIncludes(bad.stderr, "A network problem");
+    assertEquals(await r.installed(), false);
+    // A gh without `gh attestation` (before 2.49) can't verify: installed on the checksum with
+    // a note, never read as a failed verification; required, refused.
+    const old = await r.run({ STUB_GH_AUTH: "1", STUB_GH_OLD: "1" });
+    assertEquals(old.code, 0, old.stderr);
+    assertStringIncludes(old.stdout, "this GitHub CLI has no `gh attestation`");
+    assert(!old.gh.some((c) => c.startsWith("attestation")), old.gh.join("\n"));
+    await Deno.remove(r.install, { recursive: true });
+    const oldRequired = await r.run({
+      STUB_GH_AUTH: "1",
+      STUB_GH_OLD: "1",
+      DENEXT_REQUIRE_ATTESTATION: "1",
+    });
+    assertEquals(oldRequired.code, 1);
+    assertStringIncludes(oldRequired.stderr, "has no `gh attestation`; update gh");
     assertEquals(await r.installed(), false);
     // DENEXT_INSECURE=1 installs such a release (one from before attestations) on the checksum.
     const forced = await r.run({ STUB_GH_AUTH: "1", STUB_GH_VERIFY: "no", DENEXT_INSECURE: "1" });
@@ -890,22 +917,164 @@ Deno.test("install.sh: a truncated download runs nothing", { ignore: NO_SH }, as
   const r = await Release.create();
   try {
     const source = await Deno.readTextFile(SCRIPT);
-    assert(source.trimEnd().endsWith('\nmain "$@"'), "main is invoked on the last line");
-    const cut = source.slice(0, source.lastIndexOf("\nmain "));
+    const last = '{ main "$@"; exit; }';
+    assert(source.trimEnd().endsWith(`\n${last}`), "main is invoked on the last line");
+    const start = source.lastIndexOf(`\n${last}`) + 1;
     const truncated = join(r.dir, "truncated.sh");
-    await Deno.writeTextFile(truncated, cut);
-    const out = await new Deno.Command("sh", {
-      args: [truncated],
-      clearEnv: true,
-      env: { PATH: `${r.stubs}:/usr/bin:/bin`, HOME: r.dir, STUB_DIR: r.served, STUB_LOG: r.log },
-    }).output();
-    assertEquals(out.code, 0);
-    assertEquals(new TextDecoder().decode(out.stdout), "");
-    assertEquals(await r.installed(), false);
+    // Cut before the line, and at every point inside it (`main` alone would run main without
+    // its flags, so `--uninstall` would install): nothing runs.
+    for (let at = start - 1; at < start + last.length; at++) {
+      await Deno.writeTextFile(truncated, source.slice(0, at));
+      const out = await new Deno.Command("sh", {
+        args: [truncated, "--uninstall"],
+        clearEnv: true,
+        env: {
+          PATH: `${r.stubs}:/usr/bin:/bin`,
+          HOME: r.dir,
+          STUB_DIR: r.served,
+          STUB_LOG: r.log,
+          DENEXT_INSTALL: r.install,
+        },
+      }).output();
+      const cut = JSON.stringify(source.slice(start, at));
+      assertEquals(new TextDecoder().decode(out.stdout), "", `cut at ${cut}`);
+      assertEquals(await r.installed(), false, `cut at ${cut}`);
+    }
   } finally {
     await r.remove();
   }
 });
+
+Deno.test("install.sh: a binary that can't run here, or a musl Linux, installs nothing and fails", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  try {
+    // An older glibc than the binary needs: the checked run fails, nothing replaces anything.
+    const old = await r.run({ STUB_EXEC_FAIL: "1" });
+    assertEquals(old.code, 1, old.stdout);
+    assertStringIncludes(old.stderr, "does not run on this machine");
+    assertStringIncludes(old.stderr, "GLIBC_2.27' not found");
+    assertEquals(await r.installed(), false);
+    // musl (Alpine): refused before anything is downloaded.
+    await Deno.writeTextFile(
+      join(r.stubs, "ldd"),
+      '#!/bin/sh\necho "musl libc (x86_64)" >&2\necho "Version 1.2.4" >&2\nexit 1\n',
+      { mode: 0o755 },
+    );
+    const musl = await r.run();
+    assertEquals(musl.code, 1, musl.stdout);
+    assertStringIncludes(musl.stderr, "uses musl libc");
+    assertEquals(musl.urls.filter((u) => u.endsWith(".tar.gz")), []);
+    assertEquals(await r.installed(), false);
+    // glibc's ldd: installs.
+    await Deno.writeTextFile(
+      join(r.stubs, "ldd"),
+      '#!/bin/sh\necho "ldd (GNU libc) 2.35"\n',
+      { mode: 0o755 },
+    );
+    const glibc = await r.run();
+    assertEquals(glibc.code, 0, glibc.stderr);
+    assert(await r.installed());
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("install.sh: a shell under Rosetta on Apple silicon gets the arm64 build", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create({ os: "Darwin", arch: "arm64" });
+  try {
+    // uname says x86_64 (a Rosetta shell); sysctl says the process is translated.
+    await Deno.writeTextFile(join(r.stubs, "uname"), unameStub("Darwin", "x86_64"), {
+      mode: 0o755,
+    });
+    await Deno.writeTextFile(
+      join(r.stubs, "sysctl"),
+      '#!/bin/sh\n[ "$2" = "sysctl.proc_translated" ] && echo 1\n',
+      { mode: 0o755 },
+    );
+    const run = await r.run();
+    assertEquals(run.code, 0, run.stderr);
+    assert(run.urls.some((u) => u.endsWith("denext-aarch64-apple-darwin.tar.gz")), run.urls.join());
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("install.sh: a startup file it can't write is a warning with the lines, not a failure", {
+  ignore: NO_SH || Deno.uid() === 0,
+}, async () => {
+  const r = await Release.create();
+  try {
+    const profile = join(r.dir, ".profile");
+    await Deno.writeTextFile(profile, "# mine\n");
+    await Deno.chmod(profile, 0o444);
+    const run = await r.run({ SHELL: "/bin/dash" });
+    assertEquals(run.code, 0, run.stderr);
+    assert(await r.installed());
+    assertStringIncludes(run.stderr, "could not write ~/.profile; add these lines to it yourself");
+    assertStringIncludes(run.stderr, "  # >>> denext >>>");
+    assertEquals(await Deno.readTextFile(profile), "# mine\n");
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test("install.sh: a PATH block missing its end marker never deletes the rest of the file", {
+  ignore: NO_SH,
+}, async () => {
+  const r = await Release.create();
+  try {
+    const profile = join(r.dir, ".profile");
+    // A hand-edited file: the block's end line was removed, and the user's lines follow it.
+    await Deno.writeTextFile(
+      profile,
+      "# before\n# >>> denext >>>\nexport PATH=/old:$PATH\nalias ll='ls -l'\nexport EDITOR=vi\n",
+    );
+    const run = await r.run({ SHELL: "/bin/dash" });
+    assertEquals(run.code, 0, run.stderr);
+    const text = await Deno.readTextFile(profile);
+    for (const line of ["# before", "alias ll='ls -l'", "export EDITOR=vi"]) {
+      assertStringIncludes(text, line);
+    }
+    // One complete block now; a re-run and an uninstall keep the user's lines too.
+    assertEquals(await blocks(profile), 1);
+    await r.run({ SHELL: "/bin/dash" });
+    const removed = await r.run({}, [], ["--uninstall"]);
+    assertEquals(removed.code, 0, removed.stderr);
+    const after = await Deno.readTextFile(profile);
+    assertStringIncludes(after, "alias ll='ls -l'");
+    assertStringIncludes(after, "export EDITOR=vi");
+    assert(!after.includes("# >>> denext >>>"), after);
+  } finally {
+    await r.remove();
+  }
+});
+
+Deno.test(
+  "install.sh: --runtime=<a version that fails> still puts the installed binary on PATH and says so",
+  {
+    ignore: NO_SH,
+  },
+  async () => {
+    const r = await Release.create();
+    try {
+      const run = await r.run({ STUB_RUNTIME_FAIL: "1", SHELL: "/bin/dash" }, [], [
+        "--runtime=3.0.0-denext.3l",
+      ]);
+      assertEquals(run.code, 1);
+      assert(await r.installed());
+      assertStringIncludes(run.stderr, "denext is installed at");
+      assertStringIncludes(run.stderr, "denext runtime list");
+      assert(!run.stderr.includes("nothing else changed"), run.stderr);
+      assertEquals(await blocks(join(r.dir, ".profile")), 1);
+    } finally {
+      await r.remove();
+    }
+  },
+);
 
 Deno.test("install.sh and publish.yml agree on the asset names", async () => {
   // The installer fetches names the workflow's Package + release steps produce; a rename on

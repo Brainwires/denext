@@ -43,6 +43,7 @@
  */
 
 import { join } from "@std/path";
+import { acquireOsLock } from "./os-lock.ts";
 import { decodeBase64Url, encodeBase64Url } from "@std/encoding/base64url";
 
 /** The protocol version (`hello.v`, the record's `v`). */
@@ -57,8 +58,6 @@ const DETACHED_HANDSHAKE_MS = 5_000;
 const DETACHED_MAX_PENDING = 16;
 /** The longest `shutdown` grace the server honours. */
 export const DETACHED_MAX_GRACE_MS = 30_000;
-/** A start lock older than this whose holder stopped refreshing it is broken. */
-const DETACHED_LOCK_STALE_MS = 30_000;
 /** The registry's folder inside the app's data folder. */
 const DETACHED_REGISTRY_FOLDER = "sidecars";
 
@@ -266,47 +265,18 @@ export async function listDetachedRecords(registryDir: string): Promise<Detached
 
 /** Options for {@linkcode withDetachedLock}. */
 export interface DetachedLockOptions {
-  /** A lock whose file was not refreshed for this long is broken (default 30 000 ms). */
-  readonly staleMs?: number;
   /** How long to wait for the lock before giving up (default 60 000 ms). */
   readonly timeoutMs?: number;
   /** How often a held lock is tried again (default 50 ms). */
   readonly pollMs?: number;
 }
 
-/** Sleep `ms`. */
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-/** Take the lock file once: `true` when this call created it. */
-async function tryLock(path: string): Promise<boolean> {
-  try {
-    const file = await Deno.open(path, { createNew: true, write: true, mode: 0o600 });
-    try {
-      await file.write(new TextEncoder().encode(JSON.stringify({ pid: Deno.pid, at: Date.now() })));
-    } finally {
-      file.close();
-    }
-    return true;
-  } catch (err) {
-    if (err instanceof Deno.errors.AlreadyExists) return false;
-    throw err;
-  }
-}
-
-/** Whether the lock at `path` was last refreshed longer than `staleMs` ago. */
-async function lockIsStale(path: string, staleMs: number): Promise<boolean> {
-  const info = await Deno.stat(path).catch(() => null);
-  if (!info) return false;
-  return Date.now() - (info.mtime?.getTime() ?? 0) > staleMs;
-}
-
 /**
- * Run `fn` holding the start lock of one sidecar: `<registryDir>/<name>.lock`, created with
- * `createNew` (an exclusive create), so two instances of the app never start two detached sidecars
- * of one name. The holder refreshes the file's time every third of `staleMs`; a lock not refreshed
- * for `staleMs` (its holder is gone) is broken.
+ * Run `fn` holding the start lock of one sidecar: an exclusive OS advisory lock on
+ * `<registryDir>/<name>.lock` (`os-lock.ts`), so two instances of the app (or two starts in one)
+ * never start two detached sidecars of one name. The OS releases it when its holder exits, so a
+ * crashed start never leaves a lock to wait out, and a held lock is never broken (a holder whose
+ * timers stalled, a machine that slept, stays the holder). The file is kept for the next start.
  *
  * @param registryDir The registry folder.
  * @param name The sidecar's name.
@@ -320,31 +290,19 @@ export async function withDetachedLock<T>(
   fn: () => Promise<T>,
   options: DetachedLockOptions = {},
 ): Promise<T> {
-  const staleMs = options.staleMs ?? DETACHED_LOCK_STALE_MS;
-  const deadline = Date.now() + (options.timeoutMs ?? 60_000);
   const path = join(registryDir, `${name}.lock`);
   await ensureRegistryDir(registryDir);
-  while (!(await tryLock(path))) {
-    if (await lockIsStale(path, staleMs)) {
-      await Deno.remove(path).catch(() => {});
-      continue;
-    }
-    if (Date.now() > deadline) {
-      throw new Error(
-        `sidecar ${name}: another instance of the app holds the start lock (${path})`,
-      );
-    }
-    await sleep(options.pollMs ?? 50);
+  const lock = await acquireOsLock(path, {
+    timeoutMs: options.timeoutMs ?? 60_000,
+    ...(options.pollMs !== undefined ? { pollMs: options.pollMs } : {}),
+  });
+  if (!lock) {
+    throw new Error(`sidecar ${name}: another instance of the app holds the start lock (${path})`);
   }
-  const refresh = setInterval(() => {
-    const now = new Date();
-    Deno.utime(path, now, now).catch(() => {});
-  }, Math.max(10, Math.floor(staleMs / 3)));
   try {
     return await fn();
   } finally {
-    clearInterval(refresh);
-    await Deno.remove(path).catch(() => {});
+    lock.release();
   }
 }
 
@@ -582,6 +540,8 @@ export interface DetachedControlServer {
   readonly port: number;
   /** The open authenticated connections. */
   attached(): number;
+  /** The connections still in their handshake (at most `maxPending`). */
+  pending(): number;
   /** The sidecar is ready: told to every attached client now and in each later `ok`. */
   setReady(): void;
   /** Tell every attached client the sidecar is ending, and wait (briefly) for the writes. */
@@ -697,6 +657,7 @@ export async function serveDetachedControl(
   return {
     port: (listener.addr as Deno.NetAddr).port,
     attached: () => authed.size,
+    pending: () => pending,
     setReady() {
       if (ready) return;
       ready = true;
@@ -820,38 +781,81 @@ async function clientHandshake(
 }
 
 /**
- * Connect to a detached sidecar's control endpoint and authenticate both ways.
+ * What a connection to a recorded control endpoint found:
  *
- * @param options The port, the key and the expected name.
- * @returns The session, or `null` when nothing there proves the key (no detail).
+ * - `session`: it authenticated;
+ * - `stale`: nothing listens there (refused), or what answered did not prove the key, named
+ *   another sidecar or closed the connection: no sidecar of this record is running;
+ * - `busy`: something accepted the connection (the endpoint's listening socket exists only while
+ *   its process runs) but did not answer within the budget: the sidecar is alive and its event
+ *   loop busy, or a silent process holds the port. Never a reason to start a second instance.
  */
-export async function connectDetachedControl(
-  options: DetachedConnectOptions,
-): Promise<DetachedSession | null> {
+export type DetachedProbe =
+  | { readonly state: "session"; readonly session: DetachedSession }
+  | { readonly state: "stale" }
+  | { readonly state: "busy"; readonly waitedMs: number };
+
+/**
+ * Connect to a detached sidecar's control endpoint and authenticate both ways, telling a stale
+ * endpoint from a busy one ({@linkcode DetachedProbe}). A connection that is accepted but not
+ * answered within `timeoutMs` is kept waiting another `busyWaitMs` (default none) before it
+ * reads as busy.
+ *
+ * @param options The port, the key, the expected name and the budgets.
+ * @returns What the endpoint is.
+ */
+export async function probeDetachedControl(
+  options: DetachedConnectOptions & { readonly busyWaitMs?: number },
+): Promise<DetachedProbe> {
   const timeoutMs = options.timeoutMs ?? DETACHED_HANDSHAKE_MS;
   let key: CryptoKey;
   try {
     key = await importDetachedKey(options.key);
   } catch {
-    return null;
+    return { state: "stale" };
   }
   const open = options.connect ??
     ((port: number) => Deno.connect({ hostname: "127.0.0.1", port, transport: "tcp" }));
   let conn: DetachedConn;
   try {
+    // Loopback: a dead endpoint refuses at once; one that never connects is no sidecar either.
     const opened = await within(open(options.port), timeoutMs);
-    if (!opened) return null;
+    if (!opened) return { state: "stale" };
     conn = opened;
   } catch {
-    return null;
+    return { state: "stale" };
   }
   const lines = new DetachedLines(conn);
-  const info = await within(clientHandshake(lines, key).catch(() => null), timeoutMs);
+  const handshake = clientHandshake(lines, key).catch(() => null);
+  let info = await within(handshake, timeoutMs);
+  let waitedMs = timeoutMs;
+  if (info === undefined && options.busyWaitMs && options.busyWaitMs > 0) {
+    info = await within(handshake, options.busyWaitMs);
+    waitedMs += options.busyWaitMs;
+  }
+  if (info === undefined) {
+    lines.close();
+    return { state: "busy", waitedMs };
+  }
   if (!info || (options.name !== undefined && info.name !== options.name)) {
     lines.close();
-    return null;
+    return { state: "stale" };
   }
-  return detachedSession(lines, info);
+  return { state: "session", session: detachedSession(lines, info) };
+}
+
+/**
+ * Connect to a detached sidecar's control endpoint and authenticate both ways.
+ *
+ * @param options The port, the key and the expected name.
+ * @returns The session, or `null` when nothing there proves the key within the budget (no
+ *   detail; {@linkcode probeDetachedControl} tells a stale endpoint from a busy one).
+ */
+export async function connectDetachedControl(
+  options: DetachedConnectOptions,
+): Promise<DetachedSession | null> {
+  const probe = await probeDetachedControl(options);
+  return probe.state === "session" ? probe.session : null;
 }
 
 /** A `bye` message's fields. */
@@ -927,9 +931,9 @@ function detachedSession(lines: DetachedLines, info: DetachedStatusInfo): Detach
  *
  * @param record The record.
  * @param timeoutMs The handshake budget.
- * @returns The session, or `null` when the record is stale (nothing there proves its key).
+ * @returns The session, or `null` when nothing there proves its key within the budget.
  */
-export function probeDetachedRecord(
+function probeDetachedRecord(
   record: DetachedRecord,
   timeoutMs = DETACHED_HANDSHAKE_MS,
 ): Promise<DetachedSession | null> {
@@ -938,6 +942,32 @@ export function probeDetachedRecord(
     key: record.key,
     name: record.name,
     timeoutMs,
+  });
+}
+
+/** How long a busy recorded sidecar is waited for, past the handshake budget (default). */
+const DETACHED_BUSY_WAIT_MS = 30_000;
+
+/**
+ * Probe a record's endpoint, telling stale from busy ({@linkcode probeDetachedControl}).
+ *
+ * @param record The record.
+ * @param busyWaitMs How long a connected but silent endpoint is waited for past the handshake
+ *   budget (default {@linkcode DETACHED_BUSY_WAIT_MS}).
+ * @param timeoutMs The handshake budget.
+ * @returns What the endpoint is.
+ */
+export function probeDetachedRecordState(
+  record: DetachedRecord,
+  busyWaitMs: number = DETACHED_BUSY_WAIT_MS,
+  timeoutMs: number = DETACHED_HANDSHAKE_MS,
+): Promise<DetachedProbe> {
+  return probeDetachedControl({
+    port: record.control.port,
+    key: record.key,
+    name: record.name,
+    timeoutMs,
+    busyWaitMs,
   });
 }
 
@@ -971,6 +1001,11 @@ export interface DetachedStopOptions {
   readonly canKill?: () => boolean;
   /** The forced kill (default `Deno.kill(pid, "SIGKILL")`). */
   readonly kill?: (pid: number) => void;
+  /**
+   * How long a recorded sidecar that accepts its control connection but does not answer is
+   * waited for before it reads as busy (default {@linkcode DETACHED_BUSY_WAIT_MS}).
+   */
+  readonly busyWaitMs?: number;
 }
 
 /**
@@ -1114,8 +1149,16 @@ export async function stopDetachedRecord(
 ): Promise<void> {
   const record = await readDetachedRecord(registryDir, name);
   if (!record) throw new Error(`sidecar ${name}: no detached sidecar of that name is recorded`);
-  const session = await probeDetachedRecord(record);
-  const result = session ? await endDetachedSession(session, graceMs, options) : { ended: true };
+  const probe = await probeDetachedRecordState(record, options.busyWaitMs);
+  const result: DetachedStopResult = probe.state === "session"
+    ? await endDetachedSession(probe.session, graceMs, options)
+    : probe.state === "busy"
+    ? {
+      ended: false,
+      reason: `is running but did not answer within ${probe.waitedMs} ms; its record is ` +
+        "removed, so it ends itself at its next registry check",
+    }
+    : { ended: true };
   await removeDetachedRecord(registryDir, name, record.key);
   if (!result.ended) throw new Error(`sidecar ${name}: ${result.reason}`);
 }

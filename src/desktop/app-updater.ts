@@ -34,7 +34,7 @@
 //     next launch is rolled back and refused from then on. No privilege escalation: an install the user cannot
 //     write (`/Applications` owned by root, Program Files) is `install_not_writable`.
 
-import { killSidecarsNow } from "./sidecar-registry.ts";
+import { endSidecarsForUpdate } from "./sidecar-registry.ts";
 import { appLifecycle } from "./window-lifecycle.ts";
 
 /** Why a full-app update step refused (the runtime's codes, plus `unsupported`). */
@@ -61,6 +61,8 @@ export type AppUpdateErrorCode =
   | "unsupported_layout"
   | "not_staged"
   | "busy"
+  /** A sidecar could not be stopped before the install (it would hold the install folder). */
+  | "sidecars_running"
   | "io";
 
 const CODES: ReadonlySet<string> = new Set<AppUpdateErrorCode>([
@@ -85,6 +87,7 @@ const CODES: ReadonlySet<string> = new Set<AppUpdateErrorCode>([
   "unsupported_layout",
   "not_staged",
   "busy",
+  "sidecars_running",
   "io",
 ]);
 
@@ -337,27 +340,38 @@ export async function downloadAppUpdate(
 }
 
 /**
- * Install the staged update: start the swap helper and quit the app (Electron's
- * `quitAndInstall`). The helper waits for this process to exit, swaps the install, and relaunches
- * the new version, which `runDesktop` confirms once its window has loaded (or, with
+ * Install the staged update: stop the app's sidecars, then start the swap helper and quit the app
+ * (Electron's `quitAndInstall`). The helper waits for this process to exit, swaps the install, and
+ * relaunches the new version, which `runDesktop` confirms once its window has loaded (or, with
  * `desktop.update.autoConfirm: false`, the app's own {@linkcode confirmAppUpdate} call).
  *
- * The app's sidecars (`desktop.sidecars`) are ended first, so none holds the install open (detached
- * ones are asked to stop and their records removed); to give them their graceful shutdown,
- * `await stopSidecars()` (from `denext/desktop`) before calling it.
+ * Every sidecar (`desktop.sidecars`) is stopped first and waited for, detached ones included (asked
+ * to shut down within their `shutdown.graceMs`, then ended by force where the app may signal
+ * processes, their records removed), so none still runs the old executable from the install
+ * folder when the swap starts, whatever happens to the quit (`force` included).
  *
  * @param options `force: true` exits even when a `beforequit` / `close` listener refuses.
  * @returns `quitting: false` when the app refused to quit: the runtime withdraws the install
- *   request and the helper stands down, leaving the app as it was. `quitting: true` also while the
- *   window lifecycle holds the quit for its `onBeforeQuit` guards and `onAppQuit` hooks: the
+ *   request and the helper stands down (the sidecars stay stopped). `quitting: true` also while
+ *   the window lifecycle holds the quit for its `onBeforeQuit` guards and `onAppQuit` hooks: the
  *   install is issued again once they ran (unless a guard refuses it).
- * @throws {@linkcode AppUpdateError} `not_staged` when nothing was staged in this run.
+ * @throws {@linkcode AppUpdateError} `not_staged` when nothing was staged in this run;
+ *   `sidecars_running` when a sidecar could not be stopped (nothing was installed).
  */
-export function installAppUpdateAndRelaunch(
+export async function installAppUpdateAndRelaunch(
   options: { force?: boolean } = {},
-): { quitting: boolean } {
+): Promise<{ quitting: boolean }> {
   const updater = requireUpdater();
-  killSidecarsNow("update");
+  try {
+    await endSidecarsForUpdate();
+  } catch (err) {
+    throw new AppUpdateError(
+      "sidecars_running",
+      `a sidecar is still running, so the update was not installed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
   const issue = () =>
     updater.applyAndRelaunch(options.force === true ? { force: true } : {}).quitting === true;
   try {
