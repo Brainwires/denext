@@ -732,8 +732,11 @@ export interface DetachedConnectOptions {
   readonly name?: string;
   /** The handshake budget (default 5 000 ms). */
   readonly timeoutMs?: number;
-  /** Open the connection (tests). */
-  readonly connect?: (port: number) => Promise<DetachedConn>;
+  /**
+   * Open the connection (tests). `signal` aborts once the budget passed without a connection: the
+   * attempt must settle then (the probe waits for it, and closes a connection it still yields).
+   */
+  readonly connect?: (port: number, signal: AbortSignal) => Promise<DetachedConn>;
 }
 
 /** Wait for `p` up to `ms`; `undefined` past it. */
@@ -747,6 +750,26 @@ async function within<T>(p: Promise<T>, ms: number): Promise<T | undefined> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * The connection `open` makes to `port` within `ms`, or `null` when it is refused or still
+ * connecting past that. The attempt never outlives this call: past the budget it is aborted and
+ * waited for (a refused loopback connect is reported at once on macOS and Linux, but only after
+ * the OS's own retries, about two seconds, on Windows), and a connection it yields anyway is closed.
+ */
+async function openWithin(
+  open: (port: number, signal: AbortSignal) => Promise<DetachedConn>,
+  port: number,
+  ms: number,
+): Promise<DetachedConn | null> {
+  const abort = new AbortController();
+  const opening = (async () => await open(port, abort.signal))().catch(() => null);
+  const opened = await within(opening, ms);
+  if (opened !== undefined) return opened;
+  abort.abort();
+  (await opening)?.close();
+  return null;
 }
 
 /** The `ok` payload as {@linkcode DetachedStatusInfo}, or `null` when it is not one. */
@@ -815,16 +838,11 @@ export async function probeDetachedControl(
     return { state: "stale" };
   }
   const open = options.connect ??
-    ((port: number) => Deno.connect({ hostname: "127.0.0.1", port, transport: "tcp" }));
-  let conn: DetachedConn;
-  try {
-    // Loopback: a dead endpoint refuses at once; one that never connects is no sidecar either.
-    const opened = await within(open(options.port), timeoutMs);
-    if (!opened) return { state: "stale" };
-    conn = opened;
-  } catch {
-    return { state: "stale" };
-  }
+    ((port: number, signal: AbortSignal) =>
+      Deno.connect({ hostname: "127.0.0.1", port, transport: "tcp", signal }));
+  // Loopback: a dead endpoint refuses; one that never connects is no sidecar either.
+  const conn = await openWithin(open, options.port, timeoutMs);
+  if (!conn) return { state: "stale" };
   const lines = new DetachedLines(conn);
   const handshake = clientHandshake(lines, key).catch(() => null);
   let info = await within(handshake, timeoutMs);

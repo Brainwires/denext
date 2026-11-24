@@ -679,6 +679,53 @@ Deno.test({
 });
 
 Deno.test({
+  name: "probeDetachedControl: a connect still pending past the budget is aborted and ended",
+  fn: async () => {
+    const key = newDetachedKey();
+    // One that ends when aborted (a refusal the OS reports only after its own retries).
+    let aborted: AbortSignal | undefined;
+    let ended = false;
+    const pending = (_port: number, signal: AbortSignal) => {
+      aborted = signal;
+      return new Promise<never>((_, reject) =>
+        signal.addEventListener("abort", () => {
+          ended = true;
+          reject(signal.reason);
+        }, { once: true })
+      );
+    };
+    assertEquals(await probeDetachedControl({ port: 1, key, timeoutMs: 20, connect: pending }), {
+      state: "stale",
+    });
+    assertEquals(aborted?.aborted, true);
+    assertEquals(ended, true, "the attempt ended before the probe answered");
+    // One whose connection arrives as the budget passes: closed, never left open.
+    let closed = 0;
+    const late = (_port: number, signal: AbortSignal) =>
+      new Promise<
+        { readable: ReadableStream<Uint8Array>; write(): Promise<number>; close(): void }
+      >(
+        (resolve) =>
+          signal.addEventListener("abort", () =>
+            resolve({
+              readable: new ReadableStream<Uint8Array>(),
+              write: () => Promise.resolve(0),
+              close: () => void closed++,
+            }), { once: true }),
+      );
+    assertEquals(await probeDetachedControl({ port: 1, key, timeoutMs: 20, connect: late }), {
+      state: "stale",
+    });
+    assertEquals(closed, 1);
+    // One that throws instead of returning a promise: stale.
+    const throws = () => {
+      throw new Error("no socket");
+    };
+    assertEquals(await probeDetachedControl({ port: 1, key, connect: throws }), { state: "stale" });
+  },
+});
+
+Deno.test({
   name: "launcher: a recorded instance that is alive but busy fails the start; no second instance",
   fn: async () => {
     const data = await tempDir("busy");
