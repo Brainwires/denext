@@ -316,39 +316,78 @@ Deno.test("parseDetachedRecord: a malformed or foreign record is refused", () =>
   assertEquals(parseDetachedRecord("[]"), null);
 });
 
-Deno.test("withDetachedLock: serializes two starts; a stale lock is broken; a held one times out", async () => {
+/**
+ * Hold the OS lock on `path` from another process until the returned function ends it: the
+ * process prints `locked` once it holds the lock.
+ */
+async function lockFromAnotherProcess(path: string): Promise<() => Promise<void>> {
+  const child = new Deno.Command(Deno.execPath(), {
+    args: [
+      "eval",
+      `const f = Deno.openSync(${JSON.stringify(path)}, { read: true, write: true, create: true });
+f.lockSync(true);
+console.log("locked");
+setTimeout(() => {}, 60_000);`,
+    ],
+    stdout: "piped",
+    stderr: "null",
+  }).spawn();
+  const reader = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
+  let seen = "";
+  while (!seen.includes("locked")) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error("the locking process ended early");
+    seen += value;
+  }
+  return async () => {
+    child.kill("SIGKILL");
+    await child.status;
+    await reader.cancel().catch(() => {});
+  };
+}
+
+Deno.test("withDetachedLock: two starts take turns; a held lock is never broken; the OS frees a dead holder's", async () => {
   const dir = await tempDir("lock");
   try {
+    // Two concurrent starters in one process: exactly one inside at a time, both run.
     const order: string[] = [];
-    await Promise.all([
+    let inside = 0;
+    const start = (tag: string) =>
       withDetachedLock(dir, "d", async () => {
-        order.push("a+");
-        await sleep(150);
-        order.push("a-");
-      }),
-      (async () => {
-        await sleep(20);
-        await withDetachedLock(dir, "d", () => {
-          order.push("b");
-          return Promise.resolve();
-        });
-      })(),
-    ]);
-    assertEquals(order, ["a+", "a-", "b"]);
-    // A lock its holder stopped refreshing (it is gone) is broken.
+        inside++;
+        assertEquals(inside, 1, "one start at a time");
+        order.push(`${tag}+`);
+        await sleep(100);
+        order.push(`${tag}-`);
+        inside--;
+      });
+    await Promise.all([start("a"), start("b")]);
+    assertEquals(order.length, 4);
+    assertEquals([order[0][0], order[1]], [order[0][0], `${order[0][0]}-`]);
+    // Held by another process: waited for, never broken, however old the file looks (a holder
+    // whose timers stalled, a machine that slept).
     const lock = join(dir, "d.lock");
-    await Deno.writeTextFile(lock, "{}");
-    const past = new Date(Date.now() - 60_000);
+    const release = await lockFromAnotherProcess(lock);
+    const past = new Date(Date.now() - 3600_000);
     await Deno.utime(lock, past, past);
-    assertEquals(await withDetachedLock(dir, "d", () => Promise.resolve(7)), 7);
-    // A fresh one is respected until the wait gives up.
-    await Deno.writeTextFile(lock, "{}");
+    let ran = false;
     await assertRejects(
-      () => withDetachedLock(dir, "d", () => Promise.resolve(), { timeoutMs: 200 }),
+      () =>
+        withDetachedLock(dir, "d", () => {
+          ran = true;
+          return Promise.resolve();
+        }, { timeoutMs: 300 }),
       Error,
       "holds the start lock",
     );
-    await Deno.remove(lock);
+    assertEquals(ran, false);
+    // Its holder dies (a crash, a kill): the OS frees the lock at once, no stale wait.
+    await release();
+    assertEquals(
+      await withDetachedLock(dir, "d", () => Promise.resolve(7), { timeoutMs: 2000 }),
+      7,
+    );
+    assert(await Deno.stat(lock).then(() => true), "the lock file is kept for the next start");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

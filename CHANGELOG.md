@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Fixed
 
+- **A detached sidecar's start lock is an OS lock.** Two starts that both judged the old lock file
+  stale could remove each other's lock, and a holder whose timers stalled for 30 s (a machine that
+  slept) lost it; after a crash the next launch waited up to 30 s. The start lock is now an
+  exclusive OS advisory lock (`flock` / `LockFileEx`), which the OS releases when its holder exits
+  and which is never broken while held.
+
 - **A stalled denext.dev no longer fails a runtime install from the mirror.** `denext runtime
   install | use | upgrade` and a project pin give each host its own budget for the release
   document, so the GitHub mirror is still tried in full.

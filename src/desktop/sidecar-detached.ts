@@ -43,6 +43,7 @@
  */
 
 import { join } from "@std/path";
+import { acquireOsLock } from "./os-lock.ts";
 import { decodeBase64Url, encodeBase64Url } from "@std/encoding/base64url";
 
 /** The protocol version (`hello.v`, the record's `v`). */
@@ -57,8 +58,6 @@ const DETACHED_HANDSHAKE_MS = 5_000;
 const DETACHED_MAX_PENDING = 16;
 /** The longest `shutdown` grace the server honours. */
 export const DETACHED_MAX_GRACE_MS = 30_000;
-/** A start lock older than this whose holder stopped refreshing it is broken. */
-const DETACHED_LOCK_STALE_MS = 30_000;
 /** The registry's folder inside the app's data folder. */
 const DETACHED_REGISTRY_FOLDER = "sidecars";
 
@@ -266,47 +265,18 @@ export async function listDetachedRecords(registryDir: string): Promise<Detached
 
 /** Options for {@linkcode withDetachedLock}. */
 export interface DetachedLockOptions {
-  /** A lock whose file was not refreshed for this long is broken (default 30 000 ms). */
-  readonly staleMs?: number;
   /** How long to wait for the lock before giving up (default 60 000 ms). */
   readonly timeoutMs?: number;
   /** How often a held lock is tried again (default 50 ms). */
   readonly pollMs?: number;
 }
 
-/** Sleep `ms`. */
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
-/** Take the lock file once: `true` when this call created it. */
-async function tryLock(path: string): Promise<boolean> {
-  try {
-    const file = await Deno.open(path, { createNew: true, write: true, mode: 0o600 });
-    try {
-      await file.write(new TextEncoder().encode(JSON.stringify({ pid: Deno.pid, at: Date.now() })));
-    } finally {
-      file.close();
-    }
-    return true;
-  } catch (err) {
-    if (err instanceof Deno.errors.AlreadyExists) return false;
-    throw err;
-  }
-}
-
-/** Whether the lock at `path` was last refreshed longer than `staleMs` ago. */
-async function lockIsStale(path: string, staleMs: number): Promise<boolean> {
-  const info = await Deno.stat(path).catch(() => null);
-  if (!info) return false;
-  return Date.now() - (info.mtime?.getTime() ?? 0) > staleMs;
-}
-
 /**
- * Run `fn` holding the start lock of one sidecar: `<registryDir>/<name>.lock`, created with
- * `createNew` (an exclusive create), so two instances of the app never start two detached sidecars
- * of one name. The holder refreshes the file's time every third of `staleMs`; a lock not refreshed
- * for `staleMs` (its holder is gone) is broken.
+ * Run `fn` holding the start lock of one sidecar: an exclusive OS advisory lock on
+ * `<registryDir>/<name>.lock` (`os-lock.ts`), so two instances of the app (or two starts in one)
+ * never start two detached sidecars of one name. The OS releases it when its holder exits, so a
+ * crashed start never leaves a lock to wait out, and a held lock is never broken (a holder whose
+ * timers stalled, a machine that slept, stays the holder). The file is kept for the next start.
  *
  * @param registryDir The registry folder.
  * @param name The sidecar's name.
@@ -320,31 +290,19 @@ export async function withDetachedLock<T>(
   fn: () => Promise<T>,
   options: DetachedLockOptions = {},
 ): Promise<T> {
-  const staleMs = options.staleMs ?? DETACHED_LOCK_STALE_MS;
-  const deadline = Date.now() + (options.timeoutMs ?? 60_000);
   const path = join(registryDir, `${name}.lock`);
   await ensureRegistryDir(registryDir);
-  while (!(await tryLock(path))) {
-    if (await lockIsStale(path, staleMs)) {
-      await Deno.remove(path).catch(() => {});
-      continue;
-    }
-    if (Date.now() > deadline) {
-      throw new Error(
-        `sidecar ${name}: another instance of the app holds the start lock (${path})`,
-      );
-    }
-    await sleep(options.pollMs ?? 50);
+  const lock = await acquireOsLock(path, {
+    timeoutMs: options.timeoutMs ?? 60_000,
+    ...(options.pollMs !== undefined ? { pollMs: options.pollMs } : {}),
+  });
+  if (!lock) {
+    throw new Error(`sidecar ${name}: another instance of the app holds the start lock (${path})`);
   }
-  const refresh = setInterval(() => {
-    const now = new Date();
-    Deno.utime(path, now, now).catch(() => {});
-  }, Math.max(10, Math.floor(staleMs / 3)));
   try {
     return await fn();
   } finally {
-    clearInterval(refresh);
-    await Deno.remove(path).catch(() => {});
+    lock.release();
   }
 }
 
