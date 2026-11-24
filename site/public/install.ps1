@@ -34,7 +34,7 @@
 #   DENEXT_NO_RUNTIME  `1` skips `denext runtime upgrade` (and the link): the runtime then
 #                    downloads on the first command that needs it
 #   DENEXT_RUNTIME_ONLY  `1` is -RuntimeOnly
-#   DENEXT_RUNTIME_VERSION  a runtime version (`3.0.0-denext.31`) is -Runtime <version>
+#   DENEXT_RUNTIME_VERSION  a runtime version (`3.0.0-denext.<n>`) is -Runtime <version>
 #   DENEXT_NO_DENO_LINK  `1` skips `denext runtime link` (no `deno` is put on your Path)
 #   DENEXT_ARTIFACTS a local directory holding the release files (`denext-<target>.zip` and
 #                    `SHA256SUMS` or `<archive>.sha256`) to install from instead of GitHub - for
@@ -52,7 +52,7 @@
 #
 #   & ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -NoModifyPath
 #   & ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -RuntimeOnly
-#   & ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -Runtime 3.0.0-denext.31
+#   & ([scriptblock]::Create((irm https://denext.dev/install.ps1))) -Runtime <version>
 #
 # To uninstall, run the script with -Uninstall (it removes the Path entry too):
 #
@@ -112,7 +112,7 @@ function Install-Denext {
   $script:DenextRuntimeOnly = $RuntimeOnly -or ($env:DENEXT_RUNTIME_ONLY -eq '1')
   $script:DenextRuntimeVersion = if ($Runtime) { $Runtime } else { "$env:DENEXT_RUNTIME_VERSION" }
   if ($script:DenextRuntimeVersion -and $script:DenextRuntimeVersion -notmatch '^[A-Za-z0-9][A-Za-z0-9.+-]*$') {
-    throw "denext: -Runtime $($script:DenextRuntimeVersion) is not a runtime version (3.0.0-denext.31)"
+    throw "denext: -Runtime $($script:DenextRuntimeVersion) is not a runtime version (3.0.0-denext.<n>)"
   }
   if (($env:DENEXT_NO_RUNTIME -eq '1') -and ($script:DenextRuntimeOnly -or $script:DenextRuntimeVersion)) {
     throw 'denext: DENEXT_NO_RUNTIME=1 skips the runtime, which -RuntimeOnly / -Runtime ask for: nothing to do'
@@ -507,7 +507,7 @@ function Install-DenoToolchain([string]$exe, [string]$target, [string]$root) {
   Connect-DenoLink $exe $root 'toolchain'
 }
 
-# The runtime version the binary at $exe runs (`3.0.0-denext.31`), or 'the pinned build':
+# The runtime version the binary at $exe runs (`3.0.0-denext.<n>`), or 'the pinned build':
 # `runtime version --json` nests it as `runtime.version`; an older release's `toolchain status
 # --json` ($verb = 'toolchain') has it at the top.
 function Get-RuntimeVersion([string]$exe, [string]$verb = 'runtime') {

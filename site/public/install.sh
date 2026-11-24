@@ -32,7 +32,7 @@
 #                    downloads on the first command that needs it
 #   DENEXT_NO_DENO_LINK  `1` skips `denext runtime link` (no `deno` is put on your PATH)
 #   DENEXT_RUNTIME_ONLY  `1` is --runtime-only
-#   DENEXT_RUNTIME_VERSION  a runtime version (`3.0.0-denext.31`) is --runtime=<version>
+#   DENEXT_RUNTIME_VERSION  a runtime version (`3.0.0-denext.<n>`) is --runtime=<version>
 #   DENEXT_MODIFY_PATH  where to add denext's bin to PATH: `1` (your login shell's rc file),
 #                    `all` (every installed shell's), `0` (nowhere) — the same as the flags below
 #   DENEXT_ARTIFACTS a local directory holding the release files (`denext-<target>.tar.gz` and
@@ -415,7 +415,7 @@ parse_args() {
       --runtime-only) RUNTIME_ONLY=1 ;;
       --runtime=*) RUNTIME_VERSION="${1#--runtime=}" ;;
       --runtime)
-        echo "denext: --runtime takes a version: --runtime=<version> (3.0.0-denext.31)" >&2
+        echo "denext: --runtime takes a version: --runtime=<version> (3.0.0-denext.<n>)" >&2
         exit 2
         ;;
       --modify-path | --modify-path=current | --modify-path=1 | --modify-path=yes) MODIFY_PATH=current ;;
@@ -429,7 +429,7 @@ parse_args() {
         echo "  --no-modify-path    change no startup file"
         echo "  --runtime-only      update only the runtime of the denext installed here"
         echo "  --runtime=<version> install that runtime release and make it the default"
-        echo "  --uninstall         remove denext and the PATH blocks this script added"
+        echo "  --uninstall         remove denext, the deno link and the PATH blocks this script added"
         exit 0
         ;;
       *)
@@ -448,13 +448,13 @@ parse_args() {
   fi
 }
 
-# A --runtime=<version> is a runtime release version (`3.0.0-denext.31`): checked here only for
+# A --runtime=<version> is a runtime release version (`3.0.0-denext.<n>`): checked here only for
 # its shape, so it never reaches a command line as anything else; the binary checks the rest.
 check_runtime_version() {
   [ -z "$1" ] && return 0
   case "$1" in
     *[!A-Za-z0-9.+-]* | -*)
-      echo "denext: --runtime=$1 is not a runtime version (3.0.0-denext.31)" >&2
+      echo "denext: --runtime=$1 is not a runtime version (3.0.0-denext.<n>)" >&2
       exit 2
       ;;
   esac
@@ -845,7 +845,7 @@ install_toolchain() {
   link_deno "$1" toolchain
 }
 
-# The runtime version the binary at $1 runs (`3.0.0-denext.31`), from `runtime version --json` (or
+# The runtime version the binary at $1 runs (`3.0.0-denext.<n>`), from `runtime version --json` (or
 # an older release's `toolchain status --json`, $2 = `toolchain`), or `the pinned build`.
 runtime_version() {
   if [ "$2" = toolchain ]; then
