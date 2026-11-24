@@ -1371,11 +1371,12 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   in (no denext release needed), `use <version|latest|bundled> [--project]` picks one, and
   `list | install | path | link | unlink` work as named; `denext runtime uninstall
   <version>|--all` and `prune` remove cached releases (one in use only with `--force`;
-  `--dry-run`, `--json`).
+  `--dry-run`, `--json`). The bundled runtime is only the fallback.
   The compiled `denext` binary needs no Deno on the machine at all: every verb that spawns Deno
   runs it on the toolchain (with no toolchain it refuses, naming `denext runtime install`;
-  `DENEXT_DENO=stock` opts in to a `deno` on PATH), and the installer runs `runtime install` (+ `runtime link`
-  when no `deno` is on PATH; `DENEXT_NO_DENO_LINK=1` skips it). The toolchain type-checks with
+  `DENEXT_DENO=stock` opts in to a `deno` on PATH), and the installer runs `runtime upgrade` (falling
+  back to `runtime install`; + `runtime link` when no `deno` is on PATH; `DENEXT_NO_DENO_LINK=1`
+  skips it). The toolchain type-checks with
   native TypeScript 7 (`DENEXT_NATIVE_CHECK=0` keeps TypeScript 6) and its `deno lsp` runs
   TypeScript 7 too (the runtime's own default; `create` / `migrate` / `upgrade` also write
   `"deno.unstable": ["tsgo-lsp"]` for older runtimes; `DENO_UNSTABLE_TSGO_LSP=0` keeps

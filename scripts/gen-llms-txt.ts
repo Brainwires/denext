@@ -92,6 +92,9 @@ export function llmsIndex(): string {
   \`runJob()\` / \`denext job <name>\`, run history.
 - [denext's Deno toolchain](${SITE}/docs/toolchain): the pinned Deno build project verbs run on
   (\`Deno.SQL\`, Vitest/Jest compatibility), and \`denext task\` vs \`deno task\`.
+- [The runtime channel](${SITE}/docs/runtime-channel): which runtime release runs and why
+  (\`DENEXT_RUNTIME\`, a project pin, your default, the bundled one), \`denext runtime upgrade | use
+  | list | version\`, the dependency-age hold, and yanked and revoked releases.
 - [Runtime reference](${SITE}/docs/runtime-reference): everything denext's Deno does differently
   from stock Deno 2.9.8 (APIs, flags, environment variables, Node.js and npm behavior, the
   supply-chain gates, permissions, the Deno Desktop APIs, and the fixes it carries), by area.

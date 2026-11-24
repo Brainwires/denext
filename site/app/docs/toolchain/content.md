@@ -37,9 +37,12 @@ denext's Deno toolchain is the Deno CLI built from the public
 version from `3.0.0-rc.1`; see [Versions](#versions)): stock Deno plus
 `Deno.SQL` (the Postgres client behind [`postgresClient()`](/docs/database#postgres)) and
 Vitest/Jest compatibility in `deno test`. denext manages it the same way it manages the
-[Deno Desktop runtime](/docs/desktop-runtime): each denext release pins one build per platform by
-version and SHA-256, downloads it the first time a command needs it, verifies it, and reuses the
-verified copy from then on. Every API, flag, config key and environment variable the build adds is
+[Deno Desktop runtime](/docs/desktop-runtime): each denext release bundles a pin of one build per
+platform by version and SHA-256, downloads it the first time a command needs it, verifies it, and
+reuses the verified copy from then on. The bundled pin is the fallback: `DENEXT_RUNTIME`, a project
+pin or your default (which a plain install sets with `denext runtime upgrade`) choose another
+release from the signed [runtime channel](/docs/runtime-channel), and `denext runtime version` says
+which one runs. Every API, flag, config key and environment variable the build adds is
 listed, with the version it arrived in, in the [runtime reference](/docs/runtime-reference).
 
 There is nothing to install and nothing to configure. Install denext as usual; Deno itself is
@@ -258,9 +261,14 @@ in the command's environment, so the processes it starts stay quiet.
 
 A Deno toolchain or Deno Desktop runtime release that turns out to be broken (it crashes on start
 on some hosts, say) can be revoked after release. The maintainers publish a signed list of revoked
-releases, and denext reads it before it runs its pinned toolchain:
+releases, and denext reads it before it runs the toolchain it selected:
 
-- **The pin is revoked for this host:** denext runs the previous release instead, which the pin
+- **A release from the channel is revoked for this host** (chosen by `DENEXT_RUNTIME`, a project
+  pin or your default): denext runs the newest installed release that is compatible with this
+  denext, not yanked and not revoked, else the bundled runtime, and says so once on stderr, naming
+  `denext runtime upgrade`. See
+  [Bad releases](/docs/runtime-channel#bad-releases).
+- **The bundled pin is revoked for this host:** denext runs the previous release instead, which the pin
   names as its `rollback`, provided that release is not revoked too. It is downloaded and verified
   like the pinned one: its SHA-256 comes from the pin that shipped with your denext, never from
   the list. The command says so once, on stderr:
@@ -279,8 +287,9 @@ releases, and denext reads it before it runs its pinned toolchain:
   instead. The desktop verbs move the toolchain and the Deno Desktop runtime back together, since
   the `deno desktop` CLI and libdenort must come from one release.
 
-The list can only disable a pin and choose among the two releases your denext pins. It never names
-a binary of its own, so a stolen signing key could at worst force that one step back.
+The list can only disable a release. What runs instead is a release already installed and verified
+through the channel, or one of the two releases your denext pins; the list never names a binary of
+its own, so a stolen signing key could at worst force a step back to one of those.
 
 **When it is checked.** The list is cached under the toolchain cache
 (`<DENO_DIR>/denext-deno/revocations.json`) for 12 hours and re-verified on every read: its
@@ -1133,14 +1142,18 @@ OS's text to speech ([Our Deno Desktop runtime](/docs/desktop-runtime#overlay-wi
 `3.0.0-denext.23` adds WebRTC media, certificates and transports, `Deno.webrtc` (encoded media tracks, shared-port networks, ICE over TCP and mDNS), a rejected `info.completed` for a cut-short HTTP/1.1 stream, a bounded WebSocket closing handshake, HTTP/2 refused-stream retries, and faster language-server startup in workspaces with npm dependencies.
 `3.0.0-denext.24` adds the opt-in [kernel sandbox](/docs/kernel-sandbox) preview (`--kernel-sandbox`, `--kernel-sandbox-report`, `permissions.kernelSandbox`; settings and reports, nothing enforced), tightens the Linux script jail's socket filter, and ports upstream HTTP, `fetch`, WebSocket, web API, file system, cache and coverage fixes.
 `3.0.0-denext.25` makes the kernel sandbox's opt-in `--kernel-sandbox=enforce` confine `deno run` and `deno serve` on Linux and macOS, reads Linux `/proc` and `/sys` files with the matching `--allow-sys` name (`processInfo` and `processes` are new), lets an external permission broker hand back opened files, and fixes `--seed=0`, DNS with a zoned link-local name server, lockfile names starting with a multi-byte character and `--trace-exit` with a throwing `Error.prepareStackTrace`.
+`3.0.0-denext.27` carries the content first tagged `3.0.0-denext.26`: the kernel sandbox reaches the processes a program starts (a nested `deno` intersects its grant with the inherited one, `--kernel-sandbox-exec=strict`, sandboxed caches under `DENO_DIR/sandboxed/`), WebRTC Encoded Transform and SFrame, `navigator.mediaDevices` with fake devices (`DENO_FAKE_MEDIA_DEVICES=1`), WebRTC conformance fixes from the web-platform-tests, and a Linux lifecycle-script jail that resolves a script's metadata changes within its own root ([GHSA-488g-7qvv-g92h](https://github.com/Brainwires/denext/security/advisories/GHSA-488g-7qvv-g92h)).
+`3.0.0-denext.28` adds the kernel sandbox's supervising broker (`--kernel-sandbox=broker`, and `enforce` for a host-scoped `--allow-net` or a write deny inside a write allow), warn mode's observer and `DENO_KERNEL_SANDBOX_WARN_LOG`, Linux listeners bound before the sandbox applies, `deno compile --kernel-sandbox=enforce` (Linux, macOS, and Windows' job object and Low integrity), laufey 0.9.0 (web view downloads and permission requests), `Deno.Pty.foreground()` / `ttyName`, `Deno.desktop.windowOrder()` / `pointer()`, cache databases per runtime version, and the fix for RUSTSEC-2026-0592.
 The [runtime reference](/docs/runtime-reference) lists every addition by the version it arrived in.
 
 ### Support across denext releases
 
-The patches are carried forward from release to release. Each
-denext release pins exactly one build (a SHA-256 per target, checked on download), so a project
-always runs the build its denext version was tested with, and upgrading denext moves the build with
-it. Until denext 5.0, `DENEXT_DENO=stock` works ([deprecated](#stock-deno-is-deprecated)): what
+The patches are carried forward from release to release. Each denext release bundles a pin of
+exactly one build (a SHA-256 per target, checked on download), the one it was tested with, and
+upgrading denext moves that pin with it. The bundled build is the fallback: a release from the
+[runtime channel](/docs/runtime-channel) chosen by `DENEXT_RUNTIME`, a project pin or your default
+(which the installer sets) runs instead when one is set, within the range this denext supports.
+`denext runtime version` names the release that runs and the rung that chose it. Until denext 5.0, `DENEXT_DENO=stock` works ([deprecated](#stock-deno-is-deprecated)): what
 needs the build (`Deno.SQL`, Vitest/Jest compatibility, the bundled esbuild) falls back or says why
 it can't.
 

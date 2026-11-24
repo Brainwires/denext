@@ -68,7 +68,9 @@ curl -fsSL https://denext.dev/install.sh | sh -s -- --uninstall`}
         {" "}
         <code>--runtime-only</code> (it runs <code>denext runtime upgrade</code>);{" "}
         <code>--runtime=&lt;version&gt;</code>{" "}
-        installs that runtime release and makes it your default. On Windows the same flags are{" "}
+        installs that runtime release and makes it your default (on its own it also installs the
+        latest denext; add <code>--runtime-only</code> to keep yours). On Windows the same flags are
+        {" "}
         <code>-RuntimeOnly</code> and <code>-Runtime &lt;version&gt;</code> (and{" "}
         <code>DENEXT_RUNTIME_ONLY=1</code> / <code>DENEXT_RUNTIME_VERSION</code>{" "}
         everywhere). With either flag, a runtime that can&apos;t be installed fails the run:
