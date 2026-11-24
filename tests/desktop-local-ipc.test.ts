@@ -818,8 +818,11 @@ Deno.test("local IPC: a pipe served by another user (or one nobody can vouch for
       // This user's own server: connected.
       const conn = await connectLocalIpcWith(open, pipe, {}, lookup("S-1-5-21-9-9-9-1001"));
       conn.close();
-      // A Unix socket path is never asked (its folder's ownership guards it).
-      const unix = await connectLocalIpcWith(open, ch.path, {}, lookup("S-1-5-21-9-9-9-1002"));
+      // A Unix socket path is never asked (its folder's ownership guards it). On Windows this
+      // test's own channel is a pipe, which IS asked, so the path named there is a Unix one (the
+      // connection itself is `open`'s, whatever the path).
+      const unixPath = WINDOWS ? "/tmp/dnipc/t.sock" : ch.path;
+      const unix = await connectLocalIpcWith(open, unixPath, {}, lookup("S-1-5-21-9-9-9-1002"));
       unix.close();
     } finally {
       for (const p of peers) p.destroy();
