@@ -237,13 +237,19 @@ export async function writeNotFoundPage(ctx: ExportContext): Promise<void> {
   }
 }
 
-/** Copy the public directory's contents into the output directory. */
+/**
+ * Copy the public directory's contents into the output directory. No `public/` is nothing to
+ * copy; any other failure (a full disk, an unreadable file) fails the export.
+ */
 export async function copyPublic(publicDir: string, outDir: string): Promise<void> {
+  let entries: Deno.DirEntry[];
   try {
-    for await (const entry of Deno.readDir(publicDir)) {
-      await copy(join(publicDir, entry.name), join(outDir, entry.name), { overwrite: true });
-    }
-  } catch {
-    // No public/ directory — nothing to copy.
+    entries = await Array.fromAsync(Deno.readDir(publicDir));
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) return;
+    throw err;
+  }
+  for (const entry of entries) {
+    await copy(join(publicDir, entry.name), join(outDir, entry.name), { overwrite: true });
   }
 }
