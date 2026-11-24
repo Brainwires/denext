@@ -24,6 +24,7 @@
  * @module
  */
 
+import { registerLocalIpcAppId } from "./local-ipc.ts";
 import {
   DETACHED_MAX_GRACE_MS,
   parseDetachedRecord,
@@ -63,6 +64,8 @@ interface DetachedChildInit {
   readonly logRotateBytes?: number;
   /** How often the log's size is checked (default 10 000 ms). */
   readonly logCheckMs?: number;
+  /** The app's identifier (`desktop.app.identifier`), registered for `localIpcPath`. */
+  readonly appId?: string;
 }
 
 /** The `node:process` parts this module drives. */
@@ -140,6 +143,7 @@ const INIT_FIELDS: ReadonlyArray<readonly [string, InitFieldCheck]> = [
   ["logFile", { check: nonEmptyString, optional: true }],
   ["logRotateBytes", { check: positiveNumber, optional: true }],
   ["logCheckMs", { check: positiveNumber, optional: true }],
+  ["appId", { check: nonEmptyString, optional: true }],
 ];
 
 /** Wait for the app's `init` over the IPC channel. */
@@ -246,6 +250,8 @@ export async function runDetachedSidecarChild(options: RunDetachedChildOptions):
   if (init.name !== options.name) {
     throw new Error(`sidecar ${options.name}: the init names another sidecar (${init.name})`);
   }
+  // The app's identifier, so `localIpcPath(name)` finds the app's channels here as in the app.
+  if (init.appId !== undefined) registerLocalIpcAppId(init.appId);
   const graceMs = Math.min(init.graceMs ?? SIDECAR_DEFAULTS.graceMs, DETACHED_MAX_GRACE_MS);
   const handlers: Array<() => unknown> = [];
   const attachedListeners = new Set<(attached: boolean) => void>();

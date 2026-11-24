@@ -112,6 +112,16 @@ export function registerLocalIpcAppId(appId: string | undefined): void {
   (globalThis as Record<symbol, unknown>)[APP_ID_KEY] = appId;
 }
 
+/**
+ * The identifier {@linkcode registerLocalIpcAppId} registered in this process, if any: what the
+ * app hands its detached sidecars, so `localIpcPath(name)` works in them as in the app.
+ *
+ * @returns The app identifier, or `undefined`.
+ */
+export function registeredLocalIpcAppId(): string | undefined {
+  return registeredAppId();
+}
+
 /** The registered identifier, if any. */
 function registeredAppId(): string | undefined {
   const id = (globalThis as Record<symbol, unknown>)[APP_ID_KEY];

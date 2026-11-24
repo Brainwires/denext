@@ -78,11 +78,12 @@ revalidatePath("/blog");   // purge a route`}
       </h2>
       <p>
         <code>unstable_cache(fn, keyParts, {"{ revalidate, tags }"})</code>{" "}
-        wraps a loader: the entry is keyed on <code>keyParts</code>{" "}
-        plus the call's arguments, expires after <code>revalidate</code> seconds (<code>false</code>
+        wraps a loader: the entry is keyed on the loader's own source, <code>keyParts</code>{" "}
+        and the call's arguments (so loaders with different source never share an entry, and editing
+        a loader starts it afresh), expires after <code>revalidate</code>{" "}
+        seconds (<code>false</code> or unset: never), and is purged by <code>revalidateTag</code>
         {" "}
-        or unset: never), and is purged by <code>revalidateTag</code> on any of its{" "}
-        <code>tags</code>. The key parts are not tags. As in Next.js,{" "}
+        on any of its <code>tags</code>. The key parts are not tags. As in Next.js,{" "}
         <code>revalidate: 0</code>, a negative or a non-numeric value is refused when the wrapper is
         made (<code>Invariant revalidate: 0 can not be passed to unstable_cache()</code>), not when
         it is called; use <code>noStore()</code>{" "}

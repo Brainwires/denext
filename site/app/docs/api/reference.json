@@ -45986,12 +45986,12 @@
           "params": [
             {
               "name": "name",
-              "doc": "The library's name: an entry's name, else its file name without lib and the extension (librullama_audio_ffi.dylib → rullama_audio_ffi)."
+              "doc": "The library's name: an entry's name, else its file name without lib and the extension (libaudio_ffi.dylib → audio_ffi)."
             }
           ],
           "returns": "The absolute path, or null.",
           "examples": [
-            "```ts\nimport { bundledLibraryPath } from \"denext/desktop\";\nconst path = bundledLibraryPath(\"rullama_audio_ffi\");\nconst lib = path ? Deno.dlopen(path, { level: { parameters: [], result: \"f32\" } }) : null;\n```"
+            "```ts\nimport { bundledLibraryPath } from \"denext/desktop\";\nconst path = bundledLibraryPath(\"audio_ffi\");\nconst lib = path ? Deno.dlopen(path, { level: { parameters: [], result: \"f32\" } }) : null;\n```"
           ],
           "denextOnly": true
         },
@@ -47764,6 +47764,50 @@
               "name": "explicit",
               "signature": "readonly explicit: boolean",
               "doc": "Whether the formats were asked for (`--format` or `desktop.installers.<os>`) rather than the\ndefaults: an asked-for format whose tool is missing fails the run instead of being skipped."
+            }
+          ]
+        },
+        {
+          "name": "DesktopLinuxDesktopEntryConfig",
+          "slug": "DesktopLinuxDesktopEntryConfig",
+          "kind": "interface",
+          "signature": "interface DesktopLinuxDesktopEntryConfig",
+          "doc": "DesktopLinuxConfig.desktopEntry: freedesktop Desktop Entry keys. Values are escaped per the Desktop Entry specification (\\\\, \\n, \\; in a list); a value with a control character is refused.",
+          "docFull": "{@link DesktopLinuxConfig.desktopEntry}: freedesktop Desktop Entry keys. Values are escaped per\nthe Desktop Entry specification (`\\\\`, `\\n`, `\\;` in a list); a value with a control character is\nrefused.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "categories",
+              "signature": "categories?: string[]",
+              "doc": "`Categories`: freedesktop menu categories, e.g. `[\"System\", \"TerminalEmulator\"]` for a\nterminal. Each is letters, digits and `-` (`X-` for a vendor one). Default `[\"Utility\"]`."
+            },
+            {
+              "kind": "property",
+              "name": "keywords",
+              "signature": "keywords?: string[]",
+              "doc": "`Keywords`: extra search terms for the launcher (a `;` in one is escaped)."
+            },
+            {
+              "kind": "property",
+              "name": "genericName",
+              "signature": "genericName?: string",
+              "doc": "`GenericName`: what kind of app it is (`\"Terminal\"`, `\"Text Editor\"`)."
+            },
+            {
+              "kind": "property",
+              "name": "startupWMClass",
+              "signature": "startupWMClass?: string",
+              "doc": "`StartupWMClass`: the window class the launcher matches the app's windows by. Default: the\napp id, which the window carries (`LAUFEY_APP_ID`); set it only for a window that reports\nanother class."
+            },
+            {
+              "kind": "property",
+              "name": "mimeTypes",
+              "signature": "mimeTypes?: string[]",
+              "doc": "`MimeType`: the file types the app opens (`\"text/plain\"`), after the deep-link schemes'\n`x-scheme-handler/*`. With no deep link the launcher passes the opened files as `%F`."
             }
           ]
         },
@@ -50367,6 +50411,56 @@
           ]
         },
         {
+          "name": "DesktopUpdaterConfig",
+          "slug": "DesktopUpdaterConfig",
+          "kind": "interface",
+          "signature": "interface DesktopUpdaterConfig",
+          "doc": "Configuration for the desktop UI self-updater.",
+          "docFull": "Configuration for the desktop UI self-updater.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "feedUrl",
+              "signature": "readonly feedUrl: string",
+              "doc": "The web root the signed UI export is served from, e.g. `\"https://updates.example.com/ui\"`.\nThe manifest is fetched from `${feedUrl}/_denext/ota.json` and each file from\n`${feedUrl}/<path>`. A trailing slash is ignored."
+            },
+            {
+              "kind": "property",
+              "name": "publicKey",
+              "signature": "readonly publicKey: string",
+              "doc": "The release public key embedded in the app binary: base64 SPKI or a `-----BEGIN PUBLIC\nKEY-----` PEM (an ECDSA P-256 key). Every manifest MUST carry a `signature` that verifies\nagainst it, or it is refused."
+            },
+            {
+              "kind": "property",
+              "name": "dataDir",
+              "signature": "readonly dataDir?: string",
+              "doc": "Where the verified overlay is kept. Default: an OS app-support path derived from\n{@linkcode DesktopUpdaterConfig.appId} — macOS `~/Library/Application Support/<appId>/\nui-updates`, Linux `$XDG_DATA_HOME|~/.local/share/<appId>/ui-updates`, Windows\n`%APPDATA%\\<appId>\\ui-updates`."
+            },
+            {
+              "kind": "property",
+              "name": "appId",
+              "signature": "readonly appId?: string",
+              "doc": "The app identifier (`desktop.app.identifier`, which `runDesktop` passes): it names the default\n{@linkcode DesktopUpdaterConfig.dataDir} (default `\"denext-desktop\"` when unset), and when set\na manifest must name this app in its signed `appId` (`denext ota manifest --app-id`; a signed\ndesktop `spa.ota` export stamps it), or it is refused (code `app_mismatch`)."
+            },
+            {
+              "kind": "property",
+              "name": "timeoutMs",
+              "signature": "readonly timeoutMs?: number",
+              "doc": "The manifest / file request timeout in ms. Default 30 000."
+            },
+            {
+              "kind": "property",
+              "name": "platform",
+              "signature": "readonly platform?: \"macos\" | \"windows\" | \"linux\"",
+              "doc": "This app's target, which a manifest naming another one is refused against (code\n`platform_mismatch`) and which is sent as the `x-denext-ota-platform` header (a\n`createOtaHandler({ platforms })` feed serves each target its own export). Default: the OS\nthe app runs on (`macos`, `windows`, `linux`)."
+            }
+          ]
+        },
+        {
           "name": "desktopVcRedistUrl",
           "slug": "desktopVcRedistUrl",
           "kind": "function",
@@ -50629,6 +50723,18 @@
               "doc": "The app-chosen key it was opened with (`windows.open({ key })`), if any."
             }
           ]
+        },
+        {
+          "name": "DesktopWindowLevel",
+          "slug": "DesktopWindowLevel",
+          "kind": "typeAlias",
+          "signature": "type DesktopWindowLevel = \"floating\" | \"status\" | \"pop-up-menu\" | \"screen-saver\"",
+          "doc": "How far above other windows an always-on-top window floats (Electron's level names).",
+          "docFull": "How far above other windows an always-on-top window floats (Electron's level names).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "DesktopWindowMenuAppItem",
@@ -53538,6 +53644,38 @@
           ]
         },
         {
+          "name": "SpaProxyConfig",
+          "slug": "SpaProxyConfig",
+          "kind": "interface",
+          "signature": "interface SpaProxyConfig",
+          "doc": "Reverse-proxy configuration for SPA serving — the SPA analogue of a Vite dev server's server.proxy. The client talks to its own origin and denext relays matched requests (HTTP + WebSocket) to a separate backend.",
+          "docFull": "Reverse-proxy configuration for SPA serving — the SPA analogue of a Vite dev\nserver's `server.proxy`. The client talks to its own origin and denext relays\nmatched requests (HTTP + WebSocket) to a separate backend.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "prefixes",
+              "signature": "prefixes: string[]",
+              "doc": "Path prefixes forwarded to {@link target}, matched against the start of the\nrequest pathname — a prefix matches the exact path and any sub-path (e.g. `/api`\nmatches `/api` and `/api/users`). Everything else is served from the SPA export."
+            },
+            {
+              "kind": "property",
+              "name": "target",
+              "signature": "target: string",
+              "doc": "Backend origin matched requests are forwarded to (e.g. `\"http://127.0.0.1:3773\"`).\nHTTP is relayed via `fetch` (cookies passed through, `Set-Cookie` `Domain`/`Secure`\nstripped so they bind to the proxy origin over http); a WebSocket upgrade is\nbridged to the backend with the request `Cookie` forwarded on the handshake.\n\nThis is a **desktop/dev convenience** for reaching a *local* backend, not a\nproduction reverse proxy — the target must be loopback unless\n{@link allowNonLoopback} is set (at which point the security implications of\nrunning an open reverse proxy are yours)."
+            },
+            {
+              "kind": "property",
+              "name": "allowNonLoopback",
+              "signature": "allowNonLoopback?: boolean",
+              "doc": "Permit a non-loopback {@link target}. Default `false` (loopback-only)."
+            }
+          ]
+        },
+        {
           "name": "stampDesktopTreeManifest",
           "slug": "stampDesktopTreeManifest",
           "kind": "function",
@@ -53582,6 +53720,64 @@
           "returns": "",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "StandardIssue",
+          "slug": "StandardIssue",
+          "kind": "interface",
+          "signature": "interface StandardIssue",
+          "doc": "One Standard Schema issue: a message and an optional path to the offending field.",
+          "docFull": "One Standard Schema issue: a message and an optional path to the offending field.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "message",
+              "signature": "readonly message: string",
+              "doc": "The human-readable validation message."
+            },
+            {
+              "kind": "property",
+              "name": "path",
+              "signature": "readonly path?: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }>",
+              "doc": "The path to the offending field (its first segment keys `fieldErrors`)."
+            }
+          ]
+        },
+        {
+          "name": "StandardResult",
+          "slug": "StandardResult",
+          "kind": "typeAlias",
+          "signature": "type StandardResult<Output> = { readonly value: Output; readonly issues?: undefined } | { readonly issues: ReadonlyArray<StandardIssue> }",
+          "doc": "A Standard Schema validation result: a parsed value, or a list of issues.",
+          "docFull": "A Standard Schema validation result: a parsed `value`, or a list of `issues`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "StandardSchemaV1",
+          "slug": "StandardSchemaV1",
+          "kind": "interface",
+          "signature": "interface StandardSchemaV1<Output>",
+          "doc": "The Standard Schema v1 surface (https://standardschema.dev) — validator-agnostic.",
+          "docFull": "The Standard Schema v1 surface (https://standardschema.dev) — validator-agnostic.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "~standard",
+              "signature": "readonly \"~standard\": { readonly version: 1; readonly vendor: string; readonly validate: (value: unknown) => StandardResult<Output> | Promise<StandardResult<Output>>; readonly types?: { readonly input: unknown; readonly output: Output } }",
+              "doc": "The Standard Schema properties: version, vendor, and the `validate` function."
+            }
+          ]
         },
         {
           "name": "stopSidecars",
@@ -53825,6 +54021,18 @@
           ]
         },
         {
+          "name": "TrayEventType",
+          "slug": "TrayEventType",
+          "kind": "typeAlias",
+          "signature": "type TrayEventType = \"click\" | \"dblclick\" | \"contextmenu\" | \"auxclick\" | \"mouseenter\" | \"mouseleave\"",
+          "doc": "A tray icon event, by its DOM name.",
+          "docFull": "A tray icon event, by its DOM name.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "TrayIconSet",
           "slug": "TrayIconSet",
           "kind": "interface",
@@ -53873,6 +54081,88 @@
           "returns": "",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "TrayModifiers",
+          "slug": "TrayModifiers",
+          "kind": "interface",
+          "signature": "interface TrayModifiers",
+          "doc": "The modifier keys held during a tray event.",
+          "docFull": "The modifier keys held during a tray event.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "shift",
+              "signature": "readonly shift: boolean",
+              "doc": "Shift."
+            },
+            {
+              "kind": "property",
+              "name": "ctrl",
+              "signature": "readonly ctrl: boolean",
+              "doc": "Control."
+            },
+            {
+              "kind": "property",
+              "name": "alt",
+              "signature": "readonly alt: boolean",
+              "doc": "Option / Alt."
+            },
+            {
+              "kind": "property",
+              "name": "meta",
+              "signature": "readonly meta: boolean",
+              "doc": "Command (macOS) / the Windows key."
+            }
+          ]
+        },
+        {
+          "name": "TrayMouseDetail",
+          "slug": "TrayMouseDetail",
+          "kind": "interface",
+          "signature": "interface TrayMouseDetail",
+          "doc": "What a tray mouse event carries (the runtime's TrayMouseEvent, where it has one).",
+          "docFull": "What a tray mouse event carries (the runtime's `TrayMouseEvent`, where it has one).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "button",
+              "signature": "readonly button: \"left\" | \"right\" | \"middle\"",
+              "doc": "The button."
+            },
+            {
+              "kind": "property",
+              "name": "modifiers",
+              "signature": "readonly modifiers: TrayModifiers",
+              "doc": "The modifier keys held."
+            },
+            {
+              "kind": "property",
+              "name": "x",
+              "signature": "readonly x: number | null",
+              "doc": "The cursor's screen x, or `null` where the OS doesn't say (some Linux tray hosts)."
+            },
+            {
+              "kind": "property",
+              "name": "y",
+              "signature": "readonly y: number | null",
+              "doc": "The cursor's screen y, or `null`."
+            },
+            {
+              "kind": "property",
+              "name": "double",
+              "signature": "readonly double: boolean",
+              "doc": "The second click of a double click."
+            }
+          ]
         },
         {
           "name": "V8_ENTITLEMENTS",
@@ -56627,6 +56917,50 @@
           "denextOnly": true
         },
         {
+          "name": "SidecarExit",
+          "slug": "SidecarExit",
+          "kind": "interface",
+          "signature": "interface SidecarExit",
+          "doc": "How one run of a sidecar ended.",
+          "docFull": "How one run of a sidecar ended.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "code",
+              "signature": "readonly code?: number",
+              "doc": "The exit code (`process.exit(n)`, a program's status)."
+            },
+            {
+              "kind": "property",
+              "name": "signal",
+              "signature": "readonly signal?: string",
+              "doc": "The signal that ended a program."
+            },
+            {
+              "kind": "property",
+              "name": "error",
+              "signature": "readonly error?: string",
+              "doc": "An uncaught error, or why the start failed."
+            }
+          ]
+        },
+        {
+          "name": "SidecarExposedValue",
+          "slug": "SidecarExposedValue",
+          "kind": "typeAlias",
+          "signature": "type SidecarExposedValue = string | number | boolean | null",
+          "doc": "A value a sidecar shares with the page (SidecarDefinition.expose).",
+          "docFull": "A value a sidecar shares with the page ({@linkcode SidecarDefinition.expose}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "sidecarInfo",
           "slug": "sidecarInfo-fn",
           "kind": "function",
@@ -57656,7 +57990,7 @@
               "kind": "property",
               "name": "reason",
               "signature": "readonly reason?: string",
-              "doc": "With `cancelled`: `\"cancelled\"` ({@linkcode DragSession.cancel}), `\"timeout\"` (ten minutes),\n`\"unavailable\"` (the OS stopped telling the pointer)."
+              "doc": "With `cancelled`: `\"cancelled\"` ({@linkcode DragSession.cancel}), `\"closed\"` (the window the\ndrag started in closed), `\"timeout\"` (ten minutes), `\"unavailable\"` (the OS stopped telling the\npointer)."
             }
           ]
         },
@@ -60377,6 +60711,18 @@
               "name": "toolbarStyle",
               "signature": "readonly toolbarStyle: boolean",
               "doc": "{@linkcode setToolbarStyle} works (macOS 11 and later)."
+            },
+            {
+              "kind": "property",
+              "name": "windowOrder",
+              "signature": "readonly windowOrder: boolean",
+              "doc": "`getWindowOrder()` reads the real stacking order from the OS (macOS, Windows, Linux on X11; on\nWayland, or a runtime without it, it falls back to the focus order)."
+            },
+            {
+              "kind": "property",
+              "name": "pointer",
+              "signature": "readonly pointer: boolean",
+              "doc": "`getPointer()` answers where the pointer is on the screen (macOS, Windows, Linux on X11; not\non Wayland, or on a runtime without it)."
             }
           ]
         },

@@ -846,8 +846,9 @@ running). `app.sidecar(name)` (`status`, `onStatus`,
 --node-modules [--detached]` writes one. Docs: https://denext.dev/docs/desktop#desktop-sidecars
 Local IPC with no loopback port (app, sidecar, CLI): `localIpcPath(name)` / `listenLocalIpc(path, onConnection)` /
 `connectLocalIpc(path, { timeoutMs })` from `denext/desktop` (a `0600` Unix socket in `<app data>/ipc`, a
-`\\.\pipe\<appId>.<user hash>.<name>` pipe on Windows; web-stream connections; a packaged app grants
-`netListen` / `netConnect: ["*"]`, as a `unix:` grant cannot name a per-user path): https://denext.dev/docs/desktop#desktop-local-ipc
+`\\.\pipe\<appId>.<user hash>.<name>` pipe on Windows, whose writes are framed, so both ends must be these
+functions there; web-stream connections; a packaged app grants `netListen` / `netConnect: ["*"]`; a
+detached sidecar gets the app's `appId` from the app, a CLI passes it): https://denext.dev/docs/desktop#desktop-local-ipc
 Under the pinned runtime: `desktop.preload` (Electron's preload: bundled and inlined first into every
 top-level page; trusted, same world as the page); `desktop.app.deepLinks` / `singleInstance` deliver
 links to `onDeepLink` and opened files to `onOpenFile` (read-only handles); `openAuthSession` takes a
@@ -1323,16 +1324,22 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   hooks is code execution; `--allow-net` to localhost reaches local services and cloud metadata;
   `--allow-env` exposes secrets; `--allow-read` of the home directory exposes credentials; an allow
   scope follows symlinks that lead out of it. A grant to a proxy host is a grant to all it reaches.
-  Kernel enforcement is an opt-in preview in denext 4.20 (the default `auto` applies nothing in
-  4.x; the full sandbox lands in 5.0): `--kernel-sandbox=enforce` on `deno run` / `deno serve`
-  makes Linux (Landlock + seccomp) and macOS (Seatbelt) hold the grant for FFI, addons and
-  children too. It refuses to start only over a rule the kernel would hold more loosely; documented
-  gaps run (a macOS `host:port` or an IP / `localhost` port list reaches any address on the port,
-  169.254.169.254 included; a scoped `--allow-ffi` loads any library in the read scope). On Linux
-  it scrubs the env to the `--allow-env` names, refuses chmod / utime by path, refuses host-scoped
-  `--allow-net`, and hides `.npmrc`. `test` / `bench` / REPL refuse it, so never set
-  `"kernelSandbox": "enforce"` in deno.json (it breaks `deno test` and `denext dev`): put the flag on
-  the start task. `broker` still refuses: https://denext.dev/docs/kernel-sandbox
+  Kernel enforcement is an opt-in preview in denext 4.x (the default `auto` applies nothing in
+  4.x; the full sandbox lands in 5.0): `--kernel-sandbox=enforce` on `deno run` / `serve` / `test`
+  / `bench` makes Linux (Landlock + seccomp) and macOS (Seatbelt) hold the grant for FFI, addons
+  and children too, and `deno compile --kernel-sandbox=enforce` builds a program that confines
+  itself (Linux, macOS; Windows: a job object + Low integrity for writes). A host name in
+  `--allow-net`, `--deny-net` and (Linux) a write deny inside a write allow run under the Mode B
+  supervisor (`broker`, also asked for by name): the program's sockets come from it, so native code
+  and children other than `deno` get no network and UDP is refused under a host-scoped grant; the
+  shell's PID is the supervisor's. It refuses to start only over a rule neither can hold;
+  documented gaps run (an IP / `localhost` port list reaches any address on the port,
+  169.254.169.254 included, unless `broker`; a scoped `--allow-ffi` loads any library in the read
+  scope). It scrubs the env to the `--allow-env` names, hides `.npmrc`, and on Linux refuses chmod /
+  utime by path. REPL, `--watch` and `denext dev` refuse it, so never set
+  `"kernelSandbox": "enforce"` in deno.json: put the flag on the start task. `warn` asked for by
+  name observes native code and children (a report-only Seatbelt profile breaks browsers that
+  sandbox themselves; `DENO_KERNEL_SANDBOX_WARN_OBSERVE=0`): https://denext.dev/docs/kernel-sandbox
 - **Pages Router** is not built in — it's the opt-in `@denext/pages-router`
   plugin (`plugins: [pagesRouter()]` in `denext.config.ts`).
 - **Cache Components / PPR** are a stable **opt-in**: `cacheComponents: true`
@@ -1372,11 +1379,12 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   in (no denext release needed), `use <version|latest|bundled> [--project]` picks one, and
   `list | install | path | link | unlink` work as named; `denext runtime uninstall
   <version>|--all` and `prune` remove cached releases (one in use only with `--force`;
-  `--dry-run`, `--json`).
+  `--dry-run`, `--json`). The bundled runtime is only the fallback.
   The compiled `denext` binary needs no Deno on the machine at all: every verb that spawns Deno
   runs it on the toolchain (with no toolchain it refuses, naming `denext runtime install`;
-  `DENEXT_DENO=stock` opts in to a `deno` on PATH), and the installer runs `runtime install` (+ `runtime link`
-  when no `deno` is on PATH; `DENEXT_NO_DENO_LINK=1` skips it). The toolchain type-checks with
+  `DENEXT_DENO=stock` opts in to a `deno` on PATH), and the installer runs `runtime upgrade` (falling
+  back to `runtime install`; + `runtime link` when no `deno` is on PATH; `DENEXT_NO_DENO_LINK=1`
+  skips it). The toolchain type-checks with
   native TypeScript 7 (`DENEXT_NATIVE_CHECK=0` keeps TypeScript 6) and its `deno lsp` runs
   TypeScript 7 too (the runtime's own default; `create` / `migrate` / `upgrade` also write
   `"deno.unstable": ["tsgo-lsp"]` for older runtimes; `DENO_UNSTABLE_TSGO_LSP=0` keeps

@@ -850,8 +850,9 @@ running). `app.sidecar(name)` (`status`, `onStatus`,
 --node-modules [--detached]` writes one. Docs: https://denext.dev/docs/desktop#desktop-sidecars
 Local IPC with no loopback port (app, sidecar, CLI): `localIpcPath(name)` / `listenLocalIpc(path, onConnection)` /
 `connectLocalIpc(path, { timeoutMs })` from `denext/desktop` (a `0600` Unix socket in `<app data>/ipc`, a
-`\\.\pipe\<appId>.<user hash>.<name>` pipe on Windows; web-stream connections; a packaged app grants
-`netListen` / `netConnect: ["*"]`, as a `unix:` grant cannot name a per-user path): https://denext.dev/docs/desktop#desktop-local-ipc
+`\\.\pipe\<appId>.<user hash>.<name>` pipe on Windows, whose writes are framed, so both ends must be these
+functions there; web-stream connections; a packaged app grants `netListen` / `netConnect: ["*"]`; a
+detached sidecar gets the app's `appId` from the app, a CLI passes it): https://denext.dev/docs/desktop#desktop-local-ipc
 Under the pinned runtime: `desktop.preload` (Electron's preload: bundled and inlined first into every
 top-level page; trusted, same world as the page); `desktop.app.deepLinks` / `singleInstance` deliver
 links to `onDeepLink` and opened files to `onOpenFile` (read-only handles); `openAuthSession` takes a
@@ -1327,16 +1328,22 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   hooks is code execution; `--allow-net` to localhost reaches local services and cloud metadata;
   `--allow-env` exposes secrets; `--allow-read` of the home directory exposes credentials; an allow
   scope follows symlinks that lead out of it. A grant to a proxy host is a grant to all it reaches.
-  Kernel enforcement is an opt-in preview in denext 4.20 (the default `auto` applies nothing in
-  4.x; the full sandbox lands in 5.0): `--kernel-sandbox=enforce` on `deno run` / `deno serve`
-  makes Linux (Landlock + seccomp) and macOS (Seatbelt) hold the grant for FFI, addons and
-  children too. It refuses to start only over a rule the kernel would hold more loosely; documented
-  gaps run (a macOS `host:port` or an IP / `localhost` port list reaches any address on the port,
-  169.254.169.254 included; a scoped `--allow-ffi` loads any library in the read scope). On Linux
-  it scrubs the env to the `--allow-env` names, refuses chmod / utime by path, refuses host-scoped
-  `--allow-net`, and hides `.npmrc`. `test` / `bench` / REPL refuse it, so never set
-  `"kernelSandbox": "enforce"` in deno.json (it breaks `deno test` and `denext dev`): put the flag on
-  the start task. `broker` still refuses: https://denext.dev/docs/kernel-sandbox
+  Kernel enforcement is an opt-in preview in denext 4.x (the default `auto` applies nothing in
+  4.x; the full sandbox lands in 5.0): `--kernel-sandbox=enforce` on `deno run` / `serve` / `test`
+  / `bench` makes Linux (Landlock + seccomp) and macOS (Seatbelt) hold the grant for FFI, addons
+  and children too, and `deno compile --kernel-sandbox=enforce` builds a program that confines
+  itself (Linux, macOS; Windows: a job object + Low integrity for writes). A host name in
+  `--allow-net`, `--deny-net` and (Linux) a write deny inside a write allow run under the Mode B
+  supervisor (`broker`, also asked for by name): the program's sockets come from it, so native code
+  and children other than `deno` get no network and UDP is refused under a host-scoped grant; the
+  shell's PID is the supervisor's. It refuses to start only over a rule neither can hold;
+  documented gaps run (an IP / `localhost` port list reaches any address on the port,
+  169.254.169.254 included, unless `broker`; a scoped `--allow-ffi` loads any library in the read
+  scope). It scrubs the env to the `--allow-env` names, hides `.npmrc`, and on Linux refuses chmod /
+  utime by path. REPL, `--watch` and `denext dev` refuse it, so never set
+  `"kernelSandbox": "enforce"` in deno.json: put the flag on the start task. `warn` asked for by
+  name observes native code and children (a report-only Seatbelt profile breaks browsers that
+  sandbox themselves; `DENO_KERNEL_SANDBOX_WARN_OBSERVE=0`): https://denext.dev/docs/kernel-sandbox
 - **Pages Router** is not built in — it's the opt-in `@denext/pages-router`
   plugin (`plugins: [pagesRouter()]` in `denext.config.ts`).
 - **Cache Components / PPR** are a stable **opt-in**: `cacheComponents: true`
@@ -1376,11 +1383,12 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   in (no denext release needed), `use <version|latest|bundled> [--project]` picks one, and
   `list | install | path | link | unlink` work as named; `denext runtime uninstall
   <version>|--all` and `prune` remove cached releases (one in use only with `--force`;
-  `--dry-run`, `--json`).
+  `--dry-run`, `--json`). The bundled runtime is only the fallback.
   The compiled `denext` binary needs no Deno on the machine at all: every verb that spawns Deno
   runs it on the toolchain (with no toolchain it refuses, naming `denext runtime install`;
-  `DENEXT_DENO=stock` opts in to a `deno` on PATH), and the installer runs `runtime install` (+ `runtime link`
-  when no `deno` is on PATH; `DENEXT_NO_DENO_LINK=1` skips it). The toolchain type-checks with
+  `DENEXT_DENO=stock` opts in to a `deno` on PATH), and the installer runs `runtime upgrade` (falling
+  back to `runtime install`; + `runtime link` when no `deno` is on PATH; `DENEXT_NO_DENO_LINK=1`
+  skips it). The toolchain type-checks with
   native TypeScript 7 (`DENEXT_NATIVE_CHECK=0` keeps TypeScript 6) and its `deno lsp` runs
   TypeScript 7 too (the runtime's own default; `create` / `migrate` / `upgrade` also write
   `"deno.unstable": ["tsgo-lsp"]` for older runtimes; `DENO_UNSTABLE_TSGO_LSP=0` keeps
@@ -3145,6 +3153,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type DesktopInstallerFormat = (typeof DESKTOP_INSTALLER_FORMATS)[keyof typeof DESKTOP_INSTALLER_FORMATS][number]` — One installer format (desktop.installers.<os> entries, --format values).
 - `desktopInstallerPlan(entryUrl: string, os: DesktopOs, requested?: readonly string[], add?: readonly string[]): Promise<DesktopInstallerPlan>` — planDesktopInstallers for the project whose scripts/ holds entryUrl (its denext.config.ts supplies desktop.installers).
 - `interface DesktopInstallerPlan` — What a package script builds.
+- `interface DesktopLinuxDesktopEntryConfig` — DesktopLinuxConfig.desktopEntry: freedesktop Desktop Entry keys. Values are escaped per the Desktop Entry specification (\\, \n, \; in a list); a value with a control character is refused.
 - `desktopMacosArtifact(path: string, kind: DesktopMacosArtifactKind, signature: DesktopMacosSignature): DesktopMacosArtifact` — A record for an artifact nothing has notarized yet.
 - `interface DesktopMacosArtifact` — A packaged artifact and what was done to it.
 - `type DesktopMacosArtifactKind = "app" | "dmg" | "pkg"` — What a packaged macOS artifact is.
@@ -3228,6 +3237,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopTreeManifestProblem` — Why a bundle's files don't match its executable's tree manifest.
 - `type DesktopTrust = { readonly kind: "loopback" } | { readonly kind: "memory"; readonly origin: string } | { readonly kind: "refuse"; readonly reason: string }` — The desktop world the app runs in (see the module docs).
 - `interface DesktopUiFiles` — The UI files a desktop window is served from.
+- `interface DesktopUpdaterConfig` — Configuration for the desktop UI self-updater.
 - `desktopVcRedistUrl(arch: DesktopWindowsArch): string` — The VC++ 2015-2022 redistributable installer for arch.
 - `interface DesktopVcRuntimeDeps` — What bundleDesktopVcRuntime reads the machine and files through (tests stub them).
 - `desktopVersionProblem(format: "msi" | "deb" | "rpm", version: string | undefined): string | undefined` — Why version (deno.json version) cannot be the package version of format — MSI packs major.minor.build into 8/8/16 bits, Debian and RPM need a leading digit and a small character set — or undefined when it can (see msiProductVersion / linuxPackageVersion).
@@ -3237,6 +3247,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopWindowButtonPosition` — A macOS window button position (DesktopWindowConfig.windowButtonPosition).
 - `type DesktopWindowClosedInfo = DesktopWindowInfo & { readonly appQuitting: boolean }` — A window that closed for good (DesktopCapability.onWindowClosed): never a reload or a navigation. appQuitting is true when the close is part of the app's quit — Cmd+Q, quitApp(), the OS's session end, or the last app window closing without desktop.app.keepAlive — so a resource shared by every window can be let go with the last one.
 - `interface DesktopWindowInfo` — One of the app's windows, as the lifecycle hooks report it (DesktopCapability.onWindowOpened, DesktopExtensionHost.windows).
+- `type DesktopWindowLevel = "floating" | "status" | "pop-up-menu" | "screen-saver"` — How far above other windows an always-on-top window floats (Electron's level names).
 - `interface DesktopWindowMenuAppItem` — One of a window's own items in the Window menu (setWindowMenuAppItems): shown below the window list while that window is key.
 - `interface DesktopWindowMenuItem` — One of the app's own items in the "Window" submenu (desktop.menu.window.items).
 - `interface DesktopWindowMenuItemContext` — What runDesktop({ onWindowMenuItem }) and an extension's host.onWindowMenuItem get with a click on one of the app's own Window-menu items (desktop.menu.window.items).
@@ -3315,8 +3326,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type SidecarState = "idle" | "starting" | "ready" | "backoff" | "stopping" | "stopped" | "failed"` — A sidecar's lifecycle state.
 - `interface SidecarStatus` — A sidecar's status: what sidecar(name).status, sidecarStatus and onSidecarStatus report.
 - `interface SigntoolCertificateDeps` — The seams of withSigntoolCertificate (tests pass fakes).
+- `interface SpaProxyConfig` — Reverse-proxy configuration for SPA serving — the SPA analogue of a Vite dev server's server.proxy. The client talks to its own origin and denext relays matched requests (HTTP + WebSocket) to a separate backend.
 - `stampDesktopTreeManifest(dir: string, exe: string, identity: DesktopTreeIdentity): Promise<DesktopTreeManifest>` — Write the tree manifest of a finished Windows bundle into its executable. Run it once nothing else will be written into the bundle (after the VC++ runtime and laufey-launch.json) and once every other PE image is signed as it ships (the manifest lists their bytes), and before the executable is signed: its Authenticode signature then covers every file of the app. desktopSignWindows runs it again between signing the DLLs and the executable, so a bundle stamped before signing (as buildDesktopBundle does) ends up right whatever the order.
 - `stampDesktopWindowsBundle(entryUrl: string, dir: string): Promise<void>` — Write the tree manifest of a finished Windows bundle into its .exe (stampDesktopTreeManifest, for the app's identifier and version): the package script's last write to the bundle before it signs it, after the VC++ runtime's DLLs are copied in, so an unsigned bundle (--no-sign, no DENEXT_WINDOWS_CERT) carries a manifest that lists every file it ships and denext desktop publish-update takes it. desktopSignWindows writes it again with the signed DLLs' bytes before it signs the .exe. Without desktop.app.identifier no manifest is written (the full-app updater needs one).
+- `interface StandardIssue` — One Standard Schema issue: a message and an optional path to the offending field.
+- `type StandardResult<Output> = { readonly value: Output; readonly issues?: undefined } | { readonly issues: ReadonlyArray<StandardIssue> }` — A Standard Schema validation result: a parsed value, or a list of issues.
+- `interface StandardSchemaV1<Output>` — The Standard Schema v1 surface (https://standardschema.dev) — validator-agnostic.
 - `stopSidecars(): Promise<void>` — Stop every sidecar of the app gracefully (their shutdown.graceMs), e.g. before installAppUpdateAndRelaunch() so a backend can finish writing first. The install itself still ends whatever is left. Detached sidecars (detached: true) are stopped too, their processes ended and their registry records removed: there is one behaviour, everything stops.
 - `interface StoreCommandResult` — What a StoreCommandRunner saw a command do.
 - `type StoreCommandRunner = (cmd: readonly string[], stdin: string) => Promise<StoreCommandResult>` — Runs cmd with stdin as its standard input (tests pass a fake).
@@ -3328,8 +3343,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SystemStatsApi` — What system is: the aggregate machine load.
 - `interface SystemStatsOptions` — Options for system.stats().
 - `interface SystemStatsSubscribeOptions extends SystemStatsOptions` — Options for system.onStats().
+- `type TrayEventType = "click" | "dblclick" | "contextmenu" | "auxclick" | "mouseenter" | "mouseleave"` — A tray icon event, by its DOM name.
 - `interface TrayIconSet<I>` — A tray icon per OS; an OS left out takes default.
 - `type TrayIconVariant<I> = I | { readonly icon: I; readonly iconDark?: I | null }` — One OS's tray icon: the icon, or the icon with its dark-mode variant.
+- `interface TrayModifiers` — The modifier keys held during a tray event.
+- `interface TrayMouseDetail` — What a tray mouse event carries (the runtime's TrayMouseEvent, where it has one).
 - `V8_ENTITLEMENTS: Readonly<Record<string, boolean>>` — The entitlements the main executable is signed with by default: it hosts V8 (Deno). Deno signs its own release binary with these (cli/entitlements.plist in denoland/deno, applied by tools/release/promote_to_release.ts); its other two keys there, allow-dyld-environment-variables and disable-executable-page-protection, are left out: V8 needs neither, and both widen what can be injected into a signed app.
 - `interface WebViewBounds` — A web view's rectangle: CSS pixels, relative to the top-left of the window's page viewport.
 - `type WebViewDownloadAction = "save" | "saveAs" | "cancel" | "pause" | "resume"` — What a download item's control calls send the runtime.
@@ -3428,6 +3446,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PtySpawnOptions` — Options for spawnPty.
 - `resizePty(id: string, cols: number, rows: number): Promise<void>` — Change a terminal's size (the program gets SIGWINCH).
 - `restartSidecar(name: string): Promise<SidecarStatus>` — Restart one of the app's sidecars (stop it gracefully, start it again with a fresh attempt count), e.g. from a "Restart backend" button after it failed.
+- `interface SidecarExit` — How one run of a sidecar ended.
+- `type SidecarExposedValue = string | number | boolean | null` — A value a sidecar shares with the page (SidecarDefinition.expose).
 - `sidecarInfo(name: string): Promise<SidecarInfo>` — What the page may know about a sidecar: its state, loopback port and url, and the values its definition exposes (expose, e.g. a per-launch token the page presents to it).
 - `interface SidecarInfo` — What the page (and a ready.probe) learns about a sidecar: sidecarInfo(name).
 - `type SidecarState = "idle" | "starting" | "ready" | "backoff" | "stopping" | "stopped" | "failed"` — A sidecar's lifecycle state.

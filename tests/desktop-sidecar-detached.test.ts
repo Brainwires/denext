@@ -47,7 +47,8 @@ import {
   rotateDetachedLog,
   runDetachedSidecarChild,
 } from "../src/desktop/sidecar-detached-child.ts";
-import { detachedSidecarLauncher } from "../src/desktop/sidecar-launch.ts";
+import { detachedInit, detachedSidecarLauncher } from "../src/desktop/sidecar-launch.ts";
+import { localIpcPath, registerLocalIpcAppId } from "../src/desktop/local-ipc.ts";
 import {
   createSidecarSupervisor,
   type SidecarClock,
@@ -212,6 +213,9 @@ Deno.test("detachedChildInitError: the init's fields are checked", () => {
   assertEquals(detachedChildInitError({ ...init, logFile: "" }), "init.logFile");
   assertEquals(detachedChildInitError({ ...init, logRotateBytes: 0 }), "init.logRotateBytes");
   assertEquals(detachedChildInitError({ ...init, logCheckMs: "1" }), "init.logCheckMs");
+  assertEquals(detachedChildInitError({ ...init, appId: 1 }), "init.appId");
+  assertEquals(detachedChildInitError({ ...init, appId: "" }), "init.appId");
+  assertEquals(detachedChildInitError({ ...init, appId: "dev.example.app" }), null);
   // The optional fields, when present and well-formed, pass.
   assertEquals(detachedChildInitError({ ...init, port: 5000, exitAfterMs: 0 }), null);
   assertEquals(
@@ -2140,6 +2144,40 @@ Deno.test("runDetachedSidecarChild: a module that fails to load is reported and 
     assertEquals(exits, [1]);
   } finally {
     console.error = realError;
+    clearDetachedChildGlobal();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// ── local IPC inside a detached sidecar: the app's identifier travels in the init ──────────────
+
+Deno.test("detachedInit: carries the identifier the app registered, and none when it has none", () => {
+  const o = { child: NO_SPAWN, registryDir: "/x", appVersion: "1.0.0" };
+  const start = { key: "k", startedAt: 1 };
+  try {
+    registerLocalIpcAppId("dev.example.app");
+    assertEquals(detachedInit(o, launchCtx(DAEMON, []), start).appId, "dev.example.app");
+    registerLocalIpcAppId(undefined);
+    assertEquals("appId" in detachedInit(o, launchCtx(DAEMON, []), start), false);
+  } finally {
+    registerLocalIpcAppId(undefined);
+  }
+});
+
+Deno.test("runDetachedSidecarChild: the init's appId makes localIpcPath(name) work with no appId", async () => {
+  const dir = await tempDir("child-appid");
+  try {
+    registerLocalIpcAppId(undefined);
+    const { exits } = await startDetachedChild({
+      dir,
+      init: { appId: "dev.example.app" },
+      firstAttachMs: 300,
+    });
+    assertEquals(localIpcPath("ptyd"), localIpcPath("ptyd", { appId: "dev.example.app" }));
+    // No app attaches: it ends itself (the shutdown, then the grace exit).
+    assert(await waitFor(() => exits.length === 2, 5000));
+  } finally {
+    registerLocalIpcAppId(undefined);
     clearDetachedChildGlobal();
     await Deno.remove(dir, { recursive: true });
   }

@@ -25,6 +25,7 @@ import {
 import { startBackendTray } from "../src/desktop/backend-tray.ts";
 import { noDesktopWindows, setUpDesktopWindows } from "../src/desktop/app-windows.ts";
 import { createWindowController } from "../src/desktop/caps/window.ts";
+import type { WindowCapabilities } from "../src/desktop/window.ts";
 import { createWindowRegistry, type RegistryWindow } from "../src/desktop/window-registry.ts";
 import { resolveDesktopAppSettings } from "../src/desktop/window-config.ts";
 import {
@@ -884,4 +885,23 @@ Deno.test("speak: Web Speech without SpeechSynthesisUtterance is unavailable", a
     await speak("x").catch((e) => void (code = (e as { code: string }).code));
     assertEquals(code, "unavailable");
   });
+});
+
+Deno.test("window capabilities: windowOrder and pointer are typed, false until the runtime reports them", async () => {
+  const ctl = createWindowController({ window: new Win(), emit: () => {}, closed: () => {} });
+  const caps = await call(ctl.capability, "capabilities") as Record<string, unknown>;
+  assertEquals([caps.windowOrder, caps.pointer], [false, false]);
+  const reported = createWindowController({
+    window: new Win(),
+    api: { windowCapabilities: () => ({ windowOrder: true, pointer: true }) } as never,
+    emit: () => {},
+    closed: () => {},
+  });
+  const r = await call(reported.capability, "capabilities") as Record<string, unknown>;
+  assertEquals([r.windowOrder, r.pointer], [true, true]);
+  // Typed as booleans: through the index signature alone they would be `boolean | string | null`,
+  // which `deno check` refuses here.
+  const typed = r as unknown as WindowCapabilities;
+  const flags: [boolean, boolean] = [typed.windowOrder, typed.pointer];
+  assertEquals(flags, [true, true]);
 });
