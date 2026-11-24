@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Fixed
 
+- **A detached sidecar's log is rotated while it runs.** `logs: "file"` / `"both"` kept the
+  documented 5 MB bound only when a fresh process started; the process now checks its own log
+  every 10 s and rotates it to `.1` in place (copy, then truncate), so a sidecar that runs for days
+  no longer grows it without bound.
+- **A detached sidecar that is busy when the app starts is not replaced.** A recorded instance
+  whose control endpoint accepts the connection but does not answer within the handshake budget
+  (its event loop blocked in synchronous work) was treated as stale, and a second instance started
+  beside it. It is now waited for (up to the sidecar's ready timeout) and the start fails if it
+  still does not answer; `stopDetachedSidecar` and the leftover cleanup report it as still running
+  instead of gone. Only a refused connection, or an endpoint that cannot prove the key, is stale.
+
 - **`denext runtime use <the bundled rollback> --project` writes the release's published
   integrity.** The rollback's pins were rebuilt with their keys in another order than the
   release document, so the pin's hash matched no channel entry and every other denext refused the

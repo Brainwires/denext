@@ -56,7 +56,7 @@ import {
   type DetachedStopOptions,
   endDetachedSession,
   newDetachedKey,
-  probeDetachedRecord,
+  probeDetachedRecordState,
   readDetachedRecord,
   removeDetachedRecord,
   withDetachedLock,
@@ -574,7 +574,7 @@ export interface DetachedLauncherOptions {
   readonly appVersion: string;
   /** How often the sidecar re-reads its record (default 30 000 ms; tests shorten it). */
   readonly recordPollMs?: number;
-  /** The log file size that rotates it to `.1` at a start (default 5 MB). */
+  /** The log file size that rotates it to `.1`, at a start and while it runs (default 5 MB). */
   readonly logRotateBytes?: number;
   /** The forced kill (tests). */
   readonly stopOptions?: DetachedStopOptions;
@@ -657,6 +657,10 @@ function detachedInit(o: DetachedLauncherOptions, ctx: SidecarLaunchContext, sta
     recordPath: detachedRecordPath(o.registryDir, def.name),
     ...(o.recordPollMs !== undefined ? { recordPollMs: o.recordPollMs } : {}),
     graceMs: def.shutdown?.graceMs ?? SIDECAR_DEFAULTS.graceMs,
+    // The process rotates its own log while it runs (the app's rotation covers only a start).
+    ...(o.logFile !== undefined
+      ? { logFile: o.logFile, logRotateBytes: o.logRotateBytes ?? 5 * 1024 * 1024 }
+      : {}),
   };
 }
 
@@ -766,6 +770,47 @@ async function spawnDetached(
   }
 }
 
+/**
+ * The recorded instance's session when it runs and authenticates, or `null` when the record is
+ * stale (dropped). A recorded instance that accepts the connection but is slow to answer is alive
+ * (its event loop is busy): waited for, then the start fails rather than run a second one.
+ */
+async function recordedSession(
+  o: DetachedLauncherOptions,
+  def: SidecarDefinition,
+  record: DetachedRecord,
+): Promise<DetachedSession | null> {
+  const probe = await probeDetachedRecordState(
+    record,
+    o.stopOptions?.busyWaitMs ?? def.ready?.timeoutMs ?? SIDECAR_DEFAULTS.readyTimeoutMs,
+  );
+  if (probe.state === "busy") {
+    throw new Error(
+      `its recorded instance (process ${record.pid}) is running but did not answer its ` +
+        `control connection within ${probe.waitedMs} ms; not starting a second one`,
+    );
+  }
+  if (probe.state === "session") return probe.session;
+  // Stale (a reboot, a crash, another process on its port): dropped, its pid never touched.
+  await removeDetachedRecord(o.registryDir, def.name, record.key);
+  return null;
+}
+
+/** Shut down a running instance another app version started, and drop its record. */
+async function replaceOtherVersion(
+  o: DetachedLauncherOptions,
+  def: SidecarDefinition,
+  record: DetachedRecord,
+  session: DetachedSession,
+): Promise<void> {
+  const graceMs = def.shutdown?.graceMs ?? SIDECAR_DEFAULTS.graceMs;
+  const result = await endDetachedSession(session, graceMs, o.stopOptions);
+  await removeDetachedRecord(o.registryDir, def.name, record.key);
+  if (!result.ended) {
+    throw new Error(`the instance app version ${record.appVersion} started ${result.reason}`);
+  }
+}
+
 /** Reattach to the recorded instance, replace it, or start a fresh one: under the start lock. */
 async function attachOrStart(
   o: DetachedLauncherOptions,
@@ -773,22 +818,12 @@ async function attachOrStart(
 ): Promise<DetachedAttach> {
   const def = ctx.definition;
   const record = await readDetachedRecord(o.registryDir, def.name);
-  if (record) {
-    const session = await probeDetachedRecord(record);
-    if (session) {
-      if (record.appVersion === o.appVersion || detachedOptions(def).keepAcrossUpdates) {
-        return { session, record, reattached: true };
-      }
-      const graceMs = def.shutdown?.graceMs ?? SIDECAR_DEFAULTS.graceMs;
-      const result = await endDetachedSession(session, graceMs, o.stopOptions);
-      await removeDetachedRecord(o.registryDir, def.name, record.key);
-      if (!result.ended) {
-        throw new Error(`the instance app version ${record.appVersion} started ${result.reason}`);
-      }
-    } else {
-      // Stale (a reboot, a crash, another process on its port): dropped, its pid never touched.
-      await removeDetachedRecord(o.registryDir, def.name, record.key);
+  const session = record ? await recordedSession(o, def, record) : null;
+  if (record && session) {
+    if (record.appVersion === o.appVersion || detachedOptions(def).keepAcrossUpdates) {
+      return { session, record, reattached: true };
     }
+    await replaceOtherVersion(o, def, record, session);
   }
   return await spawnDetached(o, ctx);
 }

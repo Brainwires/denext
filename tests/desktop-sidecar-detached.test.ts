@@ -32,6 +32,7 @@ import {
   listDetachedSidecars,
   newDetachedKey,
   parseDetachedRecord,
+  probeDetachedControl,
   readDetachedRecord,
   removeDetachedRecord,
   serveDetachedControl,
@@ -43,6 +44,7 @@ import {
 import {
   detachedChildInitError,
   type DetachedChildProcess,
+  rotateDetachedLog,
   runDetachedSidecarChild,
 } from "../src/desktop/sidecar-detached-child.ts";
 import { detachedSidecarLauncher } from "../src/desktop/sidecar-launch.ts";
@@ -207,8 +209,15 @@ Deno.test("detachedChildInitError: the init's fields are checked", () => {
   assertEquals(detachedChildInitError({ ...init, secrets: null }), "init.secrets");
   assertEquals(detachedChildInitError({ ...init, secrets: "s" }), "init.secrets");
   assertEquals(detachedChildInitError({ ...init, exitAfterMs: "1" }), "init.exitAfterMs");
+  assertEquals(detachedChildInitError({ ...init, logFile: "" }), "init.logFile");
+  assertEquals(detachedChildInitError({ ...init, logRotateBytes: 0 }), "init.logRotateBytes");
+  assertEquals(detachedChildInitError({ ...init, logCheckMs: "1" }), "init.logCheckMs");
   // The optional fields, when present and well-formed, pass.
   assertEquals(detachedChildInitError({ ...init, port: 5000, exitAfterMs: 0 }), null);
+  assertEquals(
+    detachedChildInitError({ ...init, logFile: "/x/d.log", logRotateBytes: 10, logCheckMs: 5 }),
+    null,
+  );
 });
 
 Deno.test("currentAppVersion: the updater's version and the executable's stamp; dev unpackaged", () => {
@@ -551,6 +560,115 @@ Deno.test({
       c.close();
     } finally {
       server.close();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "probeDetachedControl: refused or unproven is stale; accepted but unanswered is busy, waited for",
+  fn: async () => {
+    const key = newDetachedKey();
+    // Nothing listens: stale.
+    const gone = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const gonePort = (gone.addr as Deno.NetAddr).port;
+    gone.close();
+    assertEquals(await probeDetachedControl({ port: gonePort, key, timeoutMs: 200 }), {
+      state: "stale",
+    });
+    // A listening socket whose process never answers (an event loop blocked in synchronous
+    // work: the OS still accepts the connection): busy, never stale.
+    const blocked = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const blockedPort = (blocked.addr as Deno.NetAddr).port;
+    try {
+      assertEquals(
+        await probeDetachedControl({ port: blockedPort, key, timeoutMs: 100, busyWaitMs: 100 }),
+        { state: "busy", waitedMs: 200 },
+      );
+    } finally {
+      blocked.close();
+    }
+    // One that answers but cannot prove the key: stale.
+    const impostor = await testServer(newDetachedKey());
+    try {
+      assertEquals(await probeDetachedControl({ port: impostor.server.port, key }), {
+        state: "stale",
+      });
+    } finally {
+      impostor.server.close();
+    }
+    // A sidecar that answers only after the handshake budget, within the busy wait: a session.
+    const late = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const latePort = (late.addr as Deno.NetAddr).port;
+    const { server } = await testServer(key, { name: "d" });
+    const relay = (async () => {
+      // Accept late, then relay the connection to the real endpoint.
+      await sleep(300);
+      const inbound = await late.accept();
+      const outbound = await Deno.connect({ hostname: "127.0.0.1", port: server.port });
+      await Promise.allSettled([
+        inbound.readable.pipeTo(outbound.writable),
+        outbound.readable.pipeTo(inbound.writable),
+      ]);
+    })();
+    try {
+      const probe = await probeDetachedControl({
+        port: latePort,
+        key,
+        name: "d",
+        timeoutMs: 100,
+        busyWaitMs: 5000,
+      });
+      assertEquals(probe.state, "session");
+      if (probe.state === "session") probe.session.close();
+    } finally {
+      server.close();
+      late.close();
+      await relay.catch(() => {});
+    }
+  },
+});
+
+Deno.test({
+  name: "launcher: a recorded instance that is alive but busy fails the start; no second instance",
+  fn: async () => {
+    const data = await tempDir("busy");
+    const dir = detachedRegistryDir(data);
+    // The recorded sidecar's endpoint accepts (its process runs) but its event loop is blocked.
+    const blocked = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const key = newDetachedKey();
+    try {
+      await writeDetachedRecord(dir, record("daemon", (blocked.addr as Deno.NetAddr).port, key));
+      let spawned = false;
+      const child = new Proxy(NO_SPAWN, {
+        get(target, prop, recv) {
+          if (prop === "args") spawned = true;
+          return Reflect.get(target, prop, recv);
+        },
+      });
+      await assertRejects(
+        () =>
+          detachedSidecarLauncher({
+            child,
+            registryDir: dir,
+            appVersion: "1.0.0",
+            stopOptions: { busyWaitMs: 100 },
+          })(launchCtx(DAEMON, [])),
+        Error,
+        "is running but did not answer its control connection",
+      );
+      assertEquals(spawned, false, "no second instance is started");
+      assertEquals((await readDetachedRecord(dir, "daemon"))?.key, key, "its record is kept");
+      // Stopping it by name reports it as still running (its record removed, so it ends itself).
+      await assertRejects(
+        () => stopDetachedRecord(dir, "daemon", 0, { busyWaitMs: 100 }),
+        Error,
+        "is running but did not answer",
+      );
+      assertEquals(await readDetachedRecord(dir, "daemon"), null);
+    } finally {
+      blocked.close();
+      await Deno.remove(data, { recursive: true });
     }
   },
 });
@@ -1209,12 +1327,16 @@ Deno.test({
       await sleep(50); // its exit reaches the child handle
     };
     try {
-      // Ends before it reports its endpoint (it read the init first: no broken pipe).
+      // Ends before it reports its endpoint (it read the init first: no broken pipe). Its init
+      // names the log and its size, so the process rotates its own log while it runs.
       await assertRejects(
-        () => start('read -r init <&"$fd"; exit 3'),
+        () => start('read -r init <&"$fd"; echo "$init"; exit 3', DAEMON, 4096),
         Error,
         "exited before it served its control endpoint (3)",
       );
+      const init = JSON.parse((await Deno.readTextFile(logFile)).trim().split("\n").at(-1)!);
+      assertEquals([init.logFile, init.logRotateBytes], [logFile, 4096]);
+      await Deno.remove(logFile);
       // Never answers: the ready budget runs out and the process is killed by its handle.
       await Deno.writeTextFile(logFile, "x".repeat(64)); // a log past its size is rotated
       await assertRejects(
@@ -1742,6 +1864,51 @@ Deno.test("runDetachedSidecarChild: no app attaching after the start ends it", a
     assert(Date.now() - started >= 1400);
     assertEquals(exits[0], 0);
     assertEquals(order, ["handler"]);
+    assert(await waitFor(() => exits.length === 2, 2000));
+  } finally {
+    clearDetachedChildGlobal();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("rotateDetachedLog: past the size the log moves to .1 and the open append descriptor writes anew", async () => {
+  const dir = await tempDir("log-rotate");
+  const log = join(dir, "sidecar-d.log");
+  const fs = await import("node:fs");
+  // The descriptor the app opened for the process's output (append mode), kept open.
+  const fd = fs.openSync(log, "a", 0o600);
+  try {
+    fs.writeSync(fd, "old-".repeat(10)); // 40 bytes
+    assertEquals(await rotateDetachedLog(log, 100), false, "under the size: left alone");
+    fs.writeSync(fd, "old-".repeat(20)); // 120 bytes
+    assertEquals(await rotateDetachedLog(log, 100), true);
+    assertEquals(await Deno.readTextFile(`${log}.1`), "old-".repeat(30));
+    // The process keeps writing through the same descriptor: into the emptied file.
+    fs.writeSync(fd, "new");
+    assertEquals(await Deno.readTextFile(log), "new");
+    // A missing log is no error.
+    assertEquals(await rotateDetachedLog(join(dir, "none.log"), 1), false);
+  } finally {
+    fs.closeSync(fd);
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("runDetachedSidecarChild: its log is rotated while it runs, not only at a start", async () => {
+  const dir = await tempDir("child-log");
+  const log = join(dir, "sidecar-d.log");
+  try {
+    await Deno.writeTextFile(log, "x".repeat(64));
+    const { exits, key, control } = await startDetachedChild({
+      dir,
+      init: { logFile: log, logRotateBytes: 32, logCheckMs: 20 },
+    });
+    assert(await waitFor(async () => (await Deno.stat(log)).size === 0, 3000), "rotated");
+    assertEquals(await Deno.readTextFile(`${log}.1`), "x".repeat(64));
+    const s = await connectDetachedControl({ port: control.port, key, name: "d" });
+    assert(s);
+    assert(await s.shutdown(20));
+    // The shutdown's own exit, then its grace's (each `exit` is a fake here).
     assert(await waitFor(() => exits.length === 2, 2000));
   } finally {
     clearDetachedChildGlobal();

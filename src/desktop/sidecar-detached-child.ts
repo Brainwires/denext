@@ -57,6 +57,12 @@ interface DetachedChildInit {
   readonly recordPollMs?: number;
   /** The grace of a shutdown it starts itself (its `shutdown.graceMs`). */
   readonly graceMs?: number;
+  /** The log file its output is appended to (`logs: "file"` / `"both"`), when it has one. */
+  readonly logFile?: string;
+  /** The size past which that log is rotated to `.1` while it runs (default 5 MB). */
+  readonly logRotateBytes?: number;
+  /** How often the log's size is checked (default 10 000 ms). */
+  readonly logCheckMs?: number;
 }
 
 /** The `node:process` parts this module drives. */
@@ -98,20 +104,38 @@ export interface RunDetachedChildOptions {
  * @returns The first bad field (`"init.key"`), or `null`.
  */
 export function detachedChildInitError(msg: unknown): string | null {
-  const m = msg as Partial<DetachedChildInit> | null;
+  const m = msg as Record<string, unknown> | null;
   if (typeof m !== "object" || m === null || m.t !== "init") return "not an init message";
-  if (typeof m.name !== "string" || m.name === "") return "init.name";
-  if (typeof m.key !== "string") return "init.key";
-  if (typeof m.recordPath !== "string" || m.recordPath === "") return "init.recordPath";
-  if (typeof m.appVersion !== "string") return "init.appVersion";
-  if (typeof m.startedAt !== "number") return "init.startedAt";
-  if (typeof m.secrets !== "object" || m.secrets === null) return "init.secrets";
-  if (m.port !== undefined && typeof m.port !== "number") return "init.port";
-  if (m.exitAfterMs !== undefined && !(typeof m.exitAfterMs === "number" && m.exitAfterMs >= 0)) {
-    return "init.exitAfterMs";
+  for (const [field, ok] of INIT_FIELDS) {
+    const v = m[field];
+    if (ok.optional ? v !== undefined && !ok.check(v) : !ok.check(v)) return `init.${field}`;
   }
   return null;
 }
+
+/** A field check of {@linkcode detachedChildInitError}. */
+interface InitFieldCheck {
+  readonly check: (v: unknown) => boolean;
+  readonly optional?: true;
+}
+
+const nonEmptyString = (v: unknown) => typeof v === "string" && v !== "";
+const positiveNumber = (v: unknown) => typeof v === "number" && v > 0;
+
+/** The init's fields, in the order they are checked. */
+const INIT_FIELDS: ReadonlyArray<readonly [string, InitFieldCheck]> = [
+  ["name", { check: nonEmptyString }],
+  ["key", { check: (v) => typeof v === "string" }],
+  ["recordPath", { check: nonEmptyString }],
+  ["appVersion", { check: (v) => typeof v === "string" }],
+  ["startedAt", { check: (v) => typeof v === "number" }],
+  ["secrets", { check: (v) => typeof v === "object" && v !== null }],
+  ["port", { check: (v) => typeof v === "number", optional: true }],
+  ["exitAfterMs", { check: (v) => typeof v === "number" && v >= 0, optional: true }],
+  ["logFile", { check: nonEmptyString, optional: true }],
+  ["logRotateBytes", { check: positiveNumber, optional: true }],
+  ["logCheckMs", { check: positiveNumber, optional: true }],
+];
 
 /** Wait for the app's `init` over the IPC channel. */
 function receiveInit(proc: DetachedChildProcess, timeoutMs: number): Promise<DetachedChildInit> {
@@ -139,6 +163,31 @@ function receiveInit(proc: DetachedChildProcess, timeoutMs: number): Promise<Det
     proc.on("message", onMessage);
     proc.on("disconnect", onDisconnect);
   });
+}
+
+/** The default size past which a detached sidecar's log is rotated while it runs. */
+const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Rotate the log this process appends its output to once it outgrew `rotateBytes`: copied to
+ * `.1` (replacing the previous one), then truncated in place. The process keeps writing through
+ * the descriptor its app opened in append mode, so its next write lands at the start of the
+ * emptied file (a rename would leave it writing to `.1`). Output written during the copy itself
+ * may be lost. Failures are ignored: the next check tries again.
+ *
+ * @param path The log file.
+ * @param rotateBytes The size past which it is rotated.
+ * @returns Whether it was rotated.
+ */
+export async function rotateDetachedLog(path: string, rotateBytes: number): Promise<boolean> {
+  try {
+    if ((await Deno.stat(path)).size <= rotateBytes) return false;
+    await Deno.copyFile(path, `${path}.1`);
+    await Deno.truncate(path, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Whether the record at `path` still holds `key`. */
@@ -177,6 +226,7 @@ export async function runDetachedSidecarChild(options: RunDetachedChildOptions):
   let ending = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let pollTimer: ReturnType<typeof setInterval> | undefined;
+  let logTimer: ReturnType<typeof setInterval> | undefined;
   /** Armed once the endpoint serves: no app attaching within the budget ends the process. */
   const firstAttach: { timer?: ReturnType<typeof setTimeout> } = {};
 
@@ -185,6 +235,7 @@ export async function runDetachedSidecarChild(options: RunDetachedChildOptions):
     ending = true;
     clearTimeout(idleTimer);
     clearInterval(pollTimer);
+    clearInterval(logTimer);
     clearTimeout(firstAttach.timer);
     // Unconditional: past the grace the process ends, whatever the handlers do.
     setTimeout(() => exit(0), grace);
@@ -258,6 +309,18 @@ export async function runDetachedSidecarChild(options: RunDetachedChildOptions):
     onShutdown: (grace) => void shutdown(grace, "the app asked it to stop"),
     onAttachedChange,
   });
+  // The log keeps its size bound for as long as the process runs (days, across reattaches), as
+  // an ordinary sidecar's in-app log sink does on every write.
+  if (init.logFile !== undefined) {
+    const logFile = init.logFile;
+    const rotateBytes = init.logRotateBytes ?? LOG_ROTATE_BYTES;
+    logTimer = setInterval(
+      () => void rotateDetachedLog(logFile, rotateBytes),
+      init.logCheckMs ?? 10_000,
+    );
+    // Never what keeps the process alive.
+    Deno.unrefTimer(logTimer as unknown as number);
+  }
   firstAttach.timer = setTimeout(
     () => void shutdown(graceMs, "no app attached after the start"),
     options.firstAttachMs ?? 30_000,
