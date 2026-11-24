@@ -26,6 +26,7 @@
 import net from "node:net";
 import { createHash } from "node:crypto";
 import { dirname } from "@std/path";
+import { acquireOsLock, type OsLock } from "./os-lock.ts";
 import { join as posixJoin } from "@std/path/posix";
 import { type DesktopOsName, env, osDataDir } from "./app-dirs.ts";
 
@@ -545,11 +546,8 @@ function probeUnixSocket(path: string): Promise<boolean> {
   });
 }
 
-/**
- * Make `path` bindable on Unix: create its folder (`0700`) when missing, refuse an unsafe folder,
- * and clear a stale socket file (nothing answers on it), refusing a live one or a non-socket.
- */
-async function prepareUnixPath(path: string): Promise<void> {
+/** Create the socket's folder (`0700`) when missing, and refuse an unsafe one. */
+async function prepareUnixDir(path: string): Promise<void> {
   const dir = dirname(path);
   let info: Deno.FileInfo;
   try {
@@ -568,6 +566,13 @@ async function prepareUnixPath(path: string): Promise<void> {
   }
   const problem = localIpcDirError(dir, info, uid);
   if (problem) throw new Deno.errors.PermissionDenied(problem);
+}
+
+/**
+ * Make `path` bindable on Unix (its folder already checked): clear a stale socket file (nothing
+ * answers on it), refusing a live one or a non-socket.
+ */
+async function prepareUnixPath(path: string): Promise<void> {
   let existing: Deno.FileInfo;
   try {
     existing = await Deno.lstat(path);
@@ -588,6 +593,28 @@ async function prepareUnixPath(path: string): Promise<void> {
   } catch (err) {
     if (!(err instanceof Deno.errors.NotFound)) throw err;
   }
+}
+
+/** The lock file a Unix socket's server holds: `<socket path>.lock`, beside it. */
+export function localIpcLockPath(path: string): string {
+  return `${path}.lock`;
+}
+
+/**
+ * Take the server lock of the socket at `path` ({@linkcode localIpcLockPath}): `AddrInUse` when
+ * another server holds it. A process whose grants reach only the socket path itself (not its
+ * folder) cannot create the lock file: it serves without one, as before the lock existed.
+ */
+async function serverLock(path: string): Promise<OsLock | null> {
+  let lock: OsLock | null;
+  try {
+    lock = await acquireOsLock(localIpcLockPath(path), { timeoutMs: 0 });
+  } catch (err) {
+    if (isNotCapable(err) || err instanceof Deno.errors.PermissionDenied) return null;
+    throw err;
+  }
+  if (!lock) throw new Deno.errors.AddrInUse(`local IPC: another server listens on ${path}`);
+  return lock;
 }
 
 /** Remove the socket file at `path` if it is still a socket (a missing one is fine). */
@@ -623,12 +650,26 @@ export async function listenLocalIpc(
 ): Promise<LocalIpcServer> {
   options.signal?.throwIfAborted();
   const pipe = isLocalIpcPipePath(path);
+  // On Unix the server holds an OS lock beside its socket for as long as it serves: the stale
+  // check, the bind and the removal at close are one server's alone, so two starting at once can
+  // never remove each other's socket (a pipe name is claimed by its first instance instead).
+  let lock: OsLock | null = null;
   try {
-    if (!pipe) await prepareUnixPath(path);
+    if (!pipe) {
+      await prepareUnixDir(path);
+      lock = await serverLock(path);
+      await prepareUnixPath(path);
+    }
   } catch (err) {
+    lock?.release();
     throw mapError(err, path, "listen");
   }
-  options.signal?.throwIfAborted();
+  try {
+    options.signal?.throwIfAborted();
+  } catch (err) {
+    lock?.release();
+    throw err;
+  }
   const sockets = new Set<net.Socket>();
   const server = net.createServer({ allowHalfOpen: true }, (socket: net.Socket) => {
     sockets.add(socket);
@@ -650,6 +691,9 @@ export async function listenLocalIpc(
     } catch (err) {
       reject(mapError(err, path, "listen"));
     }
+  }).catch((err) => {
+    lock?.release();
+    throw err;
   });
   // A later server error (none is expected once listening) must not crash the process.
   server.on("error", () => {});
@@ -660,7 +704,11 @@ export async function listenLocalIpc(
       const done = new Promise<void>((resolve) => server.close(() => resolve()));
       for (const socket of sockets) socket.destroy();
       await done;
-      if (!pipe) await removeSocketFile(path);
+      try {
+        if (!pipe) await removeSocketFile(path);
+      } finally {
+        lock?.release();
+      }
     })();
     return closing;
   };

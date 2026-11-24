@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Fixed
 
+- **Two local IPC servers starting at once on one Unix socket can no longer orphan each other.**
+  The stale-socket check and the bind were not atomic, so the second could remove the first's new
+  socket. A server now holds an OS lock beside its socket (`<path>.lock`) for as long as it serves;
+  a second one is refused with `AddrInUse`. A process granted only the socket path itself (not its
+  folder) serves without the lock, as before.
+
 - **A detached sidecar's start lock is an OS lock.** Two starts that both judged the old lock file
   stale could remove each other's lock, and a holder whose timers stalled for 30 s (a machine that
   slept) lost it; after a crash the next launch waited up to 30 s. The start lock is now an

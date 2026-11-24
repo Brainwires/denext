@@ -20,6 +20,7 @@ import {
   listenLocalIpc,
   type LocalIpcConnection,
   localIpcDirError,
+  localIpcLockPath,
   localIpcNameError,
   localIpcPath,
   localIpcPermissionError,
@@ -406,6 +407,73 @@ Deno.test("local IPC: a live server's socket is never taken over", async () => {
   } finally {
     await ch.cleanup();
   }
+});
+
+Deno.test({
+  name:
+    "local IPC: two servers starting at once on one path: exactly one serves; a held lock is never broken",
+  ignore: WINDOWS, // a pipe name is claimed by its first instance; this is the Unix socket's lock
+  fn: async () => {
+    const ch = await channel();
+    try {
+      // Both start together: one binds, the other is refused, and nothing removes the winner's
+      // socket (the stale check, the bind and the removal at close are under the server's lock).
+      const results = await Promise.allSettled([
+        listenLocalIpc(ch.path, echo),
+        listenLocalIpc(ch.path, echo),
+      ]);
+      const served = results.filter((r) => r.status === "fulfilled");
+      const refused = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+      assertEquals([served.length, refused.length], [1, 1]);
+      assert(refused[0].reason instanceof Deno.errors.AddrInUse, String(refused[0].reason));
+      const server =
+        (served[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof listenLocalIpc>>>)
+          .value;
+      {
+        await using conn = await connectLocalIpc(ch.path);
+        const [, got] = await Promise.all([
+          writeAll(conn.writable, new Uint8Array([4])),
+          readAll(conn.readable),
+        ]);
+        assertEquals(got, new Uint8Array([4]));
+      }
+      await server.close();
+      // Closed: the lock is free again, and the next server takes the path.
+      await (await listenLocalIpc(ch.path, echo)).close();
+      // Held by another process (with no socket at the path at all): refused, never broken.
+      const child = new Deno.Command(Deno.execPath(), {
+        args: [
+          "eval",
+          `const f = Deno.openSync(${
+            JSON.stringify(localIpcLockPath(ch.path))
+          }, { write: true, create: true });
+f.lockSync(true);
+console.log("locked");
+setTimeout(() => {}, 60_000);`,
+        ],
+        stdout: "piped",
+        stderr: "null",
+      }).spawn();
+      const reader = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
+      try {
+        let seen = "";
+        while (!seen.includes("locked")) {
+          const { value, done } = await reader.read();
+          assert(!done, "the locking process ended early");
+          seen += value;
+        }
+        await assertRejects(() => listenLocalIpc(ch.path, echo), Deno.errors.AddrInUse);
+      } finally {
+        child.kill("SIGKILL");
+        await child.status;
+        await reader.cancel().catch(() => {});
+      }
+      // Its holder is gone: the OS freed the lock.
+      await (await listenLocalIpc(ch.path, echo)).close();
+    } finally {
+      await ch.cleanup();
+    }
+  },
 });
 
 Deno.test("local IPC: connecting to nothing rejects clearly", async () => {
