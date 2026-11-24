@@ -120,10 +120,11 @@ and this project adheres to
   A connection attempt still pending when the handshake budget passes (Windows reports a refused
   loopback connect only after about two seconds of its own retries) is aborted and ended before the
   probe answers, instead of being left to finish on its own.
-- **`install.ps1` shows `gh`'s reason for a failed build attestation as written.** The refusal was
-  one thrown message, whose lines PowerShell's error view joins and re-wraps at the console width,
-  breaking up `gh attestation verify`'s own output. The lines are now printed one by one, followed
-  by a one-line error.
+- **`install.ps1` shows its refusals and warnings as written.** Each refusal was one thrown
+  message, whose lines PowerShell's error view joins and re-wraps at the console width, breaking up
+  `gh attestation verify`'s own output, a checksum mismatch's expected and actual hashes, and long
+  lines with a URL or a command to copy (warnings were wrapped the same way). Every line is now
+  printed whole, followed by a one-line error.
 
 - **`denext runtime use <the bundled rollback> --project` writes the release's published
   integrity.** The rollback's pins were rebuilt with their keys in another order than the

@@ -98,7 +98,7 @@ function Install-Denext {
   foreach ($base in @($downloadBase, $apiBase, $webBase)) {
     $uri = [Uri]$base
     if ($uri.Scheme -ne 'https' -and -not ($uri.Scheme -eq 'http' -and $uri.IsLoopback)) {
-      throw "denext: refusing a non-https download URL ($base)"
+      Stop-Denext "denext: refusing a non-https download URL ($base)"
     }
   }
 
@@ -112,10 +112,10 @@ function Install-Denext {
   $script:DenextRuntimeOnly = $RuntimeOnly -or ($env:DENEXT_RUNTIME_ONLY -eq '1')
   $script:DenextRuntimeVersion = if ($Runtime) { $Runtime } else { "$env:DENEXT_RUNTIME_VERSION" }
   if ($script:DenextRuntimeVersion -and $script:DenextRuntimeVersion -notmatch '^[A-Za-z0-9][A-Za-z0-9.+-]*$') {
-    throw "denext: -Runtime $($script:DenextRuntimeVersion) is not a runtime version (3.0.0-denext.<n>)"
+    Stop-Denext "denext: -Runtime $($script:DenextRuntimeVersion) is not a runtime version (3.0.0-denext.<n>)"
   }
   if (($env:DENEXT_NO_RUNTIME -eq '1') -and ($script:DenextRuntimeOnly -or $script:DenextRuntimeVersion)) {
-    throw 'denext: DENEXT_NO_RUNTIME=1 skips the runtime, which -RuntimeOnly / -Runtime ask for: nothing to do'
+    Stop-Denext 'denext: DENEXT_NO_RUNTIME=1 skips the runtime, which -RuntimeOnly / -Runtime ask for: nothing to do'
   }
 
   if ($Uninstall) {
@@ -135,7 +135,7 @@ function Install-Denext {
   if ($script:DenextRuntimeOnly) {
     if (Test-Path -LiteralPath $installed -PathType Leaf) {
       if ((Get-RuntimeVerb $installed) -ne 'runtime') {
-        throw ("denext: $(& $installed --version) at $installed predates ``denext runtime``, so " +
+        Stop-Denext ("denext: $(& $installed --version) at $installed predates ``denext runtime``, so " +
           '-RuntimeOnly can''t move its runtime. Run the installer without -RuntimeOnly to install ' +
           'the latest denext and its runtime.')
       }
@@ -154,7 +154,7 @@ function Install-Denext {
     'ARM64' { @('aarch64-pc-windows-msvc', 'x86_64-pc-windows-msvc') }
     'AMD64' { @('x86_64-pc-windows-msvc') }
     default {
-      throw "denext: no prebuilt binary for $arch. Use the CLI from JSR: deno install -A -g -n denext jsr:@denext/denext/cli"
+      Stop-Denext "denext: no prebuilt binary for $arch. Use the CLI from JSR: deno install -A -g -n denext jsr:@denext/denext/cli"
     }
   }
 
@@ -165,7 +165,7 @@ function Install-Denext {
     # `releases/latest` is the newest NON-prerelease: an rc tag never becomes "latest".
     $version = Get-LatestTag $apiBase $webBase $repo
   }
-  if (-not $version) { throw 'denext: could not determine the latest release; set DENEXT_VERSION.' }
+  if (-not $version) { Stop-Denext 'denext: could not determine the latest release; set DENEXT_VERSION.' }
 
   $tmp = Join-Path ([IO.Path]::GetTempPath()) ("denext-install-" + [Guid]::NewGuid())
   New-Item -ItemType Directory -Path $tmp | Out-Null
@@ -182,7 +182,7 @@ function Install-Denext {
         Write-Host "denext: $version has no $target build; installing the x64 binary (runs under emulation)"
       }
     }
-    if (-not $fetched) { throw "denext: $version has no $asset" }
+    if (-not $fetched) { Stop-Denext "denext: $version has no $asset" }
 
     # A binary that will run with your permissions is never installed unverified. A missing
     # checksum is as fatal as a wrong one - whoever can swap the archive can drop the checksum
@@ -190,14 +190,17 @@ function Install-Denext {
     $expected = Get-PublishedDigest "$downloadBase/$version" $asset $tmp
     if (-not $expected) {
       if ($env:DENEXT_INSECURE -eq '1') {
-        Write-Warning "denext: no checksum could be fetched for $asset; installing UNVERIFIED because DENEXT_INSECURE=1 is set."
+        Write-DenextWarning "denext: no checksum could be fetched for $asset; installing UNVERIFIED because DENEXT_INSECURE=1 is set."
       } else {
-        throw "denext: no checksum could be fetched for $asset - not installing. Every release publishes SHA256SUMS; check https://github.com/$repo/releases/tag/$version (DENEXT_INSECURE=1 installs anyway, unverified)."
+        Stop-Denext "denext: no checksum could be fetched for $asset - not installing. Every release publishes SHA256SUMS; check https://github.com/$repo/releases/tag/$version (DENEXT_INSECURE=1 installs anyway, unverified)."
       }
     } else {
       $actual = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
       if ($actual -ne $expected.ToLowerInvariant()) {
-        throw "denext: checksum verification FAILED for $asset - not installing.`n  expected $expected`n  got      $actual"
+        Stop-Denext @(
+          "denext: checksum verification FAILED for $asset - not installing.",
+          "  expected $expected",
+          "  got      $actual")
       }
       Write-Host 'denext: checksum verified'
     }
@@ -246,7 +249,7 @@ function Test-ModifyPath([switch]$ModifyPath, [switch]$NoModifyPath) {
   $mode = "$env:DENEXT_MODIFY_PATH".Trim().ToLowerInvariant()
   if ($mode -in @('0', 'no', 'false', 'none')) { return $false }
   if ($mode -in @('1', 'yes', 'true', 'current', 'all')) { return $true }
-  if ($mode) { throw "denext: DENEXT_MODIFY_PATH=$($env:DENEXT_MODIFY_PATH) is not one of 1, all, 0" }
+  if ($mode) { Stop-Denext "denext: DENEXT_MODIFY_PATH=$($env:DENEXT_MODIFY_PATH) is not one of 1, all, 0" }
   return $env:DENEXT_NO_PATH -ne '1'
 }
 
@@ -343,7 +346,7 @@ function Assert-Attestation([string]$zip, [string]$asset, [string]$repo) {
   }
   if (-not $signedIn) {
     if ($env:DENEXT_REQUIRE_ATTESTATION -eq '1') {
-      throw ('denext: DENEXT_REQUIRE_ATTESTATION=1 needs the GitHub CLI (gh), signed in, to verify ' +
+      Stop-Denext ('denext: DENEXT_REQUIRE_ATTESTATION=1 needs the GitHub CLI (gh), signed in, to verify ' +
         "the release's build attestation - not installing.")
     }
     Write-Host ('denext: build attestation not checked (install and sign in to the GitHub CLI, gh, ' +
@@ -354,7 +357,7 @@ function Assert-Attestation([string]$zip, [string]$asset, [string]$repo) {
   & $gh.Source attestation verify --help *> $null
   if ($LASTEXITCODE -ne 0) {
     if ($env:DENEXT_REQUIRE_ATTESTATION -eq '1') {
-      throw ('denext: DENEXT_REQUIRE_ATTESTATION=1, but this GitHub CLI has no ' +
+      Stop-Denext ('denext: DENEXT_REQUIRE_ATTESTATION=1, but this GitHub CLI has no ' +
         '`gh attestation`; update gh - not installing.')
     }
     Write-Host ('denext: build attestation not checked (this GitHub CLI has no `gh attestation`; ' +
@@ -368,19 +371,17 @@ function Assert-Attestation([string]$zip, [string]$asset, [string]$repo) {
     return
   }
   if ($env:DENEXT_INSECURE -eq '1') {
-    Write-Warning "denext: the build attestation of $asset could not be verified; installing on the checksum alone because DENEXT_INSECURE=1 is set."
+    Write-DenextWarning "denext: the build attestation of $asset could not be verified; installing on the checksum alone because DENEXT_INSECURE=1 is set."
     return
   }
   $said = ($ghOut -split "`n" | ForEach-Object { "    $_" }) -join "`n"
-  # Written line by line, not as the exception's message: PowerShell's error view joins a thrown
-  # message's lines and re-wraps them at the console width, which breaks up gh's own words.
-  Write-Host "denext: the build attestation of $asset could not be verified - not installing."
-  Write-Host "  ``gh attestation verify $asset --repo $repo`` said:"
-  Write-Host $said
-  Write-Host ('  A network problem (gh reaches GitHub and Sigstore), a gh token without access, or a ' +
+  Stop-Denext @(
+    "denext: the build attestation of $asset could not be verified - not installing.",
+    "  ``gh attestation verify $asset --repo $repo`` said:",
+    $said,
+    ('  A network problem (gh reaches GitHub and Sigstore), a gh token without access, or a ' +
     'release with no attestation (denext 4.9.0 and earlier) fails this as well as a tampered ' +
-    'archive: retry once the cause is fixed. DENEXT_INSECURE=1 installs on the checksum alone.')
-  throw 'denext: build attestation not verified - not installing (the reason is above).'
+    'archive: retry once the cause is fixed. DENEXT_INSECURE=1 installs on the checksum alone.'))
 }
 
 # The extracted denext.exe's Authenticode signature: a signed binary must verify (a signature
@@ -396,14 +397,14 @@ function Assert-Authenticode([string]$exe) {
   $sig = Get-AuthenticodeSignature -LiteralPath $exe
   $status = "$($sig.Status)"
   if ("$($sig.SignatureType)" -eq 'Catalog' -or $sig.IsOSBinary) {
-    throw "denext: denext.exe is a Windows system file (vouched for by a Windows catalog, not by a signature of its own) - not installing."
+    Stop-Denext "denext: denext.exe is a Windows system file (vouched for by a Windows catalog, not by a signature of its own) - not installing."
   }
   if ($status -eq 'NotSigned') {
     Write-Host 'denext: denext.exe carries no Authenticode signature (this release was built unsigned)'
     return
   }
   if ($status -ne 'Valid') {
-    throw "denext: denext.exe's Authenticode signature is $status ($($sig.StatusMessage)) - not installing."
+    Stop-Denext "denext: denext.exe's Authenticode signature is $status ($($sig.StatusMessage)) - not installing."
   }
   Write-Host "denext: Authenticode signature verified ($($sig.SignerCertificate.Subject))"
 }
@@ -449,7 +450,7 @@ function Install-DenextRuntime([string]$exe, [string]$target, [string]$root) {
   $strict = $script:DenextRuntimeOnly -or $asked
   if ($verb -ne 'runtime') {
     if ($asked) {
-      throw ("denext: $(& $exe --version) predates ``denext runtime``, so it can't install runtime " +
+      Stop-Denext ("denext: $(& $exe --version) predates ``denext runtime``, so it can't install runtime " +
         "$asked; install a newer denext (leave DENEXT_VERSION unset).")
     }
     if ($verb -eq 'toolchain') { Install-DenoToolchain $exe $target $root }
@@ -473,7 +474,7 @@ function Install-DenextRuntime([string]$exe, [string]$target, [string]$root) {
     # (not published yet, unreachable) still leaves a runtime and the `deno` link. -RuntimeOnly
     # asked for the newest runtime: nothing else stands in for it.
     if (-not $ok -and -not $strict) {
-      Write-Warning ('denext: the newest runtime could not be installed (see above); installing ' +
+      Write-DenextWarning ('denext: the newest runtime could not be installed (see above); installing ' +
         'the runtime this denext bundles instead')
       $fix = 'denext runtime install'
       $ok = (Invoke-Denext $exe @('runtime', 'install')) -eq 0
@@ -481,9 +482,9 @@ function Install-DenextRuntime([string]$exe, [string]$target, [string]$root) {
   }
   if (-not $ok) {
     if ($strict) {
-      throw "denext: the runtime could not be installed (see above); nothing else changed. Fix the cause and run ``$fix`` (or this installer again)."
+      Stop-Denext "denext: the runtime could not be installed (see above); nothing else changed. Fix the cause and run ``$fix`` (or this installer again)."
     }
-    Write-Warning ('denext: the denext runtime could not be installed now; it downloads on the ' +
+    Write-DenextWarning ('denext: the denext runtime could not be installed now; it downloads on the ' +
       "first command that needs it (or run ``$fix``).")
     return
   }
@@ -501,7 +502,7 @@ function Connect-DenoLink([string]$exe, [string]$root, [string]$verb) {
   }
   if ($env:DENEXT_NO_DENO_LINK -eq '1') { return }
   if ((Invoke-DenextAt $root $exe @($verb, 'link')) -ne 0) {
-    Write-Warning "denext: could not link ``deno`` to the $verb (``denext deno ...`` still runs it)."
+    Write-DenextWarning "denext: could not link ``deno`` to the $verb (``denext deno ...`` still runs it)."
   }
 }
 
@@ -518,7 +519,7 @@ function Install-DenoToolchain([string]$exe, [string]$target, [string]$root) {
         '`denext toolchain install` succeeds (install one with: irm https://deno.land/install.ps1 | iex)')
       return
     }
-    Write-Warning ('denext: the Deno toolchain could not be installed now; it downloads on the ' +
+    Write-DenextWarning ('denext: the Deno toolchain could not be installed now; it downloads on the ' +
       'first command that needs it (or run `denext toolchain install`).')
     return
   }
@@ -659,7 +660,7 @@ function Assert-SafeInstallRoot([string]$root) {
     Where-Object { $_ } | ForEach-Object { [IO.Path]::GetFullPath($_).TrimEnd('\') }
   foreach ($g in $guarded) {
     if ($full -ieq $g -or $g.StartsWith("$full\", [StringComparison]::OrdinalIgnoreCase)) {
-      throw "denext: refusing to uninstall from $full (DENEXT_INSTALL points at a shared directory)"
+      Stop-Denext "denext: refusing to uninstall from $full (DENEXT_INSTALL points at a shared directory)"
     }
   }
 }
@@ -734,6 +735,19 @@ function Set-UserPath([string]$value) {
   $marker = 'DENEXT_PATH_UPDATED'
   [Environment]::SetEnvironmentVariable($marker, '1', 'User')
   [Environment]::SetEnvironmentVariable($marker, $null, 'User')
+}
+
+# A refusal: its lines written as they are, then a one-line error. PowerShell's error view joins
+# a thrown message's lines and re-wraps them at the console width (Write-Warning wraps too), which
+# breaks up a hash, a path or a command to copy; Write-Host writes each line whole.
+function Stop-Denext([string[]]$lines) {
+  foreach ($line in $lines) { Write-Host $line }
+  throw 'denext: stopped (the reason is above).'
+}
+
+# A warning, written whole (see Stop-Denext).
+function Write-DenextWarning([string]$line) {
+  Write-Host "WARNING: $line"
 }
 
 # Add $dir to the USER Path (first, once) and to this session's; returns whether the user Path
