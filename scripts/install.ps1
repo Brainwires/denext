@@ -372,11 +372,15 @@ function Assert-Attestation([string]$zip, [string]$asset, [string]$repo) {
     return
   }
   $said = ($ghOut -split "`n" | ForEach-Object { "    $_" }) -join "`n"
-  throw ("denext: the build attestation of $asset could not be verified - not installing.`n" +
-    "  ``gh attestation verify $asset --repo $repo`` said:`n$said`n" +
-    '  A network problem (gh reaches GitHub and Sigstore), a gh token without access, or a ' +
+  # Written line by line, not as the exception's message: PowerShell's error view joins a thrown
+  # message's lines and re-wraps them at the console width, which breaks up gh's own words.
+  Write-Host "denext: the build attestation of $asset could not be verified - not installing."
+  Write-Host "  ``gh attestation verify $asset --repo $repo`` said:"
+  Write-Host $said
+  Write-Host ('  A network problem (gh reaches GitHub and Sigstore), a gh token without access, or a ' +
     'release with no attestation (denext 4.9.0 and earlier) fails this as well as a tampered ' +
     'archive: retry once the cause is fixed. DENEXT_INSECURE=1 installs on the checksum alone.')
+  throw 'denext: build attestation not verified - not installing (the reason is above).'
 }
 
 # The extracted denext.exe's Authenticode signature: a signed binary must verify (a signature

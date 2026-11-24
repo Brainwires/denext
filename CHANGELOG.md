@@ -117,6 +117,13 @@ and this project adheres to
   beside it. It is now waited for (up to the sidecar's ready timeout) and the start fails if it
   still does not answer; `stopDetachedSidecar` and the leftover cleanup report it as still running
   instead of gone. Only a refused connection, or an endpoint that cannot prove the key, is stale.
+  A connection attempt still pending when the handshake budget passes (Windows reports a refused
+  loopback connect only after about two seconds of its own retries) is aborted and ended before the
+  probe answers, instead of being left to finish on its own.
+- **`install.ps1` shows `gh`'s reason for a failed build attestation as written.** The refusal was
+  one thrown message, whose lines PowerShell's error view joins and re-wraps at the console width,
+  breaking up `gh attestation verify`'s own output. The lines are now printed one by one, followed
+  by a one-line error.
 
 - **`denext runtime use <the bundled rollback> --project` writes the release's published
   integrity.** The rollback's pins were rebuilt with their keys in another order than the
