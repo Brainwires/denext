@@ -51,7 +51,10 @@ import {
   desktopExtension,
   desktopWebSocketUrl,
   desktopWsUrl,
+  killPty,
   onDesktopEvent,
+  ptyInfo,
+  spawnPty,
 } from "denext/desktop/client";
 import {
   currentWindowId,
@@ -72,6 +75,7 @@ import {
   setWindowBackdrop,
   setWindowSize,
   setWindowTitle,
+  startDragSession,
   startFileDrag,
   unmaximizeWindow,
   windowCapabilities,
@@ -1874,6 +1878,59 @@ const appChecks: Check[] = [
       return `${p.x},${p.y} buttons ${p.buttons} over ${p.window ?? "no app window"}`;
     },
   ],
+  [
+    "windows: a drag session asks the OS for the pointer (refused with no button held)",
+    async ({ setup }) => {
+      if (!setup.pinnedRuntime) throw new Skip("the stock runtime has no drag sessions");
+      const caps = await windowCapabilities();
+      const refused = await rejection(startDragSession({ data: { kitchen: true } }));
+      if (onWayland(caps, setup)) {
+        eq(refused, "unsupported", "startDragSession() under Wayland");
+        return "unsupported (Wayland)";
+      }
+      const p = await getPointer();
+      if (p && p.buttons !== 0) {
+        throw new Skip(
+          `a mouse button is held here (buttons ${p.buttons})`,
+        );
+      }
+      // Unattended nothing holds a button: the runtime sampled the pointer and refused the session.
+      eq(refused, "not_dragging", "startDragSession() with no button held");
+      return "not_dragging";
+    },
+  ],
+  ["pty: a terminal's foreground process, asked of the OS (ptyInfo)", async ({ setup }) => {
+    const windows = setup.os === "windows";
+    const spawn = windows
+      ? { shell: "C:\\Windows\\System32\\cmd.exe", args: ["/d", "/c", "ping -n 30 127.0.0.1 >nul"] }
+      : { shell: "/bin/sh", args: ["-c", "sleep 30"] };
+    const term = await spawnPty({ cols: 80, rows: 24, ...spawn }).catch((err) => {
+      if (isDesktopBridgeError(err) && (err.code === "unsupported" || err.code === "unavailable")) {
+        throw new Skip(`no terminals here: ${err.message}`);
+      }
+      throw err;
+    });
+    try {
+      // The command the shell runs becomes the terminal's foreground process.
+      const expected = windows ? /^(ping|cmd)\.exe$/i : /^sleep$/;
+      const info = await waitFor(
+        async () => {
+          const i = await ptyInfo(term.id);
+          return i.process !== undefined && expected.test(i.process) ? i : null;
+        },
+        `the foreground process ${expected}`,
+        10_000,
+        async () => JSON.stringify(await ptyInfo(term.id)),
+      );
+      assert(info.pid > 0, `pid ${info.pid}`);
+      if (!windows) assert(info.tty, "no terminal device");
+      return `${info.process} (pid ${info.foregroundPid ?? info.pid}${
+        info.tty ? `, ${info.tty}` : ""
+      })`;
+    } finally {
+      await killPty(term.id, "SIGKILL").catch(() => {});
+    }
+  }],
   [
     "menus: the native app menu and Dock menu read back what was set",
     async ({ setup }) => {

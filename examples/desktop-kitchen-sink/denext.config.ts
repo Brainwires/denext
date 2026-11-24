@@ -83,6 +83,9 @@ export default {
       // associated-domains entitlement (`desktop.macos`, with a provisioning profile), so an
       // unentitled build answers `invalid_rp` there.
       passkeys: { rpIds: ["denext.dev", "bad_rp.invalid"] },
+      // Terminals on the OS's default shells (/bin/sh, cmd.exe among them): the pty check reads
+      // a terminal's foreground process back from the OS.
+      pty: true,
       // Only https links, and the app-folder actions the test can run unattended.
       shell: {
         openExternal: ["https:"],
