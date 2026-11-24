@@ -162,3 +162,28 @@ export function skip(ctx: ExportContext, what: string, reason: string): void {
   ctx.skipped.push(what);
   console.warn(`  skip ${what} — ${reason}`);
 }
+
+/**
+ * The file-path segments an exported URL path is written under: each URL segment decoded, as a
+ * static host decodes the request before it looks the file up (`/blog/caf%C3%A9` is served from
+ * `blog/café`). Null when a segment is empty, malformed, a dot segment, or (decoded) carries a
+ * path separator or NUL, so app data can never name a file outside the export.
+ *
+ * @param pathname The URL path, starting with `/` (the root `/` has no segments).
+ * @returns The decoded segments, or null when the path can't be a file under the export.
+ */
+export function exportFileSegments(pathname: string): string[] | null {
+  if (pathname === "/") return [];
+  const out: string[] = [];
+  for (const raw of pathname.split("/").slice(1)) {
+    let seg: string;
+    try {
+      seg = decodeURIComponent(raw);
+    } catch {
+      return null;
+    }
+    if (seg === "" || seg === "." || seg === ".." || /[/\\\0]/.test(seg)) return null;
+    out.push(seg);
+  }
+  return out;
+}

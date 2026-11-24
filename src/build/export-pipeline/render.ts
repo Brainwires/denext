@@ -18,7 +18,13 @@ import { renderGlobalError, renderPage, renderRootNotFound } from "../../server/
 import { createRequestContext, runWithContext } from "../../server/request-context.ts";
 import { readSegmentConfig } from "../../server/segment-config.ts";
 import type { PageModule } from "../../server/types.ts";
-import { clientEntryFor, type ExportContext, skip, styleHrefsFor } from "./context.ts";
+import {
+  clientEntryFor,
+  type ExportContext,
+  exportFileSegments,
+  skip,
+  styleHrefsFor,
+} from "./context.ts";
 import { exportedImagePath } from "./static-files.ts";
 
 /** Render one page to a full HTML document string. */
@@ -80,10 +86,9 @@ function paramSetsFor(ctx: ExportContext, route: PageRoute): Promise<RouteParams
   return enumerateStaticParams(route, ctx.load);
 }
 
-/** Map a pathname to its output HTML file (clean-URL directories). */
-function pageFilePath(outDir: string, pathname: string): string {
-  if (pathname === "/") return join(outDir, "index.html");
-  return join(outDir, pathname, "index.html");
+/** Map a pathname's decoded segments to its output HTML file (clean-URL directories). */
+function pageFilePath(outDir: string, segments: string[]): string {
+  return join(outDir, ...segments, "index.html");
 }
 
 /**
@@ -106,15 +111,15 @@ async function writePage(
     if (isNotFound(err)) return skip(ctx, pathname, "renders notFound()");
     throw err;
   }
-  // A `generateStaticParams` value is app data: a segment of `..` (or an empty one) must not
-  // resolve to a file outside `out/`.
-  if (pathname.split("/").some((seg) => seg === "..")) {
-    return skip(ctx, pathname, "path segment escapes the output dir");
-  }
-  const file = pageFilePath(ctx.outDir, pathname);
+  // A `generateStaticParams` value is app data: it is written under its decoded name (the
+  // name a static host looks up), and a segment of `..`, an empty one or one that decodes to a
+  // separator must not resolve to a file outside `out/`.
+  const segments = exportFileSegments(pathname);
+  if (!segments) return skip(ctx, pathname, "path segment escapes the output dir");
+  const file = pageFilePath(ctx.outDir, segments);
   await ensureDir(dirname(file));
   await Deno.writeTextFile(file, html);
-  console.log(`  ${pathname} -> ${file.slice(ctx.outDir.length + 1)}`);
+  console.log(`  ${pathname} -> ${file.slice(ctx.outDir.length + 1).replaceAll("\\", "/")}`);
   ctx.pages++;
 }
 

@@ -10,6 +10,19 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext export` pre-renders only route handlers marked static, and never hangs on one.** As
+  Next's `output: "export"` requires, a GET is written to its file only when the module exports
+  `dynamic = "force-static"` (or a `revalidate` of `false` or a positive number); every other GET
+  is listed as skipped without running, and a module whose source names no GET, or no
+  `dynamic` / `revalidate`, is not imported at all, so a POST-only route whose imports need the
+  server's environment no longer fails `denext export`, `denext mobile build` or a desktop build.
+  A static module that fails to import, a `generateStaticParams` that throws, an event stream, and
+  a response that misses its deadline (30 s, `DENEXT_EXPORT_RESPONSE_TIMEOUT_MS`) are skipped and
+  listed by name. The deploy manifest's `staticExport` follows the same rule.
+- **Exported files for params are written under their decoded names.** A `generateStaticParams`
+  value such as `café` was written as `caf%C3%A9`, which a static host (decoding the URL) never
+  served; a value that decodes to a path separator is skipped.
+
 - **A detached sidecar whose module fails to load exits once.** When the first-attach deadline (or
   the app's stop) had already begun ending the sidecar while its module was still loading, the
   load failure no longer starts a second exit with code 1, and a load failure no longer leaves the
