@@ -75,6 +75,7 @@ import {
   isDenextReleaseVersion,
   mediaCapturePinProblem,
   MIN_RUNTIME,
+  MIN_RUNTIME_LAUFEY_API,
   pinnedDenoReleaseVersion,
 } from "../src/build/deno-version.ts";
 
@@ -732,15 +733,79 @@ function belowFloor(version: string, floor: string | undefined): boolean {
 }
 
 /**
- * Whether a version is on the published revoked-runtimes list (any component, any target),
- * fetched once now.
+ * Whether a version is on the revoked-runtimes list (any component, any target), from a load of
+ * it: a list that could not be read (no key, offline, a bad signature, expired) is a refusal,
+ * never "nothing revoked", or a revoked release could become the fallback.
+ *
+ * @param loaded The loaded list.
+ * @returns The check.
+ */
+export function revokedFrom(
+  loaded: { readonly list: { readonly revoked: readonly { version: string }[] } | null },
+): (version: string) => Promise<boolean> {
+  if (loaded.list === null) {
+    fail(
+      "the revoked-runtimes list could not be read, so no rollback can be chosen safely; retry " +
+        "online, or name one with --rollback <tag>",
+    );
+  }
+  const names = new Set(loaded.list.revoked.map((e) => e.version));
+  return (version) => Promise.resolve(names.has(version));
+}
+
+/**
+ * Whether a version is on the published revoked-runtimes list, fetched once now
+ * ({@linkcode revokedFrom}).
  *
  * @returns The check.
  */
 export async function revokedVersions(): Promise<(version: string) => Promise<boolean>> {
-  const loaded = await loadRuntimeRevocations({ mode: "force" });
-  const names = new Set((loaded.list?.revoked ?? []).map((e) => e.version));
-  return (version) => Promise.resolve(names.has(version));
+  return revokedFrom(await loadRuntimeRevocations({ mode: "force" }));
+}
+
+/** What a rollback must meet besides the version floor: what this denext's code speaks. */
+export interface RollbackFloors {
+  /** The oldest release (default {@linkcode MIN_RUNTIME}). */
+  readonly minRuntime?: string;
+  /** The oldest laufey API of its Deno Desktop runtime (default {@linkcode MIN_RUNTIME_LAUFEY_API}). */
+  readonly minLaufeyApi?: number;
+  /** The esbuild its CLI archives must carry (default {@linkcode ESBUILD_VERSION}). */
+  readonly esbuild?: string;
+}
+
+/**
+ * Why a rollback could never run under this denext (`null` when it could): older than the floor,
+ * a Deno Desktop runtime below the laufey API denext's desktop glue needs, or CLI archives whose
+ * esbuild is not the one denext's vendored API speaks — what `runtimeIncompatibility`
+ * (src/build/runtime-select.ts) refuses at run time.
+ *
+ * @param rollback The rollbacks of both pins (either may be absent).
+ * @param floors What this denext needs.
+ * @returns The problem, or `null`.
+ */
+export function rollbackProblem(
+  rollback: { runtime?: RuntimeRollback; toolchain?: ToolchainRollback },
+  floors: RollbackFloors = {},
+): string | null {
+  const version = rollback.runtime?.version ?? rollback.toolchain?.version;
+  if (version === undefined) return null;
+  const floor = floors.minRuntime ?? MIN_RUNTIME;
+  if (belowFloor(version, floor)) {
+    return `${version} is older than ${floor}, the oldest runtime this denext runs`;
+  }
+  const laufey = floors.minLaufeyApi ?? MIN_RUNTIME_LAUFEY_API;
+  const api = rollback.runtime?.laufeyApiVersion ?? null;
+  if (rollback.runtime && (api === null || api < laufey)) {
+    return `${version}'s Deno Desktop runtime has laufey API ${api ?? "(none)"}; denext's ` +
+      `desktop glue needs ${laufey} or later`;
+  }
+  const esbuild = floors.esbuild ?? ESBUILD_VERSION;
+  const other = Object.values(rollback.toolchain?.targets ?? {})
+    .map((t) => t.esbuild?.version ?? "(none)")
+    .find((v) => v !== esbuild);
+  return other === undefined
+    ? null
+    : `${version}'s CLI archives carry esbuild ${other}; denext's esbuild API speaks ${esbuild}`;
 }
 
 /**
@@ -794,6 +859,8 @@ export interface PinMainOptions {
   readonly revoked?: (version: string) => Promise<boolean>;
   /** The oldest release a rollback may name (default {@linkcode MIN_RUNTIME}). */
   readonly minRuntime?: string;
+  /** The oldest laufey API a rollback may have (default {@linkcode MIN_RUNTIME_LAUFEY_API}). */
+  readonly minLaufeyApi?: number;
 }
 
 /** The rollbacks the new pins carry: `--rollback <tag>`'s release (attested), else the old pins'. */
@@ -803,30 +870,67 @@ async function rollbacks(
   attest: (pin: PinFile, options: AttestPinOptions) => Promise<void>,
   options: PinMainOptions,
 ): Promise<{ runtime?: RuntimeRollback; toolchain?: ToolchainRollback }> {
-  const floor = options.minRuntime ?? MIN_RUNTIME;
   const forced = args.flag("--rollback");
-  if (forced) {
-    if (forced === args.tag) fail("--rollback must name an earlier release than the one pinned");
-    const r = await releasePins(forced, args.flag, "rollback-");
-    if (belowFloor(r.pin.version, floor)) {
-      fail(
-        `--rollback ${r.pin.version} is older than ${floor}, the oldest runtime this denext runs ` +
-          "(MIN_RUNTIME, src/build/deno-version.ts): it could never be the fallback",
-      );
-    }
-    await attest(r.pin, { archives: args.flag("--rollback-archives"), cli: r.cli });
-    return {
-      runtime: runtimeRollbackOf(r.pin),
-      ...(r.cli ? { toolchain: toolchainRollbackOf(r.cli) } : {}),
-    };
+  return forced
+    ? await namedRollback(forced, args, attest, options)
+    : await replacedRollback(args.version, paths, options);
+}
+
+/** `--rollback <tag>`: that release, refused when this denext could never run it, attested. */
+async function namedRollback(
+  forced: string,
+  args: { tag: string; flag: (name: string) => string | undefined },
+  attest: (pin: PinFile, options: AttestPinOptions) => Promise<void>,
+  options: PinMainOptions,
+): Promise<{ runtime?: RuntimeRollback; toolchain?: ToolchainRollback }> {
+  if (forced === args.tag) fail("--rollback must name an earlier release than the one pinned");
+  const r = await releasePins(forced, args.flag, "rollback-");
+  const floor = options.minRuntime ?? MIN_RUNTIME;
+  if (belowFloor(r.pin.version, floor)) {
+    fail(
+      `--rollback ${r.pin.version} is older than ${floor}, the oldest runtime this denext runs ` +
+        "(MIN_RUNTIME, src/build/deno-version.ts): it could never be the fallback",
+    );
   }
+  const named = {
+    runtime: runtimeRollbackOf(r.pin),
+    ...(r.cli ? { toolchain: toolchainRollbackOf(r.cli) } : {}),
+  };
+  const problem = rollbackProblem(named, floorsOf(options));
+  if (problem) fail(`--rollback ${problem}: it could never be the fallback`);
+  await attest(r.pin, { archives: args.flag("--rollback-archives"), cli: r.cli });
+  return named;
+}
+
+/**
+ * The pins being replaced as the rollback ({@linkcode rollbackFor}); none when this denext could
+ * never run them ({@linkcode rollbackProblem}), which is said.
+ */
+async function replacedRollback(
+  version: string,
+  paths: { out: string; toolchainOut: string },
+  options: PinMainOptions,
+): Promise<{ runtime?: RuntimeRollback; toolchain?: ToolchainRollback }> {
   const runtime = await readPin<PinFile>(paths.out);
   const toolchain = await readPin<ToolchainPinFile>(paths.toolchainOut);
   if (runtime === null && toolchain === null) return {};
+  const floor = options.minRuntime ?? MIN_RUNTIME;
   const revoked = options.revoked ?? await revokedVersions();
+  const picked = {
+    runtime: await rollbackFor(runtime, version, revoked, runtimeRollbackOf, floor),
+    toolchain: await rollbackFor(toolchain, version, revoked, toolchainRollbackOf, floor),
+  };
+  const problem = rollbackProblem(picked, floorsOf(options));
+  if (!problem) return picked;
+  console.warn(`desktop:pin-runtime: no rollback written: ${problem}`);
+  return {};
+}
+
+/** The rollback floors from {@linkcode main}'s seams. */
+function floorsOf(options: PinMainOptions): RollbackFloors {
   return {
-    runtime: await rollbackFor(runtime, args.version, revoked, runtimeRollbackOf, floor),
-    toolchain: await rollbackFor(toolchain, args.version, revoked, toolchainRollbackOf, floor),
+    ...(options.minRuntime !== undefined ? { minRuntime: options.minRuntime } : {}),
+    ...(options.minLaufeyApi !== undefined ? { minLaufeyApi: options.minLaufeyApi } : {}),
   };
 }
 
