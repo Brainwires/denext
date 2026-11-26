@@ -698,9 +698,11 @@ Deno.test("loadRuntimeChannel: the withdrawn keys come from the revoked-runtimes
     const got = await loadRuntimeChannel({ ...options(root, n), mode: "force" });
     assertEquals([got.channel, got.absent], [null, "revoked-key"]);
     assert(n.hits.some((u) => REVOCATION_URLS.includes(u)), "the list was asked for");
-    // It is cached where the channel is (not in the default cache directory).
+    // It is cached where the channel is (not in the default cache directory). The environment is
+    // injected (empty), as the channel's is, so a test pass's DENEXT_REVOCATION_CHECK=0 never decides.
     const cached = await loadRuntimeRevocations({
       mode: "cache-only",
+      env: NO_FLOOR.env,
       cacheRoot: root,
       keys: [rev.pub],
       minSequence: 0,
