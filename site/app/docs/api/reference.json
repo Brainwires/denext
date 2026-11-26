@@ -21752,7 +21752,7 @@
               "kind": "property",
               "name": "fetchLocal",
               "signature": "fetchLocal?: (src: string, request: Request) => Promise<Response>",
-              "doc": "Fetches the local source `src` (a `/…` path, query included) for this request, in place of\na direct read of `publicDir`: the image is taken from the response when it is a 200, and\nanything else (a 401 / 403, a redirect to a sign-in page, a 404) answers 404. The endpoint\nis served in front of the app, so a direct read is one no `middleware.ts` sees. See\n{@linkcode localImageFetcher}. It runs on every request, before the optimizer's cache."
+              "doc": "Fetches the local source `src` (a `/…` path, query included) for this request, in place of\na direct read of `publicDir`: the image is taken from the response when it is a 200, and\nanything else (a 401 / 403, a redirect to a sign-in page, a 404) answers 404. The endpoint\nis served in front of the app, so a direct read is one no `middleware.ts` sees. See\n{@linkcode localImageFetcher}. It runs on every request, before the optimizer's cache. An\nanswer fetched with the visitor's cookie or `Authorization`, or one the app marks `private`,\n`no-store` or `Vary: Cookie`, is cached under a hash of its bytes, never under the URL alone."
             }
           ]
         },
@@ -24983,7 +24983,7 @@
               "kind": "property",
               "name": "matcher",
               "signature": "matcher?: string | MatcherEntry | (string | MatcherEntry)[]",
-              "doc": "Path pattern(s) the middleware applies to. Omit to run on every request. Syntax:\n`:param` (one segment), `:param*` (zero or more — `/dashboard/:path*` also matches\n`/dashboard`), `:param+` (one or more), `:param?` (optional), a custom pattern\n`:id(\\\\d+)`, an unnamed group `((?!api|_next).*)`, and a bare `*`. A trailing slash is\nalways optional."
+              "doc": "Path pattern(s) the middleware applies to. Omit to run on every request. Syntax:\n`:param` (one segment), `:param*` (zero or more — `/dashboard/:path*` also matches\n`/dashboard`), `:param+` (one or more), `:param?` (optional), a custom pattern\n`:id(\\\\d+)`, an unnamed group `((?!api|_next).*)`, and a bare `*`. A trailing slash is\nalways optional. A path with a percent-encoded separator (`/docs/a%2Fb`) is tested as\nrequested and as the path it decodes to (`/docs/a/b`), which is what a route's param reads."
             }
           ]
         },
@@ -46713,6 +46713,12 @@
               "name": "dataScope",
               "signature": "readonly dataScope?: boolean",
               "doc": "The runtime expands `$DENO_DESKTOP_DATA` (and `$DENO_DESKTOP_CACHE`) in a baked permission\n(denext's Deno Desktop runtime; `desktopDataTokenRuntime` detects it):\nthe app-folder writes (`$APPDATA`, `$CACHE`: the `fs` / `sqlite` / `updates` capabilities, a\nsidecar's log file, the UI overlay's `ui-updates`) are baked as those folders instead of an\nunscoped `--allow-write`, when `desktop.app.identifier` names them. Default:\n`desktopDataTokenRuntime()`."
+            },
+            {
+              "kind": "property",
+              "name": "unixTokenScope",
+              "signature": "readonly unixTokenScope?: boolean",
+              "doc": "The runtime expands `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE` right after `unix:` in a baked\nnetwork grant (denext's Deno Desktop runtime; `desktopUnixTokenRuntime` detects it), so a\n`unix:$DENO_DESKTOP_DATA/…` entry in `desktop.extraPermissions` or a sidecar's `permissions`\ncan be baked; elsewhere such an entry fails the build (the runtime would refuse to start).\nNeeds `desktop.app.identifier`. Default: `desktopUnixTokenRuntime()`."
             },
             {
               "kind": "property",
