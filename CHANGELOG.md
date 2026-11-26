@@ -23,6 +23,15 @@ and this project adheres to
   `private, no-cache, no-store, max-age=0, must-revalidate` (unless the page sets its own) like a
   `getServerSideProps` page: the document, the soft-navigation data, and a redirect or not-found
   resolved under preview (`@denext/pages-router` 0.13.2).
+- **The runtime channel reads the revoked-runtimes list before it takes an index, and never picks
+  a revoked release.** The channel's loader read withdrawn channel keys from the cached list only,
+  so a machine with no cached list (a fresh install) or an expired one did not see them. The list is
+  now loaded the way the channel is (fetched first when missing or stale, from the channel's own
+  cache directory), and a command that may fetch the index takes nothing from the channel without
+  a current list (`the revoked-runtimes list can't be had`). `runtime upgrade`, `runtime use latest`
+  and the update notice skip a release the list names, and `runtime use <version>` /
+  `install <version>` refuse one revoked for this host unless `DENEXT_ALLOW_REVOKED_RUNTIME` names
+  it.
 
 ## [4.22.0] - 2026-11-23
 

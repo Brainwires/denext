@@ -50,7 +50,10 @@ import {
 import {
   checkRevocationList,
   freshRevocationList,
+  loadRuntimeRevocations,
   REVOCATION_SIGNATURE_DOMAIN,
+  REVOCATION_URLS,
+  signRevocationList,
 } from "../src/build/runtime-revocations.ts";
 import { toBase64 } from "../src/build/ota-signing.ts";
 import {
@@ -648,6 +651,127 @@ Deno.test("loadRuntimeChannel: an older index is a replay once a newer one is he
       now: () => T,
     });
     assertEquals(floored.channel, null);
+  });
+});
+
+Deno.test("loadRuntimeChannel: the withdrawn keys come from the revoked-runtimes list, loaded in the channel's mode and cache", async () => {
+  const a = await pair();
+  const rev = await pair();
+  const id = (await spkiSha256(a.pub))!;
+  const index = await signed(fresh(), a.priv);
+  const list = async (withdrawn: string[], at = NOW) =>
+    JSON.stringify(
+      await signRevocationList(freshRevocationList([], at, undefined, withdrawn), rev.priv),
+    );
+  const net = (revocations: string | null) =>
+    fakeNet(
+      new Map([
+        [indexUrl(CHANNEL_BASES[0]), index],
+        ...(revocations === null ? [] : REVOCATION_URLS.map((u) => [u, revocations] as const)),
+      ]),
+    );
+  const options = (root: string, n: ReturnType<typeof fakeNet>) => ({
+    ...NO_FLOOR,
+    keys: [a.pub],
+    cacheRoot: root,
+    now: () => T,
+    fetch: n.fetch,
+    netGranted: granted,
+    revocations: { keys: [rev.pub], minSequence: 0 },
+  });
+
+  // A machine with nothing cached: the list is fetched before the index is trusted, and a key
+  // it withdraws signs nothing here.
+  await withCache(async (root) => {
+    const n = net(await list([id]));
+    const got = await loadRuntimeChannel({ ...options(root, n), mode: "force" });
+    assertEquals([got.channel, got.absent], [null, "revoked-key"]);
+    assert(n.hits.some((u) => REVOCATION_URLS.includes(u)), "the list was asked for");
+    // It is cached where the channel is (not in the default cache directory).
+    const cached = await loadRuntimeRevocations({
+      mode: "cache-only",
+      cacheRoot: root,
+      keys: [rev.pub],
+      minSequence: 0,
+      now: () => T,
+    });
+    assertEquals(cached.list?.revokedChannelKeys, [id]);
+    assertEquals(
+      (await loadRuntimeChannel({ ...options(root, n), mode: "cache-only" })).absent,
+      "revoked-key",
+    );
+  });
+  // The default mode fetches it too (the cached copy is missing).
+  await withCache(async (root) => {
+    const got = await loadRuntimeChannel(options(root, net(await list([id]))));
+    assertEquals(got.absent, "revoked-key");
+  });
+  // A list that withdraws nothing: the index is taken.
+  await withCache(async (root) => {
+    const got = await loadRuntimeChannel({ ...options(root, net(await list([]))), mode: "force" });
+    assertEquals([got.source, got.absent], ["network", null]);
+  });
+
+  // No current list to be had: a load that may reach the network takes no index, and asks for
+  // none; one that reads the cache keeps what the machine verified before.
+  await withCache(async (root) => {
+    const dark = net(null);
+    for (const mode of ["force", "fetch"] as const) {
+      const got = await loadRuntimeChannel({ ...options(root, dark), mode });
+      assertEquals([got.channel, got.absent, got.source], [null, "no-revocations", "none"], mode);
+    }
+    assert(!dark.hits.includes(indexUrl(CHANNEL_BASES[0])), "the index was not fetched");
+    // An expired list is no list.
+    const stale = net(await list([], new Date(T - 60 * DAY)));
+    assertEquals(
+      (await loadRuntimeChannel({ ...options(root, stale), mode: "force" })).absent,
+      "no-revocations",
+    );
+    // With an index cached while a list was current...
+    await loadRuntimeChannel({ ...options(root, net(await list([]))), mode: "force" });
+    // ...and the list since expired and unreachable, the cache still answers a cache-only load.
+    const later = { ...options(root, dark), now: () => T + 25 * DAY };
+    const kept = await loadRuntimeChannel({ ...later, mode: "cache-only" });
+    assertEquals([kept.source, kept.absent], ["cache", null]);
+    assertEquals((await loadRuntimeChannel({ ...later, mode: "force" })).absent, "no-revocations");
+  });
+
+  // The revocation check turned off, or `revokedKeys` given: no list is needed or loaded.
+  await withCache(async (root) => {
+    const dark = net(null);
+    const off = await loadRuntimeChannel({
+      ...options(root, dark),
+      mode: "force",
+      env: (k) => (k === "DENEXT_REVOCATION_CHECK" ? "0" : undefined),
+    });
+    assertEquals(off.absent, null);
+    dark.hits.length = 0;
+    const given = await loadRuntimeChannel({
+      ...options(root, dark),
+      mode: "force",
+      revokedKeys: [],
+    });
+    assertEquals(given.absent, null);
+    assert(!dark.hits.some((u) => REVOCATION_URLS.includes(u)));
+  });
+
+  // The loader is handed the channel's mode, cache directory, clock and network.
+  await withCache(async (root) => {
+    const seen: Record<string, unknown>[] = [];
+    const n = net(null);
+    await loadRuntimeChannel({
+      ...options(root, n),
+      mode: "force",
+      revocations: {
+        load: (o) => {
+          seen.push({ ...o });
+          return Promise.resolve({ configured: true, list: null, source: "none", expired: null });
+        },
+      },
+    });
+    assertEquals(seen.length, 1);
+    assertEquals([seen[0].mode, seen[0].cacheRoot, seen[0].fetch], ["force", root, n.fetch]);
+    assertEquals((seen[0].now as () => number)(), T);
   });
 });
 

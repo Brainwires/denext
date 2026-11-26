@@ -186,6 +186,11 @@ GitHub download URLs or `https://denext.dev/runtime/`, name a version outside de
 line, or change what a command runs (only the commands above do). A signing key that leaks can be
 withdrawn by the separate key that signs the [revoked-runtimes list](/docs/toolchain#revoked-runtimes);
 a denext that sees its channel key withdrawn ignores the channel and runs its bundled runtime.
+The list is read before the index: a command that may fetch the index (`runtime upgrade | use |
+install`, the installer, the update notice) fetches the list first when its cached copy is missing
+or stale, and with no current list to be had it takes nothing from the channel and says so (a
+machine that has never run denext is covered too). Commands that only read the cached index keep
+running what they verified before.
 
 Anything wrong (no key, a bad or withdrawn signature, an expired index, a replayed one, an unknown
 format, a document whose hash differs) and the channel counts as absent: `upgrade` and `install`

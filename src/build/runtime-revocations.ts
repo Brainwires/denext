@@ -3,9 +3,13 @@
 // maintainers pulled after release, for every target or only some. denext reads it before it
 // runs a pinned runtime and, when the pin is revoked for this host, runs the previous release the
 // pin names as its `rollback` instead (deno-toolchain.ts, desktop-runtime.ts) — or the pinned one
-// with a warning when there is no safe fallback. The list can only disable a compiled-in pin and
-// choose among the compiled-in pins: it never names a binary of its own, so JSR stays the only
-// trust root and a leaked signing key can do no more than force that one step back.
+// with a warning when there is no safe fallback. The list can only disable a release and choose
+// among the compiled-in pins: it never names a binary of its own, so a leaked signing key for it
+// can do no more than force that one step back. It is not the only signed input any more: the
+// runtime channel (runtime-channel.ts) names releases beyond the compiled-in pins under a second
+// key pair, so denext's trust roots are JSR (the pins and both sets of public keys) and the
+// channel key. This list is how a channel key is withdrawn, which is why the channel's loader
+// takes no index from the network without a current copy of it.
 //
 // The document (`runtime-revocations.json`) is an envelope `{ "signed": "<JSON>", "signature":
 // "<base64 r‖s>" }`: ECDSA P-256 / SHA-256 over `"denext-runtime-revocations-v1\n" + signed`, the
@@ -709,6 +713,39 @@ export function findRevocation(
     e.component === component && e.version === version &&
     (e.targets === undefined || (triple !== undefined && e.targets.includes(triple)))
   ) ?? null;
+}
+
+/**
+ * Whether the list revokes runtime release `version` at all: either component, on any target. A
+ * release chosen for others too (a project pin, a floating upgrade) is judged this way, since
+ * the choice is not this host's alone.
+ *
+ * @param list The list in force (`null`: none).
+ * @param version The runtime version.
+ * @returns Whether an entry names it.
+ */
+export function revokesVersion(list: RuntimeRevocationList | null, version: string): boolean {
+  return list?.revoked.some((e) => e.version === version) ?? false;
+}
+
+/**
+ * Why `denext runtime use | install | upgrade` refuses to take the revoked release of `hit`, or
+ * `null` when {@linkcode ALLOW_REVOKED_RUNTIME_ENV} names its version.
+ *
+ * @param hit The entry that revokes it for this host.
+ * @param triple The host's target.
+ * @param env Env reader.
+ * @returns The refusal, or `null`.
+ */
+export function revokedChoiceRefusal(
+  hit: RuntimeRevocation,
+  triple: string | undefined,
+  env: EnvGet = processEnv,
+): string | null {
+  if (env(ALLOW_REVOKED_RUNTIME_ENV)?.trim() === hit.version) return null;
+  return `denext: runtime ${hit.version} is revoked for ${triple ?? "this host"} (${why(hit)}): ` +
+    "`denext runtime upgrade` takes a release that is not revoked, or set " +
+    `${ALLOW_REVOKED_RUNTIME_ENV}=${hit.version} to take it anyway.`;
 }
 
 /** One pinned runtime a command would run, and the rollback its pin names. */

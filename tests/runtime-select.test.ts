@@ -55,7 +55,12 @@ import { MIN_RUNTIME } from "../src/build/deno-version.ts";
 import { rollbackToolchainPin } from "../src/build/deno-toolchain.ts";
 import { sha256Hex } from "../src/build/signed-envelope.ts";
 import { toBase64 } from "../src/build/ota-signing.ts";
-import { freshRevocationList, signRevocationList } from "../src/build/runtime-revocations.ts";
+import {
+  freshRevocationList,
+  revokedChoiceRefusal,
+  revokesVersion,
+  signRevocationList,
+} from "../src/build/runtime-revocations.ts";
 
 const BUNDLED = BUNDLED_RUNTIME.toolchain.version!;
 const ROLLBACK = BUNDLED_RUNTIME.toolchain.rollback!.version;
@@ -803,6 +808,38 @@ Deno.test("newestAvailableRelease: compatible, not yanked, and past the dependen
   );
   const none = newestAvailableRelease(releases.slice(0, 1), { rule: { cutoff } });
   assertEquals([none.pick, none.held?.version], [null, "3.0.0-denext.35"]);
+  // A release the revoked-runtimes list names is neither the pick nor the held one.
+  const list = freshRevocationList([
+    { component: "cli", version: NEWER, reason: "bad" },
+    {
+      component: "desktop",
+      version: "3.0.0-denext.35",
+      targets: ["x86_64-pc-windows-msvc"],
+      reason: "bad",
+    },
+  ], new Date());
+  const revoked = (version: string) => revokesVersion(list, version);
+  assertEquals([revoked(NEWER), revoked("3.0.0-denext.35"), revoked(NEWEST)], [true, true, false]);
+  assertEquals(revokesVersion(null, NEWER), false);
+  const safe = newestAvailableRelease(releases, { rule: { cutoff }, revoked });
+  assertEquals([safe.pick, safe.held?.version], [null, "3.0.0-denext.32"]);
+  assertEquals(
+    newestAvailableRelease(releases, { rule: { cutoff: null }, revoked }).pick?.version,
+    "3.0.0-denext.32",
+  );
+  // Choosing a revoked release by name: refused with the reason, unless the override names it.
+  const hit = { component: "cli" as const, version: NEWER, reason: "bad", advisory: "https://x/a" };
+  const refusal = revokedChoiceRefusal(hit, "aarch64-apple-darwin", envOf())!;
+  assertStringIncludes(
+    refusal,
+    `runtime ${NEWER} is revoked for aarch64-apple-darwin (bad; https://x/a)`,
+  );
+  assertStringIncludes(refusal, `DENEXT_ALLOW_REVOKED_RUNTIME=${NEWER}`);
+  assertEquals(
+    revokedChoiceRefusal(hit, undefined, envOf({ DENEXT_ALLOW_REVOKED_RUNTIME: NEWER })),
+    null,
+  );
+  assert(revokedChoiceRefusal(hit, undefined, envOf({ DENEXT_ALLOW_REVOKED_RUNTIME: NEWEST })));
 });
 
 Deno.test("runtimeUpdateNotice: once a day per release, per process tree, never for an explicit choice", async () => {
@@ -857,6 +894,18 @@ Deno.test("runtimeUpdateNotice: once a day per release, per process tree, never 
       await runtimeUpdateNotice({ ...o, rule: () => Promise.resolve({ cutoff: new Date(0) }) }),
       null,
     );
+    // A revoked release is never announced: the next one down is, when it is newer.
+    const noNewest = await revoking([{ component: "cli", version: NEWEST }]);
+    assertEquals(
+      await runtimeUpdateNotice({ ...o, revocations: noNewest }),
+      `denext: runtime ${NEWER} is available: denext runtime upgrade`,
+    );
+    now += 25 * 3600_000;
+    const neither = await revoking([
+      { component: "cli", version: NEWEST },
+      { component: "desktop", version: NEWER },
+    ]);
+    assertEquals(await runtimeUpdateNotice({ ...o, revocations: neither }), null);
   });
 });
 

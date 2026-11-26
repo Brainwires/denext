@@ -77,6 +77,7 @@ import {
   type RevocationMode,
   revocationNotice,
   type RevocationSubject,
+  revokesVersion,
   type RuntimeComponent,
   type RuntimeRevocationList,
 } from "./runtime-revocations.ts";
@@ -1362,6 +1363,8 @@ export interface AvailableOptions {
   /** The dependency-age rule in force (its cutoff holds a fresh release back; no exemption). */
   readonly rule: Pick<DepAgeRule, "cutoff">;
   readonly compat?: CompatTarget;
+  /** Whether the revoked-runtimes list names a version (default: none is revoked). */
+  readonly revoked?: (version: string) => boolean;
 }
 
 /** What {@linkcode newestAvailableRelease} found. */
@@ -1379,8 +1382,9 @@ function pastHold(rule: Pick<DepAgeRule, "cutoff">, releasedAt: string): boolean
 
 /**
  * The newest release a floating upgrade may take (`runtime upgrade`, the installer, the notice):
- * compatible with this denext, not yanked, and published before the dependency-age rule's cutoff
- * (the same rule `denext upgrade` follows; a `security` release is held like any other).
+ * compatible with this denext, not yanked, not revoked (`options.revoked`), and published before
+ * the dependency-age rule's cutoff (the same rule `denext upgrade` follows; a `security` release
+ * is held like any other).
  *
  * @param releases The channel's entries, newest first.
  * @param options The rule and the compatibility target.
@@ -1392,7 +1396,8 @@ export function newestAvailableRelease(
 ): AvailableRelease {
   let held: RuntimeChannelRelease | null = null;
   for (const entry of releases) {
-    if (entry.yanked || runtimeIncompatibility(factsOfEntry(entry), options.compat)) continue;
+    if (entry.yanked || options.revoked?.(entry.version)) continue;
+    if (runtimeIncompatibility(factsOfEntry(entry), options.compat)) continue;
     if (pastHold(options.rule, entry.releasedAt)) return { pick: entry, held };
     held ??= entry;
   }
@@ -1413,6 +1418,11 @@ export interface RuntimeNoticeOptions {
   /** The dependency-age rule (default the project's). */
   readonly rule?: () => Promise<Pick<DepAgeRule, "cutoff">>;
   readonly compat?: CompatTarget;
+  /**
+   * How the revoked-runtimes list is read, so a revoked release is never announced (default: the
+   * cached list, never the network).
+   */
+  readonly revocations?: LoadRevocationsOptions;
 }
 
 /** Whether the same release was announced within the last day. */
@@ -1461,7 +1471,17 @@ async function newerPick(
 ): Promise<RuntimeChannelRelease | null> {
   const projectDir = o.projectDir ?? cwdOr(".");
   const rule = await (o.rule ?? (() => readProjectRule(projectDir, new Date(now))))();
-  const { pick } = newestAvailableRelease(channel.releases, { rule, compat: o.compat });
+  const { list } = await loadRuntimeRevocations({
+    mode: "cache-only",
+    env: o.env ?? processEnv,
+    ...(o.cacheRoot !== undefined ? { cacheRoot: o.cacheRoot } : {}),
+    ...o.revocations,
+  });
+  const { pick } = newestAvailableRelease(channel.releases, {
+    rule,
+    compat: o.compat,
+    revoked: (version) => revokesVersion(list, version),
+  });
   const current = o.selected.version ?? "0.0.0";
   return pick && compareDenoVersions(pick.version, current) > 0 ? pick : null;
 }
