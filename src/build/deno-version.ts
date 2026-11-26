@@ -471,7 +471,7 @@ export function supportsDesktopDataToken(version: string): boolean {
  * (Brainwires/deno DENEXT.md item 501). An older runtime reads the token as a relative socket path,
  * which the network grant parser refuses, so the app would not start.
  */
-export const FIRST_DESKTOP_UNIX_TOKEN_RUNTIME = "3.0.0-denext.30";
+const FIRST_DESKTOP_UNIX_TOKEN_RUNTIME = "3.0.0-denext.30";
 
 /**
  * Whether the Deno Desktop runtime `version` expands the app-folder tokens in a `unix:` network
