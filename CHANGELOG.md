@@ -10,6 +10,20 @@ and this project adheres to
 
 ### Changed
 
+- **Runtime 3.0.0-denext.30.** The bundled Deno toolchain and Desktop runtime move to
+  3.0.0-denext.30 (rollback 3.0.0-denext.28; there is no 3.0.0-denext.29). It adds
+  `Deno.openRoot` (a directory handle nothing in it can escape),
+  `Deno.createHttpClient({ denyAddresses })`, `DENO_NARROW_PERMISSIONS` (a compiled program run
+  with less than its baked permissions) and, on Windows, `Deno.pipeServerIdentity`; the `deno` CLI
+  reads denext's revoked-runtimes list at startup; `deno test` / `deno bench` run under the kernel
+  sandbox's opt-in `enforce`, which gains deny ceilings and a stand-alone broker (`auto` still
+  applies nothing). Deno Desktop: a `desktop.permissions: "strict"` app is held by the kernel
+  sandbox where its web engine can run inside it (elsewhere its own process runs unconfined and one
+  line on stderr says so), an app that declares itself a browser receives the `http` / `https`
+  links the OS opens with it, the full-app update no longer waits for a detached sidecar kept
+  across updates, and a window can host a native view tree on the `gpui` backend. WebRTC takes the
+  next round of web-platform-tests and ECN / L4S; `structuredClone` and `Symbol.toStringTag`
+  follow the platform for more interfaces; CEF 156.0.8078.100.
 - **Deno Desktop: a `unix:` network grant can name a socket in the app's own folders.**
   `desktop.extraPermissions.net` / `netListen` / `netConnect` and a sidecar's `permissions` take
   `unix:$DENO_DESKTOP_DATA/<path>` and `unix:$DENO_DESKTOP_CACHE/<path>` besides an absolute path,
