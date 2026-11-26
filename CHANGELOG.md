@@ -47,6 +47,14 @@ and this project adheres to
   the path as requested and did not run. A `matcher` and a config `headers` rule are now tested
   against both spellings (the decoded one with `.` / `..` segments resolved). Params decode as
   before, and a path check inside a middleware still sees the path as requested.
+- **`/_denext/image` caches a local source that answers per visitor by its bytes.** With a
+  middleware file, the encoded image of a local source was cached under its URL, width, quality and
+  format, so a source that answers different bytes per visitor (a route such as `/api/me/avatar`)
+  could be answered with the variant encoded for an earlier visitor. A source fetched with the
+  visitor's cookie or `Authorization`, or one the app answers `private`, `no-store` or
+  `Vary: Cookie`, is now cached under its URL and a hash of the bytes the app answered for this
+  request; the source is read and hashed inside the optimizer's concurrency gate, so no more
+  sources are held in memory than before.
 
 ## [4.22.0] - 2026-11-23
 
