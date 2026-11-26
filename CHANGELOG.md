@@ -14,6 +14,10 @@ and this project adheres to
   the app's stop) had already begun ending the sidecar while its module was still loading, the
   load failure no longer starts a second exit with code 1, and a load failure no longer leaves the
   first-attach timer running.
+- **`safeFetch` keeps the caller's credentials off the rest of a redirect chain once it leaves
+  the original origin.** `Authorization`, `Cookie` and `Proxy-Authorization` were dropped for a hop
+  on another origin but sent again when a later hop came back to the original one; they now stay
+  off for every later hop, as the fetch standard has it.
 
 ## [4.22.0] - 2026-11-23
 
