@@ -30,6 +30,7 @@ import {
   desktopDataTokenRuntime,
   desktopDataTokenRuntimeProblem,
   desktopSidecarIntegrityRuntime,
+  desktopUnixTokenRuntime,
   macSecureStoreRuntime,
   windowsSecureStoreRuntime,
 } from "./desktop-launch-policy.ts";
@@ -41,7 +42,7 @@ import {
 import { netSplitFlags } from "./net-permissions.ts";
 import type { SidecarDefinition } from "../desktop/sidecar.ts";
 import { LOGIN_SHELL_PATHS } from "../desktop/sidecar-login-env.ts";
-import { permissionListError } from "../desktop/permission-entries.ts";
+import { isDesktopUnixTokenEntry, permissionListError } from "../desktop/permission-entries.ts";
 import { PTY_DEFAULT_SHELLS, resolvePtyConfig } from "../desktop/pty-config.ts";
 import {
   WINDOWS_EXPLORER,
@@ -735,6 +736,14 @@ export interface DesktopBuildFlagOptions {
    */
   readonly dataScope?: boolean;
   /**
+   * The runtime expands `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE` right after `unix:` in a baked
+   * network grant (denext's Deno Desktop runtime; `desktopUnixTokenRuntime` detects it), so a
+   * `unix:$DENO_DESKTOP_DATA/…` entry in `desktop.extraPermissions` or a sidecar's `permissions`
+   * can be baked; elsewhere such an entry fails the build (the runtime would refuse to start).
+   * Needs `desktop.app.identifier`. Default: `desktopUnixTokenRuntime()`.
+   */
+  readonly unixTokenScope?: boolean;
+  /**
    * What `desktop.permissions: "strict"` does when it cannot be honoured (the runtime does not
    * expand the folder tokens, or `desktop.app.identifier` is unset; see
    * {@linkcode strictPermissionsProblem}): `false` (the default, every packaging build) throws,
@@ -1331,7 +1340,7 @@ function checkedPermissions(field: string, value: unknown): DesktopPermissionSet
     throw new Error(`denext: ${field} must be an object of permission kinds to string arrays`);
   }
   for (const [kind, list] of Object.entries(value)) {
-    const error = permissionListError(kind, list);
+    const error = permissionListError(kind, list, { desktopTokens: true });
     if (error) throw new Error(`denext: ${field}.${kind} ${error}`);
   }
   return value as DesktopPermissionSet;
@@ -1557,6 +1566,43 @@ function folderScope(cfg: DesktopFlagConfig, options: DesktopBuildFlagOptions): 
   return (options.dataScope ?? desktopDataTokenRuntime()) && hasIdentifier(cfg);
 }
 
+/**
+ * Refuse a `unix:$DENO_DESKTOP_DATA/…` / `unix:$DENO_DESKTOP_CACHE/…` network entry the build
+ * cannot bake: the runtime this build uses does not expand the token there (`options.unixTokenScope`,
+ * by default {@linkcode desktopUnixTokenRuntime}), or `desktop.app.identifier` is unset, so the app
+ * has no folders to expand it to. Either way the runtime would read a relative socket path and
+ * refuse to start.
+ *
+ * @param entries The network entries to bake.
+ * @param cfg The desktop config.
+ * @param options The build options.
+ * @throws When such an entry cannot be baked.
+ */
+function checkUnixTokenGrants(
+  entries: readonly string[],
+  cfg: DesktopFlagConfig,
+  options: DesktopBuildFlagOptions,
+): void {
+  const tokens = entries.filter(isDesktopUnixTokenEntry);
+  if (tokens.length === 0) return;
+  const listed = tokens.map((e) => JSON.stringify(e)).join(", ");
+  if (!hasIdentifier(cfg)) {
+    throw new Error(
+      `denext: the network grant ${listed} names the app's folders, which needs ` +
+        "desktop.app.identifier (the runtime expands the token from it)",
+    );
+  }
+  if (!(options.unixTokenScope ?? desktopUnixTokenRuntime())) {
+    throw new Error(
+      `denext: the network grant ${listed} names the app's folders, but the Deno Desktop runtime ` +
+        "this build uses does not expand $DENO_DESKTOP_DATA / $DENO_DESKTOP_CACHE after unix: and " +
+        "the app would refuse to start. Build on denext's pinned runtime and toolchain (unset " +
+        "DENEXT_DESKTOP_RUNTIME / DENEXT_DESKTOP_RUNTIME_DIR; `denext upgrade` for a newer pin), " +
+        "or name an absolute socket path",
+    );
+  }
+}
+
 /** The kinds a permission set merges: the flag kinds plus the two network directions. */
 const MERGED_KINDS = [...PERMISSION_KINDS, "netConnect", "netListen"] as const;
 
@@ -1754,6 +1800,7 @@ export function desktopBuildFlags(
     ...(extra.net ?? []),
     ...(extra.netListen ?? []),
   ]);
+  checkUnixTokenGrants([...connect, ...listen], cfg, options);
 
   const { run, ffi, sys } = bakeableSets(capFlags, extra);
   const strict = strictMode(cfg, options);

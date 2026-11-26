@@ -746,7 +746,7 @@ async function dragPath(s: WindowState, item: unknown): Promise<string> {
   if (rel === "") throw invalid("path must name a file in the app folder");
   const target = await confineRelative(dirs[directory], rel);
   // Never drag the runtime's own state (the engine profile, the updater overlay) out.
-  await refuseReservedDataPath(dirs.data, target);
+  await refuseReservedDataPath(dirs.data, target, dirs.cache);
   try {
     await Deno.stat(target);
   } catch {

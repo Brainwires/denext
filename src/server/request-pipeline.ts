@@ -17,6 +17,7 @@ import { renderDocument } from "./document.ts";
 import { resolveCsp } from "./csp.ts";
 import { serveStatic } from "./static.ts";
 import {
+  matcherSpellings,
   middlewareMatched,
   type MiddlewareOutcome,
   redirectResponse,
@@ -162,8 +163,11 @@ function stripBasePath(state: RequestState): void {
 /** basePath strip + config `headers` rules — before middleware (Next's order). */
 function applyHeaderRules(state: RequestState): void {
   stripBasePath(state);
+  // A header rule applies to either spelling of a path with an encoded separator, as a
+  // middleware matcher does: the route's decoded param names what the rule's source names.
+  const spellings = matcherSpellings(state.pathname);
   for (const { pattern, rule } of state.app.rules().headers) {
-    if (!matchPattern(pattern, state.pathname)) continue;
+    if (!spellings.some((spelling) => matchPattern(pattern, spelling))) continue;
     for (const { key, value } of rule.headers) addInjectedHeader(state, key, value);
   }
 }

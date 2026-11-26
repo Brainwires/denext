@@ -54,7 +54,11 @@ import {
   verifyingKey,
   writeQuietly,
 } from "./signed-envelope.ts";
-import { loadRuntimeRevocations } from "./runtime-revocations.ts";
+import {
+  type LoadedRevocations,
+  type LoadRevocationsOptions,
+  loadRuntimeRevocations,
+} from "./runtime-revocations.ts";
 import {
   RUNTIME_CHANNEL_MIN_SEQUENCE,
   RUNTIME_CHANNEL_PUBLIC_KEYS,
@@ -781,8 +785,19 @@ export interface LoadChannelOptions {
   readonly cacheRoot?: string;
   /** Default {@linkcode channelKeys}. */
   readonly keys?: readonly string[];
-  /** Withdrawn channel keys (SPKI SHA-256 hex): default the cached revoked-runtimes list's. */
+  /**
+   * Withdrawn channel keys (SPKI SHA-256 hex), in place of the revoked-runtimes list's: with
+   * this set the list is not loaded at all (tests, a caller that already holds the list).
+   */
   readonly revokedKeys?: readonly string[];
+  /**
+   * How the revoked-runtimes list is loaded for its withdrawn channel keys (default
+   * {@linkcode loadRuntimeRevocations}): in this load's `mode`, with its `env`, `cacheRoot`,
+   * clock, `fetch` and `netGranted`, and these options over them.
+   */
+  readonly revocations?:
+    & Partial<LoadRevocationsOptions>
+    & { readonly load?: (options: LoadRevocationsOptions) => Promise<LoadedRevocations> };
   /** Default {@linkcode CHANNEL_BASES}. */
   readonly bases?: readonly string[];
   readonly budgetMs?: number;
@@ -794,8 +809,18 @@ export interface LoadChannelOptions {
   readonly netGranted?: (url: string) => Promise<boolean>;
 }
 
-/** Why the channel is absent, for a message. */
-export type ChannelAbsence = "off" | "no-key" | "revoked-key" | "unavailable" | "expired";
+/**
+ * Why the channel is absent, for a message. `no-revocations`: a load that may reach the network
+ * could not get a current revoked-runtimes list, so it cannot tell whether a channel key was
+ * withdrawn and takes no index.
+ */
+export type ChannelAbsence =
+  | "off"
+  | "no-key"
+  | "revoked-key"
+  | "no-revocations"
+  | "unavailable"
+  | "expired";
 
 /** What {@linkcode loadRuntimeChannel} found. */
 export interface LoadedChannel {
@@ -814,10 +839,42 @@ interface Seen {
   revokedKey: boolean;
 }
 
-/** The withdrawn channel keys the cached revoked-runtimes list names (never the network). */
-async function cachedRevokedChannelKeys(env: EnvGet): Promise<readonly string[]> {
-  const loaded = await loadRuntimeRevocations({ mode: "cache-only", env });
-  return loaded.list?.revokedChannelKeys ?? [];
+/** The withdrawn channel keys, and whether they come from a list in force. */
+interface WithdrawnKeys {
+  readonly revoked: readonly string[];
+  /**
+   * Whether the keys are known: given by the caller, read from a current revoked-runtimes list,
+   * or the revocation check is off (no key configured, or turned off by its switch).
+   */
+  readonly current: boolean;
+}
+
+/**
+ * The withdrawn channel keys the revoked-runtimes list names. The list is loaded the way the
+ * channel is (`mode`, and the same cache directory): a load that may fetch an index fetches the
+ * list first when its cached copy is missing or stale, so a machine with no cached list (a fresh
+ * install) learns of a withdrawn key before it trusts an index signed with it.
+ */
+async function withdrawnChannelKeys(
+  options: LoadChannelOptions,
+  env: EnvGet,
+  mode: ChannelMode,
+): Promise<WithdrawnKeys> {
+  if (options.revokedKeys) return { revoked: options.revokedKeys, current: true };
+  const { load = loadRuntimeRevocations, ...over } = options.revocations ?? {};
+  const loaded = await load({
+    mode,
+    env,
+    ...(options.cacheRoot !== undefined ? { cacheRoot: options.cacheRoot } : {}),
+    ...(options.now ? { now: options.now } : {}),
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+    ...(options.netGranted ? { netGranted: options.netGranted } : {}),
+    ...over,
+  });
+  return {
+    revoked: loaded.list?.revokedChannelKeys ?? [],
+    current: !loaded.configured || loaded.list !== null,
+  };
 }
 
 /** Verify `text`, recording an expired index and a withdrawn key in `seen`. */
@@ -893,7 +950,12 @@ function found(
   return absentAs(seen.revokedKey ? "revoked-key" : "unavailable", seen.expired);
 }
 
-/** The keys in force, or why there are none. */
+/**
+ * The keys in force, or why there are none. In a mode that may reach the network (`fetch`,
+ * `force`) the withdrawn keys must be known ({@linkcode WithdrawnKeys.current}): without a
+ * current revoked-runtimes list the channel is absent (`no-revocations`) rather than trusted on
+ * keys that may have been withdrawn. `cache-only` keeps what the machine already verified.
+ */
 async function liveKeys(
   options: LoadChannelOptions,
   env: EnvGet,
@@ -902,7 +964,8 @@ async function liveKeys(
   if (mode === "off" || env(CHANNEL_CHECK_ENV)?.trim() === "0") return "off";
   const keys = [...(options.keys ?? channelKeys(env))];
   if (keys.length === 0) return "no-key";
-  const revoked = options.revokedKeys ?? await cachedRevokedChannelKeys(env);
+  const { revoked, current } = await withdrawnChannelKeys(options, env, mode);
+  if (!current && mode !== "cache-only") return "no-revocations";
   const { live } = await partitionChannelKeys(keys, revoked);
   return live.length === 0 ? "revoked-key" : { keys, revoked };
 }

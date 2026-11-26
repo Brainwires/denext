@@ -420,6 +420,7 @@ async function testServer(key: string, opts: {
   pid?: number;
   appVersion?: string;
   name?: string;
+  port?: number;
 } = {}) {
   const shutdowns: number[] = [];
   const attached: number[] = [];
@@ -430,6 +431,7 @@ async function testServer(key: string, opts: {
       pid: opts.pid ?? 999_999,
       startedAt: 5,
       appVersion: opts.appVersion ?? "1.0.0",
+      ...(opts.port ? { port: opts.port } : {}),
     },
     onShutdown: (g) => {
       shutdowns.push(g);
@@ -572,7 +574,8 @@ Deno.test({
 });
 
 Deno.test({
-  name: "control: an oversized line, a slow handshake and too many pending connections are closed",
+  name:
+    "control: an oversized line and a slow handshake are closed; past the cap the oldest pending connection makes room",
   fn: async () => {
     const key = newDetachedKey();
     const { server } = await testServer(key, { handshakeMs: 300, maxPending: 2 });
@@ -597,13 +600,20 @@ Deno.test({
     // cap (never the budget) can close a connection here.
     const capped = (await testServer(key, { handshakeMs: 60_000, maxPending: 2 })).server;
     try {
+      // Two pending connections fill the cap, accepted in order; a third takes the oldest's place.
       const a = await raw(capped.port);
+      assert(await waitFor(() => capped.pending() === 1, 5000), "one pending");
       const b = await raw(capped.port);
-      // Both are accepted and held pending before the third arrives.
       assert(await waitFor(() => capped.pending() === 2, 5000), "two pending");
       const c = await raw(capped.port);
-      assertEquals(await c.line(5000), null); // closed at once: the cap is full
-      assertEquals(await a.line(100), "timeout"); // still open, waiting for its hello
+      assertEquals(await a.line(5000), null); // the oldest, closed to make room
+      assertEquals(await b.line(100), "timeout"); // still open, waiting for its hello
+      assertEquals(await c.line(100), "timeout");
+      // With the cap held by connections that say nothing, the app still attaches.
+      const session = await connectDetachedControl({ port: capped.port, key, name: "d" });
+      assert(session, "an authenticated client is heard past idle pending connections");
+      assert(await session.ping());
+      session.close();
       a.close();
       b.close();
       c.close();
@@ -765,6 +775,108 @@ Deno.test({
     } finally {
       blocked.close();
       await Deno.remove(data, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "control: a connection closed before ok is asked again after retryMs; an endpoint that cannot prove the key never is",
+  fn: async () => {
+    const key = newDetachedKey();
+    const { server } = await testServer(key, { port: 6200 });
+    // An endpoint that closes every connection at once (a server holding its cap).
+    const closer = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const closerPort = (closer.addr as Deno.NetAddr).port;
+    const closing = (async () => {
+      for await (const conn of closer) conn.close();
+    })().catch(() => {});
+    try {
+      /** A `connect` whose first `closed` connections are closed before any answer. */
+      const flaky = (closed: number) => {
+        const state = { connects: 0 };
+        const connect = (port: number, signal: AbortSignal) =>
+          Deno.connect({
+            hostname: "127.0.0.1",
+            port: state.connects++ < closed ? closerPort : port,
+            signal,
+          });
+        return { state, connect };
+      };
+      const twice = flaky(2);
+      const s = await connectDetachedControl({
+        port: server.port,
+        key,
+        name: "d",
+        retryMs: [10, 10],
+        connect: twice.connect,
+      });
+      assert(s, "the third attempt authenticates");
+      assertEquals(twice.state.connects, 3);
+      assertEquals(s.info.port, 6200); // the sidecar's own port, from the authenticated ok
+      s.close();
+      // Out of attempts: not there.
+      const once = flaky(2);
+      assertEquals(
+        await connectDetachedControl({
+          port: server.port,
+          key,
+          retryMs: [10],
+          connect: once.connect,
+        }),
+        null,
+      );
+      assertEquals(once.state.connects, 2);
+      // The probe reads an endpoint that closed every attempt before its `ok` as stale.
+      const probed = flaky(2);
+      assertEquals(
+        await probeDetachedControl({
+          port: server.port,
+          key,
+          retryMs: [10],
+          connect: probed.connect,
+        }),
+        { state: "stale" },
+      );
+      assertEquals(probed.state.connects, 2);
+      // No retryMs: one attempt, as a fresh start's own connection makes.
+      const none = flaky(1);
+      assertEquals(
+        await connectDetachedControl({ port: server.port, key, connect: none.connect }),
+        null,
+      );
+      assertEquals(none.state.connects, 1);
+      // What answers without proving the key is not asked again.
+      const wrong = flaky(0);
+      assertEquals(
+        await connectDetachedControl({
+          port: server.port,
+          key: newDetachedKey(),
+          retryMs: [10, 10],
+          connect: wrong.connect,
+        }),
+        null,
+      );
+      assertEquals(wrong.state.connects, 1);
+      // Nothing listening is not asked again either.
+      const gone = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+      const gonePort = (gone.addr as Deno.NetAddr).port;
+      gone.close();
+      const absent = flaky(0);
+      assertEquals(
+        await connectDetachedControl({
+          port: gonePort,
+          key,
+          retryMs: [10, 10],
+          connect: absent.connect,
+        }),
+        null,
+      );
+      assertEquals(absent.state.connects, 1);
+    } finally {
+      closer.close();
+      await closing;
+      server.close();
     }
   },
 });
@@ -1177,6 +1289,64 @@ Deno.test({
       assertEquals(await inst.exited, { code: 0 });
       assert(await readDetachedRecord(dir, "daemon")); // detaching keeps it recorded
     } finally {
+      server.close();
+      await Deno.remove(data, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "launcher: a reattached instance's port is the one its authenticated ok reports, whatever the record says",
+  fn: async () => {
+    const data = await tempDir("reattach-port");
+    const dir = detachedRegistryDir(data);
+    const key = newDetachedKey();
+    const { server } = await testServer(key, { name: "daemon", port: 6200 });
+    try {
+      await writeDetachedRecord(dir, record("daemon", server.port, key, { port: 6100 }));
+      const inst = await detachedSidecarLauncher({
+        child: NO_SPAWN,
+        registryDir: dir,
+        appVersion: "1.0.0",
+      })(launchCtx(DAEMON, []));
+      assertEquals([inst.reattached, inst.port], [true, 6200]);
+      inst.detach!();
+      await inst.exited;
+    } finally {
+      server.close();
+      await Deno.remove(data, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "launcher: a running instance is reattached while unauthenticated connections hold its endpoint's cap",
+  fn: async () => {
+    const data = await tempDir("reattach-busy");
+    const dir = detachedRegistryDir(data);
+    const key = newDetachedKey();
+    const { server, shutdowns } = await testServer(key, { name: "daemon" });
+    const idle: Awaited<ReturnType<typeof raw>>[] = [];
+    try {
+      await writeDetachedRecord(dir, record("daemon", server.port, key, {}));
+      // The default cap of connections that never say hello.
+      for (let i = 0; i < 16; i++) idle.push(await raw(server.port));
+      await sleep(50);
+      // No app to spawn: this start succeeds only by reattaching the recorded instance.
+      const inst = await detachedSidecarLauncher({
+        child: NO_SPAWN,
+        registryDir: dir,
+        appVersion: "1.0.0",
+      })(launchCtx(DAEMON, []));
+      assertEquals(inst.reattached, true);
+      assert(await readDetachedRecord(dir, "daemon"), "the record is kept");
+      assertEquals(shutdowns, []);
+      inst.detach!();
+      await inst.exited;
+    } finally {
+      for (const c of idle) c.close();
       server.close();
       await Deno.remove(data, { recursive: true });
     }

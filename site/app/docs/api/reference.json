@@ -21752,7 +21752,7 @@
               "kind": "property",
               "name": "fetchLocal",
               "signature": "fetchLocal?: (src: string, request: Request) => Promise<Response>",
-              "doc": "Fetches the local source `src` (a `/…` path, query included) for this request, in place of\na direct read of `publicDir`: the image is taken from the response when it is a 200, and\nanything else (a 401 / 403, a redirect to a sign-in page, a 404) answers 404. The endpoint\nis served in front of the app, so a direct read is one no `middleware.ts` sees. See\n{@linkcode localImageFetcher}. It runs on every request, before the optimizer's cache."
+              "doc": "Fetches the local source `src` (a `/…` path, query included) for this request, in place of\na direct read of `publicDir`: the image is taken from the response when it is a 200, and\nanything else (a 401 / 403, a redirect to a sign-in page, a 404) answers 404. The endpoint\nis served in front of the app, so a direct read is one no `middleware.ts` sees. See\n{@linkcode localImageFetcher}. It runs on every request, before the optimizer's cache. An\nanswer fetched with the visitor's cookie or `Authorization`, or one the app marks `private`,\n`no-store` or `Vary: Cookie`, is cached under a hash of its bytes, never under the URL alone."
             }
           ]
         },
@@ -24983,7 +24983,7 @@
               "kind": "property",
               "name": "matcher",
               "signature": "matcher?: string | MatcherEntry | (string | MatcherEntry)[]",
-              "doc": "Path pattern(s) the middleware applies to. Omit to run on every request. Syntax:\n`:param` (one segment), `:param*` (zero or more — `/dashboard/:path*` also matches\n`/dashboard`), `:param+` (one or more), `:param?` (optional), a custom pattern\n`:id(\\\\d+)`, an unnamed group `((?!api|_next).*)`, and a bare `*`. A trailing slash is\nalways optional."
+              "doc": "Path pattern(s) the middleware applies to. Omit to run on every request. Syntax:\n`:param` (one segment), `:param*` (zero or more — `/dashboard/:path*` also matches\n`/dashboard`), `:param+` (one or more), `:param?` (optional), a custom pattern\n`:id(\\\\d+)`, an unnamed group `((?!api|_next).*)`, and a bare `*`. A trailing slash is\nalways optional. A path with a percent-encoded separator (`/docs/a%2Fb`) is tested as\nrequested and as the path it decodes to (`/docs/a/b`), which is what a route's param reads."
             }
           ]
         },
@@ -46716,6 +46716,12 @@
             },
             {
               "kind": "property",
+              "name": "unixTokenScope",
+              "signature": "readonly unixTokenScope?: boolean",
+              "doc": "The runtime expands `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE` right after `unix:` in a baked\nnetwork grant (denext's Deno Desktop runtime; `desktopUnixTokenRuntime` detects it), so a\n`unix:$DENO_DESKTOP_DATA/…` entry in `desktop.extraPermissions` or a sidecar's `permissions`\ncan be baked; elsewhere such an entry fails the build (the runtime would refuse to start).\nNeeds `desktop.app.identifier`. Default: `desktopUnixTokenRuntime()`."
+            },
+            {
+              "kind": "property",
               "name": "strictFallback",
               "signature": "readonly strictFallback?: boolean",
               "doc": "What `desktop.permissions: \"strict\"` does when it cannot be honoured (the runtime does not\nexpand the folder tokens, or `desktop.app.identifier` is unset; see\n{@linkcode strictPermissionsProblem}): `false` (the default, every packaging build) throws,\nnaming the reason and the fix; `true` bakes the default unscoped `--allow-read` /\n`--allow-env` instead, for `denext desktop run` / `dev`, which build a local test copy and\nprint a warning. Never set it for a build that ships."
@@ -53784,12 +53790,12 @@
           "slug": "stopSidecars",
           "kind": "function",
           "signature": "stopSidecars(): Promise<void>",
-          "doc": "Stop every sidecar of the app gracefully (their shutdown.graceMs), e.g. before installAppUpdateAndRelaunch() so a backend can finish writing first. The install itself still ends whatever is left. Detached sidecars (detached: true) are stopped too, their processes ended and their registry records removed: there is one behaviour, everything stops.",
-          "docFull": "Stop every sidecar of the app gracefully (their `shutdown.graceMs`), e.g. before\n`installAppUpdateAndRelaunch()` so a backend can finish writing first. The install itself still\nends whatever is left. Detached sidecars (`detached: true`) are stopped too, their processes\nended and their registry records removed: there is one behaviour, everything stops.",
+          "doc": "Stop every sidecar of the app gracefully (their shutdown.graceMs), e.g. before installAppUpdateAndRelaunch() so a backend can finish writing first. The install itself also stops every sidecar and waits for them before it quits. Detached sidecars (detached: true) are stopped too, their processes ended and their registry records removed: there is one behaviour, everything stops.",
+          "docFull": "Stop every sidecar of the app gracefully (their `shutdown.graceMs`), e.g. before\n`installAppUpdateAndRelaunch()` so a backend can finish writing first. The install itself also\nstops every sidecar and waits for them before it quits. Detached sidecars (`detached: true`) are stopped too, their processes\nended and their registry records removed: there is one behaviour, everything stops.",
           "params": [],
           "returns": "Once every sidecar has stopped.",
           "examples": [
-            "```ts\nimport { stopSidecars } from \"denext/desktop\";\nimport { installAppUpdateAndRelaunch } from \"denext/desktop/updater\";\n\nawait stopSidecars();\ninstallAppUpdateAndRelaunch();\n```"
+            "```ts\nimport { stopSidecars } from \"denext/desktop\";\nimport { installAppUpdateAndRelaunch } from \"denext/desktop/updater\";\n\nawait stopSidecars();\nawait installAppUpdateAndRelaunch();\n```"
           ],
           "denextOnly": true
         },
@@ -55217,7 +55223,7 @@
           "name": "AppUpdateErrorCode",
           "slug": "AppUpdateErrorCode",
           "kind": "typeAlias",
-          "signature": "type AppUpdateErrorCode = \"unsupported\" | \"not_configured\" | \"invalid_manifest\" | \"signature\" | \"wrong_app\" | \"downgrade\" | \"rejected\" | \"no_platform\" | \"expired\" | \"replayed\" | \"insecure_url\" | \"size_exceeded\" | \"integrity\" | \"unsafe_archive\" | \"bundle_mismatch\" | \"version_mismatch\" | \"os_signature\" | \"install_not_writable\" | \"unsupported_layout\" | \"not_staged\" | \"busy\" | \"io\"",
+          "signature": "type AppUpdateErrorCode = \"unsupported\" | \"not_configured\" | \"invalid_manifest\" | \"signature\" | \"wrong_app\" | \"downgrade\" | \"rejected\" | \"no_platform\" | \"expired\" | \"replayed\" | \"insecure_url\" | \"size_exceeded\" | \"integrity\" | \"unsafe_archive\" | \"bundle_mismatch\" | \"version_mismatch\" | \"os_signature\" | \"install_not_writable\" | \"unsupported_layout\" | \"not_staged\" | \"busy\" | \"sidecars_running\" | \"io\"",
           "doc": "Why a full-app update step refused (the runtime's codes, plus unsupported).",
           "docFull": "Why a full-app update step refused (the runtime's codes, plus `unsupported`).",
           "params": [],
@@ -55845,16 +55851,16 @@
           "name": "installAppUpdateAndRelaunch",
           "slug": "installAppUpdateAndRelaunch",
           "kind": "function",
-          "signature": "installAppUpdateAndRelaunch(options: { force?: boolean }): { quitting: boolean }",
-          "doc": "Install the staged update: start the swap helper and quit the app (Electron's quitAndInstall). The helper waits for this process to exit, swaps the install, and relaunches the new version, which runDesktop confirms once its window has loaded (or, with desktop.update.autoConfirm: false, the app's own confirmAppUpdate call).",
-          "docFull": "Install the staged update: start the swap helper and quit the app (Electron's\n`quitAndInstall`). The helper waits for this process to exit, swaps the install, and relaunches\nthe new version, which `runDesktop` confirms once its window has loaded (or, with\n`desktop.update.autoConfirm: false`, the app's own {@linkcode confirmAppUpdate} call).\n\nThe app's sidecars (`desktop.sidecars`) are ended first, so none holds the install open (detached\nones are asked to stop and their records removed); to give them their graceful shutdown,\n`await stopSidecars()` (from `denext/desktop`) before calling it.",
+          "signature": "installAppUpdateAndRelaunch(options: { force?: boolean }): Promise<{ quitting: boolean }>",
+          "doc": "Install the staged update: stop the app's sidecars, then start the swap helper and quit the app (Electron's quitAndInstall). The helper waits for this process to exit, swaps the install, and relaunches the new version, which runDesktop confirms once its window has loaded (or, with desktop.update.autoConfirm: false, the app's own confirmAppUpdate call).",
+          "docFull": "Install the staged update: stop the app's sidecars, then start the swap helper and quit the app\n(Electron's `quitAndInstall`). The helper waits for this process to exit, swaps the install, and\nrelaunches the new version, which `runDesktop` confirms once its window has loaded (or, with\n`desktop.update.autoConfirm: false`, the app's own {@linkcode confirmAppUpdate} call).\n\nEvery sidecar (`desktop.sidecars`) is stopped first and waited for, detached ones included (asked\nto shut down within their `shutdown.graceMs`, then ended by force where the app may signal\nprocesses, their records removed), so none still runs the old executable from the install\nfolder when the swap starts, whatever happens to the quit (`force` included).",
           "params": [
             {
               "name": "options",
               "doc": "force: true exits even when a beforequit / close listener refuses."
             }
           ],
-          "returns": "quitting: false when the app refused to quit: the runtime withdraws the install request and the helper stands down, leaving the app as it was. quitting: true also while the window lifecycle holds the quit for its onBeforeQuit guards and onAppQuit hooks: the install is issued again once they ran (unless a guard refuses it).",
+          "returns": "quitting: false when the app refused to quit: the runtime withdraws the install request and the helper stands down (the sidecars stay stopped). quitting: true also while the window lifecycle holds the quit for its onBeforeQuit guards and onAppQuit hooks: the install is issued again once they ran (unless a guard refuses it).",
           "examples": [],
           "denextOnly": true
         },

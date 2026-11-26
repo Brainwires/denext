@@ -15,6 +15,7 @@ import {
   supportsDesktopBakedCapabilities,
   supportsDesktopCacheToken,
   supportsDesktopDataToken,
+  supportsDesktopUnixToken,
   supportsInitialOverlay,
   supportsMacosHiddenMode,
   supportsMacSecureStore,
@@ -226,6 +227,28 @@ export function desktopDataTokenRuntime(
   compiler: DenoIdentity = currentDenoIdentity(),
 ): boolean {
   return pinnedRuntimeHas(env, version, supportsDesktopDataToken) &&
+    compilerBakesAppIdentifier(compiler);
+}
+
+/**
+ * Whether a package script or `denext desktop run` / `dev` in this process builds on a runtime that
+ * expands `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE` right after `unix:` in a baked network grant:
+ * denext's pinned runtime (not `DENEXT_DESKTOP_RUNTIME=stock`, not a local
+ * `DENEXT_DESKTOP_RUNTIME_DIR` build of unknown version) from `FIRST_DESKTOP_UNIX_TOKEN_RUNTIME`,
+ * compiled by a Deno that bakes `desktop.app.identifier`. Elsewhere such a grant is a relative
+ * socket path the runtime refuses at launch.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @param compiler The Deno that compiles the app (default: this process's).
+ * @returns Whether a `unix:` grant in the app's folders may be baked.
+ */
+export function desktopUnixTokenRuntime(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+  compiler: DenoIdentity = currentDenoIdentity(),
+): boolean {
+  return pinnedRuntimeHas(env, version, supportsDesktopUnixToken) &&
     compilerBakesAppIdentifier(compiler);
 }
 

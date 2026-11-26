@@ -58,7 +58,11 @@ import { launchAtLoginCapability } from "../src/desktop/caps/launch-at-login.ts"
 import { systemStatsCapability } from "../src/desktop/caps/system-stats.ts";
 import { updatesCapability } from "../src/desktop/caps/updates.ts";
 import { PickedPaths } from "../src/desktop/picked-paths.ts";
-import { isReservedDataName, refuseReservedDataPath } from "../src/desktop/path-scope.ts";
+import {
+  isReservedCacheName,
+  isReservedDataName,
+  refuseReservedDataPath,
+} from "../src/desktop/path-scope.ts";
 import {
   DIALOG_NAME_ENV,
   dialogsCapability,
@@ -555,6 +559,121 @@ Deno.test("fs/shell/drag SECURITY: the engine profile dirs are unreachable for e
       }
     }
     assertEquals(spawned.length, 0);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("fs/shell SECURITY: the sidecar registry, the IPC folder and a sidecar's unpacked packages are unreachable for every operation", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-fs-sidecars-" });
+  try {
+    const data = join(root, "data");
+    const cache = join(root, "cache");
+    const pkg = join(cache, "sidecars", "api", "modules-0123456789abcdef", "node_modules", "pkg");
+    await Deno.mkdir(join(data, "sidecars"), { recursive: true });
+    await Deno.mkdir(join(data, "ipc"), { recursive: true });
+    await Deno.mkdir(pkg, { recursive: true });
+    await Deno.writeTextFile(join(data, "sidecars", "api.json"), '{"key":"k"}');
+    await Deno.writeTextFile(join(data, "ipc", "app.sock"), "");
+    await Deno.writeTextFile(join(pkg, "index.js"), "module.exports = 1;");
+    await Deno.writeTextFile(join(data, "notes.txt"), "mine");
+    await Deno.writeTextFile(join(cache, "thumb.bin"), "mine");
+    const dirs = { data, cache, documents: join(root, "d") };
+    const cap = fsCapability({
+      dirs,
+      read: new Set(["$APPDATA", "$CACHE"]),
+      write: new Set(["$APPDATA", "$CACHE"]),
+    });
+    const refused = async (method: string, args: Record<string, unknown>) => {
+      const err = await assertRejects(() => call(cap, method, args), DesktopCapError);
+      assertEquals(err.code, "forbidden", `${method} ${JSON.stringify(args)}`);
+    };
+    const modules = "sidecars/api/modules-0123456789abcdef/node_modules/pkg/index.js";
+    const targets: [string, string][] = [
+      ["data", "sidecars/api.json"],
+      ["data", "SideCars/api.json"],
+      ["data", "sidecars./api.json"],
+      ["data", "notes/../sidecars/api.json"],
+      ["data", "sidecars/new.json"],
+      ["data", "ipc/app.sock"],
+      ["data", "IPC/other.sock"],
+      ["cache", modules],
+      ["cache", modules.toUpperCase()],
+      ["cache", "x/../" + modules],
+      ["cache", "sidecars/api/modules-0123456789abcdef/.complete"],
+      ["cache", "sidecars/other/modules-ffff/node_modules/p/index.js"],
+    ];
+    for (const [directory, path] of targets) {
+      await refused("readFile", { path, directory });
+      await refused("writeFile", { path, data: "x", directory, recursive: true });
+      await refused("deleteFile", { path, directory });
+    }
+    for (
+      const [directory, path] of [["data", "sidecars"], ["data", "ipc"], ["cache", "sidecars"]]
+    ) {
+      await refused("listDir", { path, directory });
+    }
+    // The roots' listings leave them out; the app's own files stay visible and usable.
+    const names = async (directory: string) =>
+      ((await call(cap, "listDir", { path: "", directory })) as { name: string }[])
+        .map((e) => e.name).sort();
+    assertEquals(await names("data"), ["notes.txt"]);
+    assertEquals(await names("cache"), ["thumb.bin"]);
+    assertEquals(await call(cap, "readFile", { path: "thumb.bin", directory: "cache" }), "mine");
+    await call(cap, "writeFile", { path: "sidecars-notes.txt", data: "ok", directory: "cache" });
+    // A name the cache reserves is the app's own under the data folder, and the other way round.
+    await call(cap, "writeFile", {
+      path: "ipc/a.txt",
+      data: "ok",
+      directory: "cache",
+      recursive: true,
+    });
+
+    // shell: open / reveal / trash of an absolute path there.
+    const spawned: string[][] = [];
+    const shell = shellCapability({
+      dirs,
+      config: { openExternal: [], openPath: true, reveal: true, trash: true },
+      spawn: (_c, args) => {
+        spawned.push(args);
+        return Promise.resolve();
+      },
+    });
+    for (const method of ["openPath", "reveal", "trash"]) {
+      for (
+        const p of [
+          join(data, "sidecars"),
+          join(data, "sidecars", "api.json"),
+          join(data, "ipc", "app.sock"),
+          join(cache, "sidecars"),
+          join(pkg, "index.js"),
+        ]
+      ) {
+        await assertRejects(() => call(shell, method, { path: p }), DesktopCapError);
+      }
+    }
+    assertEquals(spawned.length, 0);
+    assertEquals(await Deno.readTextFile(join(data, "sidecars", "api.json")), '{"key":"k"}');
+    assertEquals(await Deno.readTextFile(join(pkg, "index.js")), "module.exports = 1;");
+
+    // The path helper itself: by the path as given and by its real path, and only with a cache dir.
+    await assertRejects(() => refuseReservedDataPath(data, join(pkg, "index.js"), cache));
+    await refuseReservedDataPath(data, join(pkg, "index.js"));
+    await refuseReservedDataPath(data, join(cache, "thumb.bin"), cache);
+    assert(isReservedDataName("Sidecars") && isReservedDataName("ipc"));
+    assert(isReservedCacheName("SIDECARS.") && !isReservedCacheName("ipc"));
+    if (Deno.build.os !== "windows") {
+      const alias = join(root, "cache-alias");
+      await Deno.symlink(cache, alias);
+      await assertRejects(
+        () => refuseReservedDataPath(data, join(alias, "sidecars", "api"), cache),
+        DesktopCapError,
+      );
+      await assertRejects(
+        () => refuseReservedDataPath(data, join(cache, "sidecars", "api"), alias),
+        DesktopCapError,
+      );
+    }
   } finally {
     await Deno.remove(root, { recursive: true });
   }

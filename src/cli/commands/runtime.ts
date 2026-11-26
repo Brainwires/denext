@@ -64,7 +64,12 @@ import {
   type RuntimeChannelRelease,
 } from "../../build/runtime-channel.ts";
 import {
+  findRevocation,
+  loadRuntimeRevocations,
   revocationStatusLine,
+  revokedChoiceRefusal,
+  revokesVersion,
+  type RuntimeRevocationList,
   type RuntimeRevocationStatus,
 } from "../../build/runtime-revocations.ts";
 import { compareDenoVersions, MIN_RUNTIME } from "../../build/deno-version.ts";
@@ -225,6 +230,9 @@ const ABSENCE_TEXT: Record<ChannelAbsence, string> = {
   off: "the runtime channel is turned off (DENEXT_RUNTIME_CHANNEL=0)",
   "no-key": "this denext carries no runtime channel key",
   "revoked-key": "the runtime channel's key was withdrawn (the revoked-runtimes list names it)",
+  "no-revocations":
+    "the revoked-runtimes list can't be had (offline, or no current copy verifies), so the " +
+    "runtime channel's keys can't be checked",
   unavailable: "the runtime channel is unavailable (offline, or no copy verifies)",
   expired: "the runtime channel's index has expired (nothing newer could be fetched)",
 };
@@ -330,12 +338,52 @@ async function findRelease(rt: Rt, version: string): Promise<FoundRelease> {
   }
 }
 
-/** Refuse a release this denext does not run on; warn about a withdrawn one. */
-function checkRunnable(rt: Rt, found: FoundRelease): void {
+/**
+ * The revoked-runtimes list in force, read the way the channel's loader reads it (the same cache
+ * and seams; the network only when the cached copy is stale). `null`: none can be had, or the
+ * check is off.
+ */
+async function revokedList(rt: Rt): Promise<RuntimeRevocationList | null> {
+  const { load = loadRuntimeRevocations, ...over } = rt.channel.revocations ?? {};
+  const { list } = await load({
+    mode: "fetch",
+    env: rt.env,
+    cacheRoot: rt.cacheRoot,
+    now: rt.now,
+    ...(rt.channel.fetch ? { fetch: rt.channel.fetch } : {}),
+    ...(rt.channel.netGranted ? { netGranted: rt.channel.netGranted } : {}),
+    ...over,
+  });
+  return list;
+}
+
+/**
+ * Refuse a release the revoked-runtimes list revokes for this host (unless
+ * `DENEXT_ALLOW_REVOKED_RUNTIME` names it); warn about one it revokes for other targets only.
+ */
+async function checkNotRevoked(rt: Rt, version: string): Promise<void> {
+  const list = await revokedList(rt);
+  if (!revokesVersion(list, version)) return;
+  const triple = Deno.build.target;
+  const hit = findRevocation(list, "cli", version, triple) ??
+    findRevocation(list, "desktop", version, triple);
+  const refusal = hit ? revokedChoiceRefusal(hit, triple, rt.env) : null;
+  if (refusal) throw new RuntimeCliError(refusal);
+  rt.warn(
+    hit
+      ? `denext: runtime ${version} is revoked for ${triple} (${hit.reason}); taking it anyway.`
+      : `denext: runtime ${version} is revoked for other targets; \`denext runtime upgrade\` ` +
+        "moves to a release that is not revoked.",
+  );
+}
+
+/** Refuse a release this denext does not run on or that is revoked; warn about a withdrawn one. */
+async function checkRunnable(rt: Rt, found: FoundRelease): Promise<void> {
   if (found.bundled) return;
   const facts = found.entry ? factsOfEntry(found.entry) : factsOfPins(found.pins);
   const bad = runtimeIncompatibility(facts, rt.compat);
   if (bad) throw new RuntimeCliError(`denext: ${bad.message}.`);
+  await checkNotRevoked(rt, found.lock.version);
   if (found.entry?.yanked) {
     rt.warn(
       `denext: runtime ${found.lock.version} was withdrawn (${found.entry.yanked.reason}); ` +
@@ -448,7 +496,12 @@ async function floatingPick(
   releases: readonly RuntimeChannelRelease[],
 ): Promise<FloatingPick> {
   const rule = await rt.rule(rt.dir, new Date(rt.now()));
-  const { pick, held } = newestAvailableRelease(releases, { rule, compat: rt.compat });
+  const list = await revokedList(rt);
+  const { pick, held } = newestAvailableRelease(releases, {
+    rule,
+    compat: rt.compat,
+    revoked: (version) => revokesVersion(list, version),
+  });
   return { pick, held, needsDenext: needsNewerDenext(rt, releases, pick?.version ?? null), rule };
 }
 
@@ -509,7 +562,7 @@ async function adopt(
   held: boolean,
 ): Promise<{ installed: Installed; configPath: string | null; lock: RuntimeLock }> {
   const found = await findRelease(rt, entry.version);
-  checkRunnable(rt, found);
+  await checkRunnable(rt, found);
   const installed = await installFound(rt, found);
   const configPath = scope.project ? await writeProjectPin(rt, found.lock) : null;
   if (!scope.project) await writeDefault(rt, { ...found.lock, held });
@@ -685,7 +738,7 @@ async function chooseRelease(rt: Rt, ctx: CommandContext): Promise<number> {
   if (wanted === "bundled") return await pinBundled(rt, scope);
   if (wanted === "latest") return await pinLatest(rt, scope);
   const found = await findRelease(rt, wanted);
-  checkRunnable(rt, found);
+  await checkRunnable(rt, found);
   await installFound(rt, found);
   const configPath = scope.project ? await writeProjectPin(rt, found.lock) : null;
   if (!scope.project) await writeDefault(rt, { ...found.lock, held: true });
@@ -761,7 +814,7 @@ async function installSelected(rt: Rt): Promise<void> {
 /** `install <version>`: that release (an explicit choice: no hold). */
 async function installVersion(rt: Rt, version: string): Promise<void> {
   const found = await findRelease(rt, version);
-  checkRunnable(rt, found);
+  await checkRunnable(rt, found);
   const installed = await installFound(rt, found);
   rt.log(
     `  denext's runtime ${installed.version}: ${installed.deno}${

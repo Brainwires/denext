@@ -147,7 +147,8 @@ export interface MiddlewareConfig {
    * `:param` (one segment), `:param*` (zero or more — `/dashboard/:path*` also matches
    * `/dashboard`), `:param+` (one or more), `:param?` (optional), a custom pattern
    * `:id(\\d+)`, an unnamed group `((?!api|_next).*)`, and a bare `*`. A trailing slash is
-   * always optional.
+   * always optional. A path with a percent-encoded separator (`/docs/a%2Fb`) is tested as
+   * requested and as the path it decodes to (`/docs/a/b`), which is what a route's param reads.
    */
   matcher?: string | MatcherEntry | (string | MatcherEntry)[];
 }
@@ -406,10 +407,35 @@ export interface MatchContext {
   url: URL;
 }
 
+/** A percent-encoded path separator (`%2F`, `%5C`), in either hex case. */
+const ENCODED_SEPARATOR = /%(?:2f|5c)/gi;
+
+/**
+ * The spellings of `pathname` a path pattern is tested against: the path as requested, and, when
+ * it holds a percent-encoded separator, the path its segments decode to. A dynamic or catch-all
+ * segment's param is decoded after matching, so `/docs/a%2Fb` gives a route the param `a/b`; a
+ * pattern anchored on `/docs/a/:path*` has to see that path too. In the decoded spelling `.` and
+ * `..` segments are resolved and runs of `/` collapsed, as for any request path.
+ *
+ * @param pathname The request pathname.
+ * @returns The pathname alone, or the pathname and its decoded spelling.
+ */
+export function matcherSpellings(pathname: string): string[] {
+  if (!pathname.includes("%")) return [pathname];
+  const spelled = pathname.replace(ENCODED_SEPARATOR, "/");
+  if (spelled === pathname) return [pathname];
+  let decoded = spelled;
+  try {
+    decoded = new URL("http://localhost" + spelled).pathname;
+  } catch { /* not a URL path: tested as spelled */ }
+  return [pathname, decoded.replace(/\/{2,}/g, "/")];
+}
+
 /**
  * Does `pathname` match any of the configured matchers (or all if none)? An object entry's
  * `has`/`missing` conditions are checked against `ctx` when given; a caller with no request
- * at hand (a path-only check) evaluates the path alone.
+ * at hand (a path-only check) evaluates the path alone. A path with a percent-encoded separator
+ * matches when either of its spellings does ({@linkcode matcherSpellings}).
  */
 export function matches(
   config: MiddlewareConfig | undefined,
@@ -419,9 +445,12 @@ export function matches(
   const matcher = config?.matcher;
   if (!matcher) return true;
   const entries = Array.isArray(matcher) ? matcher : [matcher];
+  const spellings = matcherSpellings(pathname);
   return entries.some((e) => {
     const source = typeof e === "string" ? e : e?.source;
-    if (typeof source !== "string" || !compiledMatcher(source).test(pathname)) return false;
+    if (typeof source !== "string") return false;
+    const compiled = compiledMatcher(source);
+    if (!spellings.some((spelling) => compiled.test(spelling))) return false;
     return typeof e === "string" || !ctx || conditionsHold(e, ctx);
   });
 }

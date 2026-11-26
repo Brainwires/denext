@@ -84,11 +84,17 @@ export interface StaticPathsResult {
 
 /** Outcome of resolving a page's data (shared by the HTML and JSON paths). */
 export type DataOutcome =
-  | { kind: "props"; pageProps: Record<string, unknown>; isServer: boolean }
-  | { kind: "redirect"; destination: string; permanent: boolean; statusCode?: number }
-  | { kind: "notFound" }
-  /** A `getStaticPaths` `fallback: true` shell: render props-less, client fetches data. */
-  | { kind: "fallback" };
+  & (
+    | { kind: "props"; pageProps: Record<string, unknown>; isServer: boolean }
+    | { kind: "redirect"; destination: string; permanent: boolean; statusCode?: number }
+    | { kind: "notFound" }
+    /** A `getStaticPaths` `fallback: true` shell: render props-less, client fetches data. */
+    | { kind: "fallback" }
+  )
+  & {
+    /** Resolved under Preview Mode (a valid preview cookie): the answer is that visitor's alone. */
+    preview?: boolean;
+  };
 
 /** True when `params` matches one of `getStaticPaths`' pre-listed param sets. */
 export function paramsListed(
@@ -206,7 +212,7 @@ export async function bundleUrls(
 
 /**
  * `Cache-Control` for an answer computed for one request (`getServerSideProps`,
- * `getInitialProps`): Next.js's own value. Without it a cache in front that stores what carries
+ * `getInitialProps`, a Preview Mode render): Next.js's own value. Without it a cache in front that stores what carries
  * no header (Varnish and Fastly do by default) would hand one visitor's page to the next.
  */
 const PER_REQUEST_CACHE_CONTROL = "private, no-cache, no-store, max-age=0, must-revalidate";
@@ -216,7 +222,8 @@ const PER_REQUEST_CACHE_CONTROL = "private, no-cache, no-store, max-age=0, must-
  * `Cache-Control` (`context.res.setHeader`, applied before this).
  *
  * @param res The response.
- * @param perRequest Whether the page's data came from `getServerSideProps` / `getInitialProps`.
+ * @param perRequest Whether the page's data came from `getServerSideProps` / `getInitialProps`,
+ *   or was resolved under Preview Mode.
  * @returns `res`.
  */
 export function withRequestCacheControl(res: Response, perRequest: boolean): Response {

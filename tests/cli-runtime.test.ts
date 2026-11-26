@@ -39,9 +39,16 @@ import {
   type RuntimeReleaseDocument,
   signRuntimeChannel,
 } from "../src/build/runtime-channel.ts";
+import {
+  freshRevocationList,
+  loadRuntimeRevocations,
+  REVOCATION_URLS,
+  type RuntimeRevocation,
+  signRevocationList,
+} from "../src/build/runtime-revocations.ts";
 import type { DenoToolchainPin } from "../src/build/deno-toolchain.ts";
 import { toBase64 } from "../src/build/ota-signing.ts";
-import { sha256Hex } from "../src/build/signed-envelope.ts";
+import { sha256Hex, spkiSha256 } from "../src/build/signed-envelope.ts";
 
 const BUNDLED = BUNDLED_RUNTIME.toolchain.version!;
 const V31 = "3.0.0-denext.31";
@@ -116,6 +123,17 @@ interface World {
   offline: boolean;
   deps(over?: Partial<RuntimeCliDeps>): RuntimeCliDeps;
   serve(fixtures: Fixture[], signer?: CryptoKey): Promise<void>;
+  /** The channel's own public key (as the keys file holds it). */
+  readonly channelKey: string;
+  /**
+   * Serve a revoked-runtimes list signed now: the `revoked` releases, and the withdrawn channel
+   * keys `withdrawn` (SPKI SHA-256 hex).
+   */
+  serveRevocations(
+    list?: { revoked?: RuntimeRevocation[]; withdrawn?: string[] },
+  ): Promise<void>;
+  /** Stop serving the revoked-runtimes list. */
+  dropRevocations(): void;
 }
 
 const TOOLS: ToolsStatus = {
@@ -151,13 +169,23 @@ const TOOLS: ToolsStatus = {
   fastlane: { ok: true, state: "missing", detail: "fastlane missing", path: "/f", version: "2" },
 } as unknown as ToolsStatus;
 
-async function withWorld(fn: (w: World) => Promise<void>): Promise<void> {
+/**
+ * Run `fn` in a fresh world. The revoked-runtimes list is served (signed by the world's own
+ * revocation key, naming nothing) and, unless `fresh`, already cached: a machine that has run
+ * denext before. `fresh` is a machine with no cached list.
+ */
+async function withWorld(
+  fn: (w: World) => Promise<void>,
+  { fresh = false }: { fresh?: boolean } = {},
+): Promise<void> {
   const root = await Deno.makeTempDir({ prefix: "denext-cli-runtime-" });
   const cacheRoot = join(root, "deno-dir", "denext-deno");
   const project = join(root, "app");
   await Deno.mkdir(join(project, ".git"), { recursive: true });
   await Deno.writeTextFile(join(project, "deno.json"), "{}\n");
   const keys = await keyPair();
+  const revocationKeys = await keyPair();
+  let lastList: { sequence: number } | undefined;
   const keysFile = join(root, "keys.json");
   await Deno.writeTextFile(keysFile, JSON.stringify([keys.pub]));
   const vars: Record<string, string> = {
@@ -188,7 +216,11 @@ async function withWorld(fn: (w: World) => Promise<void>): Promise<void> {
         cacheRoot,
         target: TARGET,
         rule: () => Promise.resolve({ cutoff: new Date(Date.now() - DAY) }),
-        channel: { fetch: fetchFake, netGranted: () => Promise.resolve(true) },
+        channel: {
+          fetch: fetchFake,
+          netGranted: () => Promise.resolve(true),
+          revocations: { keys: [revocationKeys.pub] },
+        },
         ensure: (pin: DenoToolchainPin, at: string) => {
           w.installed.push(pin.version!);
           return Promise.resolve({
@@ -211,7 +243,31 @@ async function withWorld(fn: (w: World) => Promise<void>): Promise<void> {
         for (const url of releaseDocumentUrls(f.entry.version)) served.set(url, f.text);
       }
     },
+    channelKey: keys.pub,
+    async serveRevocations({ revoked = [], withdrawn = [] } = {}) {
+      // A sequence above the last one, whatever the clock's second says.
+      const list = freshRevocationList(revoked, new Date(), lastList, withdrawn);
+      lastList = list;
+      const text = JSON.stringify(await signRevocationList(list, revocationKeys.priv));
+      for (const url of REVOCATION_URLS) served.set(url, text);
+    },
+    dropRevocations() {
+      for (const url of REVOCATION_URLS) served.delete(url);
+    },
   };
+  await w.serveRevocations();
+  if (!fresh) {
+    const { fetch, netGranted } = w.deps().channel!;
+    const primed = await loadRuntimeRevocations({
+      mode: "force",
+      env: (k) => vars[k],
+      cacheRoot,
+      keys: [revocationKeys.pub],
+      fetch,
+      netGranted,
+    });
+    assertEquals(primed.source, "network");
+  }
   try {
     await fn(w);
   } finally {
@@ -409,6 +465,85 @@ Deno.test("runtime upgrade: offline, unsigned or signed by another key — fails
     assertEquals(w.installed, []);
     assertEquals(readUserRuntimeDefaultFile(w.defaultFile), null);
   });
+});
+
+Deno.test("runtime upgrade / use latest: a release the revoked-runtimes list names is never the pick; choosing it by name is refused", async () => {
+  await withWorld(async (w) => {
+    const newest = await release(V33);
+    const older = await release(V32);
+    await w.serve([newest, older]);
+    await w.serveRevocations({
+      revoked: [{ component: "cli", version: V33, reason: "a bad build", advisory: "https://x/a" }],
+    });
+    // The floating pick passes over the revoked newest release.
+    assertEquals(await run(w, ["upgrade"], { "dry-run": true }), 0, text(w.err));
+    assertStringIncludes(text(w.out), V32);
+    assert(!text(w.out).includes(V33), text(w.out));
+    assertEquals(await run(w, ["upgrade"], { project: true }), 0, text(w.err));
+    assertEquals((await projectPin(w))?.version, V32);
+    assertEquals(await run(w, ["use", "latest"]), 0, text(w.err));
+    assertEquals(readUserRuntimeDefaultFile(w.defaultFile)?.version, V32);
+    assertEquals(w.installed.includes(V33), false);
+    // Named outright it is refused, with the reason and the way round; nothing is written.
+    for (const verb of [["use", V33], ["use", V33, "--project"], ["install", V33]]) {
+      const flags = verb.includes("--project") ? { project: true } : {};
+      assertEquals(await run(w, verb.filter((a) => !a.startsWith("--")), flags), 1, verb.join(" "));
+      assertStringIncludes(text(w.err), `runtime ${V33} is revoked for`);
+      assertStringIncludes(text(w.err), "a bad build; https://x/a");
+      assertStringIncludes(text(w.err), `DENEXT_ALLOW_REVOKED_RUNTIME=${V33}`);
+    }
+    assertEquals(w.installed.includes(V33), false);
+    assertEquals(readUserRuntimeDefaultFile(w.defaultFile)?.version, V32);
+    assertEquals((await projectPin(w))?.version, V32);
+    // The documented override takes it, with a warning.
+    const allow = w.deps();
+    const env = (k: string) => k === "DENEXT_ALLOW_REVOKED_RUNTIME" ? V33 : allow.env!(k);
+    assertEquals(await run(w, ["install", V33], {}, false, { env }), 0, text(w.err));
+    assertStringIncludes(text(w.err), "taking it anyway");
+    assertEquals(w.installed.includes(V33), true);
+    // A release revoked for other targets only is taken by name, with a warning.
+    await w.serveRevocations({
+      revoked: [{
+        component: "desktop",
+        version: V32,
+        targets: ["no-such-target-triple"],
+        reason: "elsewhere",
+      }],
+    });
+    assertEquals(await run(w, ["upgrade"], { "dry-run": true }), 0, text(w.err)); // re-reads the list
+    assertStringIncludes(text(w.out), V33); // V33 is no longer revoked; V32 is, somewhere
+    assertEquals(await run(w, ["use", V32]), 0, text(w.err));
+    assertStringIncludes(text(w.err), `runtime ${V32} is revoked for other targets`);
+  });
+});
+
+Deno.test("runtime upgrade on a machine with no cached revoked-runtimes list: the list comes first; a withdrawn channel key or no list changes nothing", async () => {
+  // The channel's key was withdrawn: its index is not taken, on the very first run.
+  await withWorld(async (w) => {
+    await w.serve([await release(V31)]);
+    await w.serveRevocations({ withdrawn: [(await spkiSha256(w.channelKey))!] });
+    for (const verb of [["upgrade"], ["use", "latest"], ["use", V31], ["install", V31]]) {
+      assertEquals(await run(w, verb), 1, verb.join(" "));
+      assertStringIncludes(text(w.err), "the runtime channel's key was withdrawn", verb.join(" "));
+    }
+    assertEquals(w.installed, []);
+    assertEquals(readUserRuntimeDefaultFile(w.defaultFile), null);
+  }, { fresh: true });
+  // No list to be had: nothing is taken from the channel either, and the reason is said.
+  await withWorld(async (w) => {
+    await w.serve([await release(V31)]);
+    w.dropRevocations();
+    for (const verb of [["upgrade"], ["use", "latest"], ["use", V31], ["install", V31]]) {
+      assertEquals(await run(w, verb), 1, verb.join(" "));
+      assertStringIncludes(text(w.err), "the revoked-runtimes list can't be had", verb.join(" "));
+    }
+    assertEquals(w.installed, []);
+    assertEquals(readUserRuntimeDefaultFile(w.defaultFile), null);
+    // Once the list is served, the same machine upgrades.
+    await w.serveRevocations();
+    assertEquals(await run(w, ["upgrade"]), 0, text(w.err));
+    assertEquals(w.installed, [V31]);
+  }, { fresh: true });
 });
 
 /** Give every toolchain target of `doc` another esbuild. */

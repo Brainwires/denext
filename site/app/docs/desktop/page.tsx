@@ -2458,11 +2458,14 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>fs</code>, <code>shell</code>{" "}
         and drag-out never reach the runtime's own folders in the data directory (the updater's{" "}
         <code>ui-updates</code>, the download records&apos; <code>denext-transfers</code>{" "}
-        (a live record holds its non-credential request headers), and the web engine's profile:{" "}
-        <code>CEF</code>, <code>WebKitGTK</code>,{" "}
-        <code>WebView2</code>, in any letter case): no read, list, write, delete, open, reveal,
-        trash or drag. SQLite connections cannot <code>ATTACH</code> another file, and a{" "}
-        <code>query</code>{" "}
+        (a live record holds its non-credential request headers), the detached-sidecar registry{" "}
+        <code>sidecars</code>, the local IPC sockets&apos;{" "}
+        <code>ipc</code>, and the web engine's profile: <code>CEF</code>, <code>WebKitGTK</code>,
+        {" "}
+        <code>WebView2</code>, in any letter case) nor <code>sidecars</code>{" "}
+        in the cache directory (the packages a bundled sidecar loads): no read, list, write, delete,
+        open, reveal, trash or drag. SQLite connections cannot <code>ATTACH</code>{" "}
+        another file, and a <code>query</code>{" "}
         stops after 20 seconds of producing rows (a single long statement still blocks the app,
         since <code>node:sqlite</code>{" "}
         cannot be interrupted). A reload releases the previous page's keep-awake holds.
@@ -6246,7 +6249,10 @@ sc.ready();`}
         server&apos;s nonces, an HMAC-SHA256 from each side over a label, its role and both nonces,
         checked in constant time. Any failure closes the socket with no detail; a line is at most 8
         KiB, a handshake must finish within 5 s, and at most 16 connections may be waiting to
-        authenticate. An open authenticated connection is an attachment.
+        authenticate (one more closes the oldest of them, and an app whose connection was closed
+        before the answer asks again three times before it calls the record stale). A reattached
+        sidecar&apos;s port is the one it reports over the authenticated connection. An open
+        authenticated connection is an attachment.
       </p>
       <h4 id="desktop-sidecars-detached-orphans">What ends a detached sidecar</h4>
       <ul>
@@ -6523,11 +6529,40 @@ for await (const chunk of conn.readable) console.log(chunk);`}
         <code>--allow-net-listen</code> / <code>--allow-net-connect</code>{" "}
         with the split flags), on Windows as on Unix. A refused check rejects with{" "}
         <code>NotCapable</code> naming the grants for that path. A <code>unix:</code>{" "}
-        grant names one exact path, and <code>desktop.extraPermissions.net</code> /{" "}
-        <code>netListen</code> / <code>netConnect</code> accept a <code>unix:</code>{" "}
-        entry only with an absolute path (anything else is a config error), so the per-user path of
-        a packaged app isn&apos;t baked there. An app that serves a channel in its data folder
-        grants the folder and the direction:
+        grant names one exact path: an absolute one, or one in the app&apos;s own folders written
+        with the folder token right after <code>unix:</code> (<code>
+          unix:$DENO_DESKTOP_DATA/ipc/ctl.sock
+        </code>,{" "}
+        <code>unix:$DENO_DESKTOP_CACHE/…</code>), which a runtime that expands the token in a
+        network grant turns into the per-user path at launch, as it does a read or write grant.{" "}
+        <code>desktop.extraPermissions.net</code> / <code>netListen</code> / <code>netConnect</code>
+        {" "}
+        and a sidecar&apos;s <code>permissions</code>{" "}
+        accept those two forms only; anything else (<code>$APPDATA</code>, a relative path, a{" "}
+        <code>..</code>{" "}
+        segment) is a config error, since the runtime would refuse to start. A token entry needs
+        {" "}
+        <code>desktop.app.identifier</code>{" "}
+        and denext&apos;s pinned runtime; a build on a runtime that does not expand it (the stock
+        runtime, a local runtime build) fails instead of baking a grant the app would refuse. On
+        macOS and Linux an app that serves a channel at <code>localIpcPath(name)</code>{" "}
+        (its data folder&apos;s{" "}
+        <code>ipc/&lt;name&gt;.sock</code>) grants that socket and the folder:
+      </p>
+      <Code lang="ts">
+        {`desktop: {
+  app: { identifier: "com.acme.app" },
+  extraPermissions: {
+    write: ["$APPDATA/ipc"],   // and read, under desktop.permissions: "strict"
+    netListen: ["unix:$DENO_DESKTOP_DATA/ipc/ctl.sock"], // the server
+    netConnect: ["unix:$DENO_DESKTOP_DATA/ipc/ctl.sock"], // a client in the app
+  },
+},`}
+      </Code>
+      <p>
+        A Windows pipe (<code>\\.\pipe\&lt;appId&gt;.&lt;user&gt;.&lt;name&gt;</code>) is not in a
+        folder and its name holds a per-user token, so a Windows build, or a socket outside the
+        app&apos;s folders, grants the direction instead:
       </p>
       <Code lang="ts">
         {`desktop: {

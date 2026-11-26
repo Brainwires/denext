@@ -132,6 +132,10 @@ export async function confineWithinRoots(abs: string, roots: readonly string[]):
  * - `denext-transfers` holds the `fs` capability's download records (`caps/transfer-records.ts`):
  *   a live one carries its request headers (an `Authorization`, say), and a page that could write
  *   there would point a resume at another URL or file.
+ * - `sidecars` is the detached-sidecar registry (`sidecar-detached.ts`): each record carries a
+ *   sidecar's control key and its resolved secrets, and the app reads it back at its next launch.
+ * - `ipc` holds the app's local IPC sockets (`local-ipc.ts`), which only the processes that
+ *   listen on them create or remove.
  *
  * Lower-case: names are compared case-insensitively.
  */
@@ -141,7 +145,21 @@ const RESERVED_DATA_SUBDIRS: readonly string[] = [
   "webkitgtk",
   "webview2",
   "denext-transfers",
+  "sidecars",
+  "ipc",
 ];
+
+/**
+ * Sub-directories of the app's `cache` directory the RUNTIME owns, reserved like
+ * {@link RESERVED_DATA_SUBDIRS}: `sidecars` holds the packages a bundled sidecar loads
+ * (`sidecar-modules.ts`, unpacked once per version), which are code the sidecar runs.
+ */
+const RESERVED_CACHE_SUBDIRS: readonly string[] = ["sidecars"];
+
+/** A directory-entry name as the file system compares it (see {@link isReservedDataName}). */
+function bareName(name: string): string {
+  return name.split(":")[0].replace(/[. ]+$/, "").toLowerCase();
+}
 
 /**
  * Whether a directory-entry name in the data root is a runtime-owned one (see
@@ -153,16 +171,42 @@ const RESERVED_DATA_SUBDIRS: readonly string[] = [
  * @returns Whether it names a reserved sub-directory.
  */
 export function isReservedDataName(name: string): boolean {
-  const bare = name.split(":")[0].replace(/[. ]+$/, "").toLowerCase();
-  return RESERVED_DATA_SUBDIRS.includes(bare);
+  return RESERVED_DATA_SUBDIRS.includes(bareName(name));
 }
 
-/** The reserved first segment of `target` under `dataDir`, if it has one. */
-function reservedSegment(dataDir: string, target: string): string | undefined {
-  const rel = relative(dataDir, target);
+/**
+ * Whether a directory-entry name in the cache root is a runtime-owned one (see
+ * {@link RESERVED_CACHE_SUBDIRS}), compared as {@link isReservedDataName} compares.
+ *
+ * @param name One path segment.
+ * @returns Whether it names a reserved sub-directory.
+ */
+export function isReservedCacheName(name: string): boolean {
+  return RESERVED_CACHE_SUBDIRS.includes(bareName(name));
+}
+
+/** The first segment of `target` under `root` that `reserved` names, if it has one. */
+function reservedSegment(
+  root: string,
+  target: string,
+  reserved: (name: string) => boolean,
+): string | undefined {
+  const rel = relative(root, target);
   if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return undefined;
   const first = rel.split(/[\\/]/)[0];
-  return isReservedDataName(first) ? first : undefined;
+  return reserved(first) ? first : undefined;
+}
+
+/** The reserved first segment of `target` under the data root or (when given) the cache root. */
+function reservedIn(
+  dataDir: string | undefined,
+  cacheDir: string | undefined,
+  target: string,
+): string | undefined {
+  return (dataDir === undefined
+    ? undefined
+    : reservedSegment(dataDir, target, isReservedDataName)) ??
+    (cacheDir === undefined ? undefined : reservedSegment(cacheDir, target, isReservedCacheName));
 }
 
 /**
@@ -201,21 +245,28 @@ async function inReservedRuntimeDir(target: string): Promise<boolean> {
 
 /**
  * Refuse a path inside a runtime-owned sub-directory of `dataDir` (see
- * {@link RESERVED_DATA_SUBDIRS}) or a directory reserved with {@link reserveRuntimeDir}, for EVERY
- * operation. Checked on the path as given AND on its real path against the real data directory, so
- * neither another spelling of the data directory (a symlinked ancestor, `/var` vs `/private/var`)
- * nor a short (8.3) name on Windows reaches it.
+ * {@link RESERVED_DATA_SUBDIRS}) or of `cacheDir` ({@link RESERVED_CACHE_SUBDIRS}), or a directory
+ * reserved with {@link reserveRuntimeDir}, for EVERY operation. Checked on the path as given AND on
+ * its real path against the real directories, so neither another spelling of a directory (a
+ * symlinked ancestor, `/var` vs `/private/var`) nor a short (8.3) name on Windows reaches it.
  *
  * @param dataDir The app-support directory.
  * @param target The already-confined absolute path.
+ * @param cacheDir The app's cache directory.
  */
-export async function refuseReservedDataPath(dataDir: string, target: string): Promise<void> {
-  let hit = reservedSegment(resolve(dataDir), resolve(target));
+export async function refuseReservedDataPath(
+  dataDir: string,
+  target: string,
+  cacheDir?: string,
+): Promise<void> {
+  const data = resolve(dataDir);
+  const cache = cacheDir === undefined ? undefined : resolve(cacheDir);
+  let hit = reservedIn(data, cache, resolve(target));
   if (hit === undefined) {
-    const realData = await realPathOf(resolve(dataDir));
     const realTarget = await realPathOf(resolve(target));
-    if (realData !== undefined && realTarget !== undefined) {
-      hit = reservedSegment(realData, realTarget);
+    if (realTarget !== undefined) {
+      const realCache = cache === undefined ? undefined : await realPathOf(cache);
+      hit = reservedIn(await realPathOf(data), realCache, realTarget);
     }
   }
   if (hit !== undefined) {

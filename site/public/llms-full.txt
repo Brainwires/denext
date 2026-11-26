@@ -851,8 +851,12 @@ running). `app.sidecar(name)` (`status`, `onStatus`,
 Local IPC with no loopback port (app, sidecar, CLI): `localIpcPath(name)` / `listenLocalIpc(path, onConnection)` /
 `connectLocalIpc(path, { timeoutMs })` from `denext/desktop` (a `0600` Unix socket in `<app data>/ipc`, a
 `\\.\pipe\<appId>.<user hash>.<name>` pipe on Windows, whose writes are framed, so both ends must be these
-functions there; web-stream connections; a packaged app grants `netListen` / `netConnect: ["*"]`; a
-detached sidecar gets the app's `appId` from the app, a CLI passes it): https://denext.dev/docs/desktop#desktop-local-ipc
+functions there; web-stream connections; a packaged app grants the socket as `netListen` / `netConnect:
+["unix:$DENO_DESKTOP_DATA/ipc/<name>.sock"]` on macOS / Linux (the runtime expands the token, with
+`desktop.app.identifier`; a build on a runtime that doesn't fails), or `["*"]` for a Windows pipe, whose
+name holds a per-user token; only its user and LocalSystem can open the Windows pipe, but its name is
+machine-wide, so another local user can create it first: authenticate sensitive channels; a detached
+sidecar gets the app's `appId` from the app, a CLI passes it): https://denext.dev/docs/desktop#desktop-local-ipc
 Under the pinned runtime: `desktop.preload` (Electron's preload: bundled and inlined first into every
 top-level page; trusted, same world as the page); `desktop.app.deepLinks` / `singleInstance` deliver
 links to `onDeepLink` and opened files to `onOpenFile` (read-only handles); `openAuthSession` takes a
@@ -3332,7 +3336,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface StandardIssue` — One Standard Schema issue: a message and an optional path to the offending field.
 - `type StandardResult<Output> = { readonly value: Output; readonly issues?: undefined } | { readonly issues: ReadonlyArray<StandardIssue> }` — A Standard Schema validation result: a parsed value, or a list of issues.
 - `interface StandardSchemaV1<Output>` — The Standard Schema v1 surface (https://standardschema.dev) — validator-agnostic.
-- `stopSidecars(): Promise<void>` — Stop every sidecar of the app gracefully (their shutdown.graceMs), e.g. before installAppUpdateAndRelaunch() so a backend can finish writing first. The install itself still ends whatever is left. Detached sidecars (detached: true) are stopped too, their processes ended and their registry records removed: there is one behaviour, everything stops.
+- `stopSidecars(): Promise<void>` — Stop every sidecar of the app gracefully (their shutdown.graceMs), e.g. before installAppUpdateAndRelaunch() so a backend can finish writing first. The install itself also stops every sidecar and waits for them before it quits. Detached sidecars (detached: true) are stopped too, their processes ended and their registry records removed: there is one behaviour, everything stops.
 - `interface StoreCommandResult` — What a StoreCommandRunner saw a command do.
 - `type StoreCommandRunner = (cmd: readonly string[], stdin: string) => Promise<StoreCommandResult>` — Runs cmd with stdin as its standard input (tests pass a fake).
 - `type StoreCommandRunnerSync = (cmd: readonly string[]) => void` — Runs cmd to its exit, synchronously (a signal handler's cleanup; tests pass a fake).
@@ -3376,7 +3380,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `applyDesktopUpdate(version: string, config: DesktopUpdaterConfig): Promise<void>` — Promote the staged version to the active overlay and flip the "current" pointer atomically. Re-verifies the staged manifest (version + signature, the downgrade floor and the expiry) and re-hashes every staged file BEFORE the swap. The previous version dir is kept for rollback, the accepted sequence is recorded, every other staging folder is deleted, and the new version starts PENDING — desktopBooted must confirm it or the next resolveDesktopUiDir rolls it back.
 - `interface AppUpdateCheck` — The result of checkForAppUpdate.
 - `class AppUpdateError extends Error` — A refusal from the full-app updater, with a machine-readable AppUpdateErrorCode.
-- `type AppUpdateErrorCode = "unsupported" | "not_configured" | "invalid_manifest" | "signature" | "wrong_app" | "downgrade" | "rejected" | "no_platform" | "expired" | "replayed" | "insecure_url" | "size_exceeded" | "integrity" | "unsafe_archive" | "bundle_mismatch" | "version_mismatch" | "os_signature" | "install_not_writable" | "unsupported_layout" | "not_staged" | "busy" | "io"` — Why a full-app update step refused (the runtime's codes, plus unsupported).
+- `type AppUpdateErrorCode = "unsupported" | "not_configured" | "invalid_manifest" | "signature" | "wrong_app" | "downgrade" | "rejected" | "no_platform" | "expired" | "replayed" | "insecure_url" | "size_exceeded" | "integrity" | "unsafe_archive" | "bundle_mismatch" | "version_mismatch" | "os_signature" | "install_not_writable" | "unsupported_layout" | "not_staged" | "busy" | "sidecars_running" | "io"` — Why a full-app update step refused (the runtime's codes, plus unsupported).
 - `interface AppUpdateProgress` — Download progress, in bytes.
 - `interface AppUpdaterConfig` — Where the signed manifest is and how to reach it.
 - `interface AppUpdateStaged` — The result of downloadAppUpdate: the update is verified and staged.
@@ -3398,7 +3402,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopUpdateStatus(config: DesktopUpdaterConfig): Promise<DesktopUpdateStatus>` — A snapshot of the overlay state (mirrors otaStatus).
 - `interface DesktopUpdateStatus` — A snapshot of the overlay state, mirroring OtaStatus on mobile.
 - `downloadAppUpdate(config: AppUpdaterConfig, options: { onProgress?: (progress: AppUpdateProgress) => void; signal?: AbortSignal }): Promise<AppUpdateStaged>` — Download the update checkForAppUpdate found (size-capped, SHA-256 checked) next to the install, extract it safely and run the OS code-signature check. When this resolves, the update is verified and staged; nothing at the install path has changed yet.
-- `installAppUpdateAndRelaunch(options: { force?: boolean }): { quitting: boolean }` — Install the staged update: start the swap helper and quit the app (Electron's quitAndInstall). The helper waits for this process to exit, swaps the install, and relaunches the new version, which runDesktop confirms once its window has loaded (or, with desktop.update.autoConfirm: false, the app's own confirmAppUpdate call).
+- `installAppUpdateAndRelaunch(options: { force?: boolean }): Promise<{ quitting: boolean }>` — Install the staged update: stop the app's sidecars, then start the swap helper and quit the app (Electron's quitAndInstall). The helper waits for this process to exit, swaps the install, and relaunches the new version, which runDesktop confirms once its window has loaded (or, with desktop.update.autoConfirm: false, the app's own confirmAppUpdate call).
 - `openDesktopUi(bundledOut: string, config: DesktopUpdaterConfig): Promise<DesktopUi>` — The UI the desktop runtime should serve this launch: the active overlay, re-verified, or only the bundled export (overlay: null). Serve the overlay's files through DesktopUiOverlay.read, which checks each one against the signed manifest when it is served, never straight from its folder; runDesktop({ updater }) does.
 - `interface OtaManifest` — The _denext/ota.json document: a version stamped over the sorted file list.
 - `interface OtaManifestFile` — One file of an OTA UI.

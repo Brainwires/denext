@@ -25,7 +25,10 @@ export async function loadDefault(
   return (await st.opts.load(filePath) as AppModule).default ?? null;
 }
 
-/** Resolve a page's props (running gSSP/gSP + getStaticPaths gating). */
+/**
+ * Resolve a page's props (running gSSP/gSP + getStaticPaths gating). Under Preview Mode the
+ * outcome is marked `preview`: it was computed for the holder of the preview cookie alone.
+ */
 export async function resolveData(
   st: HandlerState,
   mod: PageModule,
@@ -41,6 +44,28 @@ export async function resolveData(
     previewCookieFrom(req.request.headers.get("cookie")),
     previewSecrets(),
   );
+  const outcome = await resolveOutcome(
+    st,
+    mod,
+    req,
+    appFile,
+    resHeaders,
+    allowFallbackShell,
+    previewData,
+  );
+  return previewData !== null ? { ...outcome, preview: true } : outcome;
+}
+
+/** {@linkcode resolveData}'s outcome, for the verified preview data (`null`: not in preview). */
+async function resolveOutcome(
+  st: HandlerState,
+  mod: PageModule,
+  req: PageRequest,
+  appFile: string | null,
+  resHeaders: Headers,
+  allowFallbackShell: boolean,
+  previewData: Awaited<ReturnType<typeof readPreview>>,
+): Promise<DataOutcome> {
   const preview = previewData !== null;
   if (!preview) {
     const gated = await staticPathsGate(mod, req, allowFallbackShell);

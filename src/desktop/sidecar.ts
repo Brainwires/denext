@@ -731,7 +731,7 @@ function permissionsError(permissions: unknown): string | null {
   for (const [k, v] of Object.entries(permissions)) {
     if (!PERMISSION_KINDS.includes(k)) return `permissions.${k} is not a permission kind`;
     if (!isStringArray(v)) return `permissions.${k} must be a string array`;
-    const entry = permissionListError(k, v);
+    const entry = permissionListError(k, v, { desktopTokens: true });
     if (entry) return `permissions.${k} ${entry}`;
   }
   return null;

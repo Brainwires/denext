@@ -8,6 +8,32 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **Runtime 3.0.0-denext.30.** The bundled Deno toolchain and Desktop runtime move to
+  3.0.0-denext.30 (rollback 3.0.0-denext.28; there is no 3.0.0-denext.29). It adds
+  `Deno.openRoot` (a directory handle nothing in it can escape),
+  `Deno.createHttpClient({ denyAddresses })`, `DENO_NARROW_PERMISSIONS` (a compiled program run
+  with less than its baked permissions) and, on Windows, `Deno.pipeServerIdentity`; the `deno` CLI
+  reads denext's revoked-runtimes list at startup; `deno test` / `deno bench` run under the kernel
+  sandbox's opt-in `enforce`, which gains deny ceilings and a stand-alone broker (`auto` still
+  applies nothing). Deno Desktop: a `desktop.permissions: "strict"` app is held by the kernel
+  sandbox where its web engine can run inside it (elsewhere its own process runs unconfined and one
+  line on stderr says so), an app that declares itself a browser receives the `http` / `https`
+  links the OS opens with it, the full-app update no longer waits for a detached sidecar kept
+  across updates, and a window can host a native view tree on the `gpui` backend. WebRTC takes the
+  next round of web-platform-tests and ECN / L4S; `structuredClone` and `Symbol.toStringTag`
+  follow the platform for more interfaces; CEF 156.0.8078.100.
+- **Deno Desktop: a `unix:` network grant can name a socket in the app's own folders.**
+  `desktop.extraPermissions.net` / `netListen` / `netConnect` and a sidecar's `permissions` take
+  `unix:$DENO_DESKTOP_DATA/<path>` and `unix:$DENO_DESKTOP_CACHE/<path>` besides an absolute path,
+  which the pinned runtime expands to the per-user folder at launch, so an app serving
+  `localIpcPath(name)` on macOS or Linux can grant that one socket instead of an unscoped
+  `netListen` / `netConnect`. Such an entry needs `desktop.app.identifier`, and a build on a runtime
+  that does not expand it (`DENEXT_DESKTOP_RUNTIME=stock`, a local runtime build) fails instead of
+  baking a grant the app would refuse at launch. Other tokens (`$APPDATA`), a relative path and a
+  `..` segment are still config errors, as is any token in `compile.permissions`.
+
 ### Fixed
 
 - **`denext runtime prune` says it prunes for one project.** It keeps what the project in the
@@ -158,6 +184,47 @@ and this project adheres to
   the app's stop) had already begun ending the sidecar while its module was still loading, the
   load failure no longer starts a second exit with code 1, and a load failure no longer leaves the
   first-attach timer running.
+- **`safeFetch` keeps the caller's credentials off the rest of a redirect chain once it leaves
+  the original origin.** `Authorization`, `Cookie` and `Proxy-Authorization` were dropped for a hop
+  on another origin but sent again when a later hop came back to the original one; they now stay
+  off for every later hop, as the fetch standard has it.
+- **Pages Router: a page rendered under Preview Mode is not stored by a shared cache.** A page
+  rendered live under a valid preview cookie carried no `Cache-Control`; it now answers
+  `private, no-cache, no-store, max-age=0, must-revalidate` (unless the page sets its own) like a
+  `getServerSideProps` page: the document, the soft-navigation data, and a redirect or not-found
+  resolved under preview (`@denext/pages-router` 0.13.2).
+- **The runtime channel reads the revoked-runtimes list before it takes an index, and never picks
+  a revoked release.** The channel's loader read withdrawn channel keys from the cached list only,
+  so a machine with no cached list (a fresh install) or an expired one did not see them. The list is
+  now loaded the way the channel is (fetched first when missing or stale, from the channel's own
+  cache directory), and a command that may fetch the index takes nothing from the channel without
+  a current list (`the revoked-runtimes list can't be had`). `runtime upgrade`, `runtime use latest`
+  and the update notice skip a release the list names, and `runtime use <version>` /
+  `install <version>` refuse one revoked for this host unless `DENEXT_ALLOW_REVOKED_RUNTIME` names
+  it.
+- **Deno Desktop: the sidecar folders belong to the runtime, and a detached sidecar stays
+  reachable while its control endpoint is busy.** `<app data>/sidecars` (each detached sidecar's
+  record), `<app cache>/sidecars` (the packages a bundled sidecar loads) and `<app data>/ipc` are
+  now reserved for the runtime like the engine profile: no `fs` path, download target or `shell`
+  open / reveal / trash reaches them. A reattached sidecar's port comes from its authenticated control
+  connection instead of the record. The control endpoint closes its oldest unauthenticated
+  connection at its cap of 16 instead of refusing a new one, and the app asks again before it
+  treats a record as stale, so connections that never authenticate no longer make the app replace
+  a running detached sidecar.
+- **Middleware matchers and header rules see the path an encoded separator decodes to.** A
+  dynamic or catch-all segment's param is decoded after matching, so `/docs/a%2Fb` gave
+  `app/docs/[...slug]` the param `a/b` while a matcher on `/docs/a/:path*` was tested only against
+  the path as requested and did not run. A `matcher` and a config `headers` rule are now tested
+  against both spellings (the decoded one with `.` / `..` segments resolved). Params decode as
+  before, and a path check inside a middleware still sees the path as requested.
+- **`/_denext/image` caches a local source that answers per visitor by its bytes.** With a
+  middleware file, the encoded image of a local source was cached under its URL, width, quality and
+  format, so a source that answers different bytes per visitor (a route such as `/api/me/avatar`)
+  could be answered with the variant encoded for an earlier visitor. A source fetched with the
+  visitor's cookie or `Authorization`, or one the app answers `private`, `no-store` or
+  `Vary: Cookie`, is now cached under its URL and a hash of the bytes the app answered for this
+  request; the source is read and hashed inside the optimizer's concurrency gate, so no more
+  sources are held in memory than before.
 
 ## [4.22.0] - 2026-11-23
 

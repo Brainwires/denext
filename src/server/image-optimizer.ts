@@ -130,7 +130,9 @@ export interface ImageOptimizeOptions {
    * a direct read of `publicDir`: the image is taken from the response when it is a 200, and
    * anything else (a 401 / 403, a redirect to a sign-in page, a 404) answers 404. The endpoint
    * is served in front of the app, so a direct read is one no `middleware.ts` sees. See
-   * {@linkcode localImageFetcher}. It runs on every request, before the optimizer's cache.
+   * {@linkcode localImageFetcher}. It runs on every request, before the optimizer's cache. An
+   * answer fetched with the visitor's cookie or `Authorization`, or one the app marks `private`,
+   * `no-store` or `Vary: Cookie`, is cached under a hash of its bytes, never under the URL alone.
    */
   fetchLocal?: (src: string, request: Request) => Promise<Response>;
 }
@@ -181,6 +183,18 @@ export function localImageFetcher(
 interface FetchedLocal {
   response: Response;
   cacheControl: string;
+  /**
+   * Whether the app's answer may be this visitor's alone: the request carried a cookie or
+   * `Authorization`, or the answer is `private` / `no-store` or varies on one of them. Such a
+   * source's variants are cached under its bytes, never under the URL alone.
+   */
+  perVisitor: boolean;
+}
+
+/** Whether a response's `Vary` names a credential header (or everything). */
+function variesOnCredential(response: Response): boolean {
+  const vary = response.headers.get("vary");
+  return vary !== null && /(?:^|,)\s*(?:\*|cookie|authorization)\s*(?:,|$)/i.test(vary);
 }
 
 /**
@@ -206,12 +220,14 @@ async function fetchLocalSource(
     return refused();
   }
   const own = response.headers.get("cache-control");
-  if (own && /\b(?:private|no-store)\b/i.test(own)) return { response, cacheControl: own };
+  if (own && /\b(?:private|no-store)\b/i.test(own)) {
+    return { response, cacheControl: own, perVisitor: true };
+  }
   const credentialed = request.headers.has("cookie") || request.headers.has("authorization");
   const cacheControl = credentialed
     ? `private, max-age=${ttl}`
     : `public, max-age=${ttl}, immutable`;
-  return { response, cacheControl };
+  return { response, cacheControl, perVisitor: credentialed || variesOnCredential(response) };
 }
 
 // The bounded FIFO semaphore lives in `gate.ts` (shared with password hashing); re-exported
@@ -419,10 +435,7 @@ export function isAllowedLocal(src: string, patterns?: LocalPattern[]): boolean 
 async function loadSource(
   src: string,
   opts: ImageOptimizeOptions,
-  fetched?: Response,
 ): Promise<Uint8Array | null> {
-  // Already fetched through the app (`fetchLocal`): its body is the source, byte-capped.
-  if (fetched) return await readCapped(fetched, MAX_SOURCE_BYTES);
   if (src.startsWith("/")) {
     if (!opts.publicDir) return null;
     // Enforce the local-source allowlist (enumeration guard) before touching disk.
@@ -688,8 +701,8 @@ export async function optimizeImage(
   if (parsed instanceof Response) return parsed;
   const { src, width, quality, format } = parsed;
   const ttl = opts.minimumCacheTTL ?? DEFAULT_MIN_CACHE_TTL;
-  // A local source is fetched through the app (middleware included) for THIS visitor, before
-  // the cache — which holds the encoded image whoever asked first.
+  // A local source is fetched through the app (middleware included) for THIS visitor, on every
+  // request: the app decides whether they may have it, and which bytes are theirs.
   const local = await fetchLocalSource(src, request, opts, ttl);
   if (local instanceof Response) return local;
   const headers = {
@@ -699,11 +712,16 @@ export async function optimizeImage(
     // cache on it so an AVIF response is never served to a WebP-only client.
     "vary": "Accept",
   };
+  // An answer that may be this visitor's alone (fetched with their credentials, or marked so
+  // by the app) is cached under the bytes it carried, never under the URL alone: one URL can
+  // answer a different image per visitor. Its key is known only once the body is read, which
+  // happens inside the gate like every other source read.
+  const perVisitor = local?.perVisitor === true;
+  const urlKey = `${src}|${width}|${quality}|${format}`;
   // Serve from the server-side cache when we've already encoded this exact variant.
   // Cache hits skip the concurrency gate entirely — only the heavy first-encode
   // work below is serialized.
-  const cacheKey = `${src}|${width}|${quality}|${format}`;
-  const cached = cacheGet(cacheKey);
+  const cached = perVisitor ? undefined : cacheGet(urlKey);
   if (cached) {
     await local?.response.body?.cancel();
     return new Response(cached as BodyInit, { headers });
@@ -719,7 +737,15 @@ export async function optimizeImage(
     return release;
   }
   try {
-    const out = await loadAndEncode(src, opts, width, format, quality, local?.response);
+    const fetched = local ? await readCapped(local.response, MAX_SOURCE_BYTES) : undefined;
+    if (fetched === null) return new Response("image not found", { status: 404 });
+    const cacheKey = perVisitor && fetched
+      ? `local|${src}|${await sha256Hex(fetched)}|${width}|${quality}|${format}`
+      : urlKey;
+    // A per-visitor source already encoded from these very bytes: no second encode.
+    const same = perVisitor ? cacheGet(cacheKey) : undefined;
+    if (same) return new Response(same as BodyInit, { headers });
+    const out = await loadAndEncode(src, opts, width, format, quality, fetched);
     if (out instanceof Response) return out;
     cacheSet(cacheKey, out);
     return new Response(out as BodyInit, { headers });
@@ -729,6 +755,12 @@ export async function optimizeImage(
   } finally {
     release();
   }
+}
+
+/** The SHA-256 of `bytes`, in hex. */
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as BufferSource));
+  return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 interface OptimizeParams {
@@ -801,9 +833,9 @@ async function loadAndEncode(
   width: number,
   format: string,
   quality: number,
-  fetched?: Response,
+  fetched?: Uint8Array,
 ): Promise<Uint8Array | Response> {
-  const bytes = await loadSource(src, opts, fetched);
+  const bytes = fetched ?? await loadSource(src, opts);
   if (!bytes) return new Response("image not found", { status: 404 });
   if (!looksLikeSvg(bytes) && !hasImageSignature(bytes)) {
     // A stylesheet, a script, a text file: no decoder takes it. One line, no stack — the

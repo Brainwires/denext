@@ -1075,6 +1075,12 @@ A few things the framework deliberately cannot decide for you:
   matcher is tested against the path with the locale prefix removed, as in
   Next.js), so a locale prefix can never route around a path-restricted
   middleware. `ctx.locale` / `req.nextUrl.locale` carry the peeled locale.
+- **A route param can hold a separator.** `/docs/a%2Fb` gives `app/docs/[...slug]` the param
+  `["a/b"]` (one segment, decoded, as in Next.js). A middleware `matcher` and a config `headers`
+  rule are tested against that decoded path too, so `matcher: "/docs/a/:path*"` fires for it. A
+  path check written inside the middleware sees the path as requested (`/docs/a%2Fb`): when a
+  route joins its params into a key or a file path, compare the decoded path there, or refuse
+  paths that contain `%2F` / `%5C`.
 - **Bound request sizes and rate-limit at your edge/proxy** — denext caps action
   bodies and image sources, but a proxy-level limit and rate limiting are still
   the right place for broad DoS protection (§1).

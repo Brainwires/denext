@@ -3,6 +3,10 @@
 `@denext/pages-router` uses its own semver, independent of the denext version it
 plugs into.
 
+## 0.13.2 - Unreleased
+
+- A page rendered under Preview Mode (a valid preview cookie) answers `Cache-Control: private, no-cache, no-store, max-age=0, must-revalidate` unless the page sets its own, like a `getServerSideProps` answer: the document, the soft-navigation data, and a redirect or not-found resolved under preview.
+
 ## 0.13.1 - 2026-11-19
 
 - **Security:** a `getServerSideProps` answer is `Cache-Control: private, no-cache, no-store, max-age=0, must-revalidate` unless the page sets its own, and every page answer varies on the data and prefetch request headers ([GHSA-vqwf-h6vg-4x73](https://github.com/Brainwires/denext/security/advisories/GHSA-vqwf-h6vg-4x73)).
