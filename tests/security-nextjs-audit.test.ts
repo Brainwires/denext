@@ -11,7 +11,7 @@ import { createApp } from "./helpers/released-app.ts";
 import type { AppConfig } from "../src/server/app-config.ts";
 import type { PageRoute, RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
-import { createMiddlewareRunner } from "../src/server/middleware.ts";
+import { createMiddlewareRunner, matcherSpellings } from "../src/server/middleware.ts";
 import { decodeUnreserved, externalRewriteHeaders } from "../src/server/request-pipeline.ts";
 import { REGEN_HEADER, REGEN_TOKEN } from "../src/server/app-config.ts";
 import { verifyOrigin } from "../src/server/origin-check.ts";
@@ -149,14 +149,103 @@ Deno.test("middleware bypass: an encoded path separator never names a public/ fi
     ) {
       const res = await probe(app, spelling);
       assert(!res.leaked, `${spelling} reached the guarded file`);
-      assertEquals(res.status, 404, spelling);
+      // The matcher is shown the path the separators decode to, so the guard answers.
+      assertEquals(res.status, 401, spelling);
       assertEquals(await serveStatic(root, spelling), null, spelling);
     }
+    // Without a middleware the file is still not named by any of them.
+    const open = appWith({ pages: {}, publicDir: root });
+    assertEquals((await probe(open, "/private%2Freport.txt")).status, 404);
     assertEquals(await serveStatic(root, "/private/report.txt%00"), null);
     // The plain spelling is still served (by the primitive; the app's middleware refuses it).
     assertEquals(await (await serveStatic(root, "/private/report.txt"))!.text(), SECRET);
   } finally {
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("matcherSpellings: a path with an encoded separator is also tested as the path it decodes to", () => {
+  assertEquals(matcherSpellings("/docs/private/a"), ["/docs/private/a"]);
+  assertEquals(matcherSpellings("/caf%C3%A9/a%20b"), ["/caf%C3%A9/a%20b"]);
+  assertEquals(matcherSpellings("/docs/private%2Fa"), ["/docs/private%2Fa", "/docs/private/a"]);
+  assertEquals(matcherSpellings("/docs/private%2fa%5Cb")[1], "/docs/private/a/b");
+  assertEquals(matcherSpellings("/docs/private%5ca")[1], "/docs/private/a");
+  // Dot segments and runs of `/` in the decoded spelling are resolved as for any path.
+  assertEquals(matcherSpellings("/docs/x%2F..%2Fprivate%2Fa")[1], "/docs/private/a");
+  assertEquals(matcherSpellings("/docs%2F%2Fprivate%2F.%2Fa")[1], "/docs/private/a");
+  assertEquals(matcherSpellings("/docs/private%2F")[1], "/docs/private/");
+  // A doubly encoded separator is not one.
+  assertEquals(matcherSpellings("/docs/private%252Fa"), ["/docs/private%252Fa"]);
+});
+
+Deno.test("middleware matchers: a dynamic or catch-all segment with an encoded separator is matched as the path its param decodes to", async () => {
+  const seen: string[] = [];
+  const page = (name: string) => ({
+    default: async ({ params }: { params: Promise<Record<string, string | string[]>> }) => {
+      const value = (await params)[name];
+      seen.push(Array.isArray(value) ? value.join("/") : value);
+      return h("h1", null, SECRET);
+    },
+  });
+  const app = appWith({
+    pages: { "/docs/[...slug]": page("slug"), "/files/[key]": page("key") },
+    getMiddleware: () => guard(["/docs/private/:path*", "/files/reports/:path*"]),
+  });
+  // The guarded paths, as the matcher has always seen them.
+  assertEquals((await probe(app, "/docs/private/plan")).status, 401);
+  // The params these decode to name the same guarded keys: the guard answers for them too.
+  for (
+    const spelling of [
+      "/docs/private%2Fplan",
+      "/docs/private%2fplan",
+      "/docs/private%5Cplan",
+      "/docs/private%2Fa/b",
+      "/docs/x%2F..%2Fprivate%2Fplan",
+      "/docs%2Fprivate%2Fplan",
+      "/files/reports%2Fq3",
+      "/files/reports%2f2026%2fq3",
+    ]
+  ) {
+    const res = await probe(app, spelling);
+    assert(!res.leaked, `${spelling} reached the guarded content`);
+    assertEquals(res.status, 401, spelling);
+  }
+  assertEquals(seen, [], "no guarded route rendered");
+  // Outside the matcher a param still decodes to a value holding a separator, in one segment.
+  assertEquals((await probe(app, "/docs/public%2Fnotes")).status, 200);
+  assertEquals((await probe(app, "/files/a%2Fb")).status, 200);
+  assertEquals(seen, ["public/notes", "a/b"]);
+  // An object matcher and a matcher's conditions take both spellings as well.
+  const conditional = appWith({
+    pages: { "/docs/[...slug]": page("slug") },
+    getMiddleware: () =>
+      createMiddlewareRunner({
+        middleware: () => new Response("blocked", { status: 401 }),
+        config: {
+          matcher: [{ source: "/docs/private/:path*", missing: [{ type: "cookie", key: "s" }] }],
+        },
+      }),
+  });
+  assertEquals((await probe(conditional, "/docs/private%2Fplan")).status, 401);
+  assertEquals((await probe(conditional, "/docs/private%2Fplan", { cookie: "s=1" })).status, 200);
+  // A config header rule applies to both spellings too.
+  const ruled = appWith({
+    pages: { "/docs/[...slug]": page("slug") },
+    headerRules: [{
+      source: "/docs/private/:path*",
+      headers: [{ key: "x-robots-tag", value: "noindex" }],
+    }],
+  });
+  for (
+    const [path, want] of [
+      ["/docs/private/plan", "noindex"],
+      ["/docs/private%2Fplan", "noindex"],
+      ["/docs/public%2Fplan", null],
+    ] as const
+  ) {
+    const res = await ruled(new Request("http://localhost" + path));
+    await res.body?.cancel();
+    assertEquals([res.status, res.headers.get("x-robots-tag")], [200, want], path);
   }
 });
 

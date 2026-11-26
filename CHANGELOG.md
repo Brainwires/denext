@@ -41,6 +41,12 @@ and this project adheres to
   connection at its cap of 16 instead of refusing a new one, and the app asks again before it
   treats a record as stale, so connections that never authenticate no longer make the app replace
   a running detached sidecar.
+- **Middleware matchers and header rules see the path an encoded separator decodes to.** A
+  dynamic or catch-all segment's param is decoded after matching, so `/docs/a%2Fb` gave
+  `app/docs/[...slug]` the param `a/b` while a matcher on `/docs/a/:path*` was tested only against
+  the path as requested and did not run. A `matcher` and a config `headers` rule are now tested
+  against both spellings (the decoded one with `.` / `..` segments resolved). Params decode as
+  before, and a path check inside a middleware still sees the path as requested.
 
 ## [4.22.0] - 2026-11-23
 
