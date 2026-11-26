@@ -905,14 +905,15 @@ export function connectLocalIpc(
  * @param path The socket or pipe path.
  * @param options A timeout (default 5000 ms) and an `AbortSignal`.
  * @param identity Who serves a Windows pipe and who this process is
- *   ({@linkcode PipeIdentityLookup}; default the runtime's, where it has one).
+ *   ({@linkcode PipeIdentityLookup}; default the runtime's, where it has one; `null` for none, as
+ *   on a runtime without one, since an `undefined` argument takes the default).
  * @returns The connection.
  */
 export function connectLocalIpcWith(
   open: (path: string) => net.Socket,
   path: string,
   options: LocalIpcConnectOptions = {},
-  identity: PipeIdentityLookup | undefined = runtimePipeIdentity(),
+  identity: PipeIdentityLookup | null | undefined = runtimePipeIdentity(),
 ): Promise<LocalIpcConnection> {
   const { signal, timeoutMs = 5000 } = options;
   if (signal?.aborted) return Promise.reject(signal.reason);

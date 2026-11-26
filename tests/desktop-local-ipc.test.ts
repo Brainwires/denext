@@ -658,6 +658,17 @@ function concat(parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
+/**
+ * A pipe identity lookup that vouches for whatever serves the connection as this user's: the
+ * framing tests reach a pipe path over this OS's own channel, which a runtime with
+ * `Deno.pipeServerIdentity` cannot vouch for (it answers only for a Windows pipe), so they hand in
+ * this one instead of the runtime's.
+ */
+const OWN_PIPE: PipeIdentityLookup = {
+  server: () => Promise.resolve({ userSid: "S-1-5-21-9-9-9-1001" }),
+  currentUserSid: () => Promise.resolve("S-1-5-21-9-9-9-1001"),
+};
+
 // A Windows pipe has no half-close, so a pipe channel frames its bytes. The framing is driven here
 // on every OS: the connection is made for a pipe path while the bytes travel over this OS's real
 // channel, with a raw `node:net` peer reading and writing the frames.
@@ -677,6 +688,8 @@ Deno.test("local IPC: a pipe connection frames each write and ends with a zero-l
       const conn = await connectLocalIpcWith(
         () => net.connect({ path: ch.path, allowHalfOpen: true }),
         "\\\\.\\pipe\\dev.denext.framing.u.t",
+        {},
+        OWN_PIPE,
       );
       // Writes: a small one, an empty one (sends nothing), one past the 1 MiB frame limit.
       const big = payload(1024 * 1024 + 5, 9);
@@ -735,6 +748,8 @@ Deno.test("local IPC: a pipe frame claiming more than the frame limit errors the
       const conn = await connectLocalIpcWith(
         () => net.connect({ path: ch.path, allowHalfOpen: true }),
         "\\\\.\\pipe\\dev.denext.framing.u.t",
+        {},
+        OWN_PIPE,
       );
       const read = readAll(conn.readable);
       assert(peer);
@@ -935,7 +950,8 @@ Deno.test("runtimePipeIdentity: a runtime without Deno.pipeServerIdentity has no
   // The default follows the running runtime's own function.
   const has = typeof (Deno as { pipeServerIdentity?: unknown }).pipeServerIdentity === "function";
   assertEquals(runtimePipeIdentity() !== undefined, has);
-  // With no lookup a pipe path connects unchecked.
+  // With no lookup a pipe path connects unchecked. (`null` stands for the missing lookup: an
+  // `undefined` argument would take the default, the running runtime's own lookup.)
   const ch = await channel();
   try {
     const peers: net.Socket[] = [];
@@ -950,7 +966,7 @@ Deno.test("runtimePipeIdentity: a runtime without Deno.pipeServerIdentity has no
         () => net.connect({ path: ch.path, allowHalfOpen: true }),
         "\\\\.\\pipe\\dev.denext.nolookup.u.t",
         {},
-        runtimePipeIdentity({}),
+        runtimePipeIdentity({}) ?? null,
       );
       conn.close();
     } finally {
