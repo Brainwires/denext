@@ -828,13 +828,16 @@ export function detachedSidecarLauncher(options: DetachedLauncherOptions): Sidec
     let asked = false;
     let detached = false;
     const exited = session.closed.then((end) => detachedExit(end, asked || detached));
+    // The service port the sidecar itself reported over the authenticated connection; the
+    // record's only for a sidecar from before it reported one.
+    const port = session.info.port ?? record.port;
     return {
       pid: session.info.pid,
       exited,
       detached: true,
       reattached,
       ready: reattached && session.ready,
-      ...(record.port !== undefined ? { port: record.port } : {}),
+      ...(port !== undefined ? { port } : {}),
       ...(record.values !== undefined ? { values: record.values } : {}),
       detach: () => {
         detached = true;

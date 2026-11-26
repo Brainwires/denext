@@ -254,6 +254,7 @@ export async function runDetachedSidecarChild(options: RunDetachedChildOptions):
       pid: Deno.pid,
       startedAt: init.startedAt,
       appVersion: init.appVersion,
+      ...(init.port !== undefined ? { port: init.port } : {}),
     },
     onShutdown: (grace) => void shutdown(grace, "the app asked it to stop"),
     onAttachedChange,

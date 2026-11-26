@@ -2457,11 +2457,14 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>fs</code>, <code>shell</code>{" "}
         and drag-out never reach the runtime's own folders in the data directory (the updater's{" "}
         <code>ui-updates</code>, the download records&apos; <code>denext-transfers</code>{" "}
-        (a live record holds its non-credential request headers), and the web engine's profile:{" "}
-        <code>CEF</code>, <code>WebKitGTK</code>,{" "}
-        <code>WebView2</code>, in any letter case): no read, list, write, delete, open, reveal,
-        trash or drag. SQLite connections cannot <code>ATTACH</code> another file, and a{" "}
-        <code>query</code>{" "}
+        (a live record holds its non-credential request headers), the detached-sidecar registry{" "}
+        <code>sidecars</code>, the local IPC sockets&apos;{" "}
+        <code>ipc</code>, and the web engine's profile: <code>CEF</code>, <code>WebKitGTK</code>,
+        {" "}
+        <code>WebView2</code>, in any letter case) nor <code>sidecars</code>{" "}
+        in the cache directory (the packages a bundled sidecar loads): no read, list, write, delete,
+        open, reveal, trash or drag. SQLite connections cannot <code>ATTACH</code>{" "}
+        another file, and a <code>query</code>{" "}
         stops after 20 seconds of producing rows (a single long statement still blocks the app,
         since <code>node:sqlite</code>{" "}
         cannot be interrupted). A reload releases the previous page's keep-awake holds.
@@ -6242,7 +6245,10 @@ sc.ready();`}
         server&apos;s nonces, an HMAC-SHA256 from each side over a label, its role and both nonces,
         checked in constant time. Any failure closes the socket with no detail; a line is at most 8
         KiB, a handshake must finish within 5 s, and at most 16 connections may be waiting to
-        authenticate. An open authenticated connection is an attachment.
+        authenticate (one more closes the oldest of them, and an app whose connection was closed
+        before the answer asks again three times before it calls the record stale). A reattached
+        sidecar&apos;s port is the one it reports over the authenticated connection. An open
+        authenticated connection is an attachment.
       </p>
       <h4 id="desktop-sidecars-detached-orphans">What ends a detached sidecar</h4>
       <ul>

@@ -32,6 +32,15 @@ and this project adheres to
   and the update notice skip a release the list names, and `runtime use <version>` /
   `install <version>` refuse one revoked for this host unless `DENEXT_ALLOW_REVOKED_RUNTIME` names
   it.
+- **Deno Desktop: the sidecar folders belong to the runtime, and a detached sidecar stays
+  reachable while its control endpoint is busy.** `<app data>/sidecars` (each detached sidecar's
+  record), `<app cache>/sidecars` (the packages a bundled sidecar loads) and `<app data>/ipc` are
+  now reserved for the runtime like the engine profile: no `fs` path, download target or `shell`
+  open / reveal / trash reaches them. A reattached sidecar's port comes from its authenticated control
+  connection instead of the record. The control endpoint closes its oldest unauthenticated
+  connection at its cap of 16 instead of refusing a new one, and the app asks again before it
+  treats a record as stale, so connections that never authenticate no longer make the app replace
+  a running detached sidecar.
 
 ## [4.22.0] - 2026-11-23
 

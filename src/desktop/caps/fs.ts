@@ -39,7 +39,12 @@ import {
   strongValidator,
   writeSidecar,
 } from "./download-partial.ts";
-import { confineRelative, isReservedDataName, refuseReservedDataPath } from "../path-scope.ts";
+import {
+  confineRelative,
+  isReservedCacheName,
+  isReservedDataName,
+  refuseReservedDataPath,
+} from "../path-scope.ts";
 import type { PickedPaths } from "../picked-paths.ts";
 import {
   recordInfo,
@@ -782,7 +787,7 @@ async function resolveTarget(
   const target = await scopedPath(base, path, allowRoot);
   // The runtime's own state under the data dir (the updater overlay, the engine profile) is never
   // reachable from the page: not read, listed, written or deleted.
-  await refuseReservedDataPath(cfg.dirs.data, target);
+  await refuseReservedDataPath(cfg.dirs.data, target, cfg.dirs.cache);
   return { target, root: base };
 }
 
@@ -1277,12 +1282,16 @@ export function fsCapability(cfg: FsCapabilityConfig): DesktopCapability {
         handler: async (args) => {
           const a = (args ?? {}) as { path?: unknown; directory?: unknown };
           const { target } = await resolveTarget(cfg, a.directory, a.path, false, true);
-          // The data root's listing leaves the runtime-owned sub-directories out.
-          const hide = await sameDir(target, cfg.dirs.data);
+          // The data and cache roots' listings leave the runtime-owned sub-directories out.
+          const hidden = (await sameDir(target, cfg.dirs.data))
+            ? isReservedDataName
+            : (await sameDir(target, cfg.dirs.cache))
+            ? isReservedCacheName
+            : undefined;
           const entries: FileEntry[] = [];
           try {
             for await (const e of Deno.readDir(target)) {
-              if (hide && isReservedDataName(e.name)) continue;
+              if (hidden?.(e.name)) continue;
               entries.push(await toFileEntry(target, e.name, e.isDirectory));
             }
           } catch (err) {

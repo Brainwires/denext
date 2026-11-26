@@ -339,7 +339,7 @@ export function shellCapability(deps: ShellCapabilityDeps): DesktopCapability {
       confined = await confineWithinRoots(a.path, roots);
       // The runtime's own state (the updater overlay, the engine profile) is never opened,
       // revealed or trashed: trashing the overlay would roll the app back to its older UI.
-      await refuseReservedDataPath(deps.dirs.data, confined);
+      await refuseReservedDataPath(deps.dirs.data, confined, deps.dirs.cache);
     } else {
       throw new DesktopCapError("validation", "a path or handle is required");
     }
