@@ -6514,14 +6514,40 @@ for await (const chunk of conn.readable) console.log(chunk);`}
         <code>--allow-net-listen</code> / <code>--allow-net-connect</code>{" "}
         with the split flags), on Windows as on Unix. A refused check rejects with{" "}
         <code>NotCapable</code> naming the grants for that path. A <code>unix:</code>{" "}
-        grant names one exact path, and the runtime expands no folder token (<code>$APPDATA</code>,
+        grant names one exact path: an absolute one, or one in the app&apos;s own folders written
+        with the folder token right after <code>unix:</code> (<code>
+          unix:$DENO_DESKTOP_DATA/ipc/ctl.sock
+        </code>,{" "}
+        <code>unix:$DENO_DESKTOP_CACHE/…</code>), which a runtime that expands the token in a
+        network grant turns into the per-user path at launch, as it does a read or write grant.{" "}
+        <code>desktop.extraPermissions.net</code> / <code>netListen</code> / <code>netConnect</code>
         {" "}
-        <code>$DENO_DESKTOP_DATA</code>) in a network grant, so a packaged app cannot bake the
-        per-user path: <code>desktop.extraPermissions.net</code> / <code>netListen</code> /{" "}
-        <code>netConnect</code> accept a <code>unix:</code>{" "}
-        entry only with an absolute path (anything else is a config error, since the runtime would
-        refuse to start). An app that serves a channel in its data folder grants the folder and the
-        direction:
+        and a sidecar&apos;s <code>permissions</code>{" "}
+        accept those two forms only; anything else (<code>$APPDATA</code>, a relative path, a{" "}
+        <code>..</code>{" "}
+        segment) is a config error, since the runtime would refuse to start. A token entry needs
+        {" "}
+        <code>desktop.app.identifier</code>{" "}
+        and denext&apos;s pinned runtime; a build on a runtime that does not expand it (the stock
+        runtime, a local runtime build) fails instead of baking a grant the app would refuse. On
+        macOS and Linux an app that serves a channel at <code>localIpcPath(name)</code>{" "}
+        (its data folder&apos;s{" "}
+        <code>ipc/&lt;name&gt;.sock</code>) grants that socket and the folder:
+      </p>
+      <Code lang="ts">
+        {`desktop: {
+  app: { identifier: "com.acme.app" },
+  extraPermissions: {
+    write: ["$APPDATA/ipc"],   // and read, under desktop.permissions: "strict"
+    netListen: ["unix:$DENO_DESKTOP_DATA/ipc/ctl.sock"], // the server
+    netConnect: ["unix:$DENO_DESKTOP_DATA/ipc/ctl.sock"], // a client in the app
+  },
+},`}
+      </Code>
+      <p>
+        A Windows pipe (<code>\\.\pipe\&lt;appId&gt;.&lt;user&gt;.&lt;name&gt;</code>) is not in a
+        folder and its name holds a per-user token, so a Windows build, or a socket outside the
+        app&apos;s folders, grants the direction instead:
       </p>
       <Code lang="ts">
         {`desktop: {

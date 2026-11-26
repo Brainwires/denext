@@ -1,7 +1,10 @@
 // The helpers every denext.config field-group validator shares: the field-scoped `Fail`, the
 // finite-number checks, and the small shape predicates.
 
-import { permissionEntryError } from "../../desktop/permission-entries.ts";
+import {
+  permissionEntryError,
+  type PermissionEntryOptions,
+} from "../../desktop/permission-entries.ts";
 
 /** Throws a field-scoped `invalid <name>: \`<field>\` <msg>` error. */
 export type Fail = (field: string, msg: string) => never;
@@ -69,6 +72,7 @@ export function validateOptionalPath(field: string, value: unknown, fail: Fail):
  * @param kinds The kinds it takes.
  * @param isList Whether a value is an acceptable list.
  * @param fail The failure reporter.
+ * @param options Where the lists are baked (`desktopTokens` for a Deno Desktop app).
  */
 export function validatePermissionLists(
   field: string,
@@ -76,12 +80,15 @@ export function validatePermissionLists(
   kinds: readonly string[],
   isList: (v: unknown) => boolean,
   fail: Fail,
+  options: PermissionEntryOptions = {},
 ): void {
   for (const [k, v] of Object.entries(permissions)) {
     if (!kinds.includes(k) || !isList(v)) {
       fail(`${field}.${k}`, `must be an array of strings (kinds: ${kinds.join(", ")})`);
     }
-    const error = (v as string[]).map((e) => permissionEntryError(k, e)).find((e) => e !== null);
+    const error = (v as string[]).map((e) => permissionEntryError(k, e, options)).find((e) =>
+      e !== null
+    );
     if (error) fail(`${field}.${k}`, error);
   }
 }

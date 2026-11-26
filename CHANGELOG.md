@@ -8,6 +8,18 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **Deno Desktop: a `unix:` network grant can name a socket in the app's own folders.**
+  `desktop.extraPermissions.net` / `netListen` / `netConnect` and a sidecar's `permissions` take
+  `unix:$DENO_DESKTOP_DATA/<path>` and `unix:$DENO_DESKTOP_CACHE/<path>` besides an absolute path,
+  which the pinned runtime expands to the per-user folder at launch, so an app serving
+  `localIpcPath(name)` on macOS or Linux can grant that one socket instead of an unscoped
+  `netListen` / `netConnect`. Such an entry needs `desktop.app.identifier`, and a build on a runtime
+  that does not expand it (`DENEXT_DESKTOP_RUNTIME=stock`, a local runtime build) fails instead of
+  baking a grant the app would refuse at launch. Other tokens (`$APPDATA`), a relative path and a
+  `..` segment are still config errors, as is any token in `compile.permissions`.
+
 ### Fixed
 
 - **A detached sidecar whose module fails to load exits once.** When the first-attach deadline (or

@@ -65,6 +65,7 @@ function validateExtraPermissions(extra: unknown, fail: Fail): void {
     EXTRA_PERMISSION_KINDS,
     isStringList,
     fail,
+    { desktopTokens: true },
   );
 }
 

@@ -842,7 +842,9 @@ running). `app.sidecar(name)` (`status`, `onStatus`,
 Local IPC with no loopback port (app, sidecar, CLI): `localIpcPath(name)` / `listenLocalIpc(path, onConnection)` /
 `connectLocalIpc(path, { timeoutMs })` from `denext/desktop` (a `0600` Unix socket in `<app data>/ipc`, a
 `\\.\pipe\<appId>.<user hash>.<name>` pipe on Windows; web-stream connections; a packaged app grants
-`netListen` / `netConnect: ["*"]`, as a `unix:` grant cannot name a per-user path; the Windows pipe has
+the socket as `netListen` / `netConnect: ["unix:$DENO_DESKTOP_DATA/ipc/<name>.sock"]` on macOS / Linux
+(the runtime expands the token, with `desktop.app.identifier`; a build on a runtime that doesn't fails), or
+`["*"]` for a Windows pipe, whose name holds a per-user token; the Windows pipe has
 the default security descriptor and a machine-wide name, so another local user can open it or create
 it first: authenticate sensitive channels): https://denext.dev/docs/desktop#desktop-local-ipc
 Under the pinned runtime: `desktop.preload` (Electron's preload: bundled and inlined first into every

@@ -10,10 +10,12 @@ import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import { sidecarListError } from "../src/desktop/sidecar.ts";
 import {
+  isDesktopUnixTokenEntry,
   netHostError,
   permissionEntryError,
   permissionListError,
 } from "../src/desktop/permission-entries.ts";
+import { supportsDesktopUnixToken } from "../src/build/deno-version.ts";
 
 const validate = (config: unknown) => validateDenextConfig(config as DenextConfig);
 
@@ -152,4 +154,76 @@ Deno.test("netHostError: a unix: entry is an absolute socket path the runtime ca
     "absolute socket path",
   );
   validate({ desktop: { extraPermissions: { net: ["unix:/run/app/ctl.sock"] } } });
+});
+
+Deno.test("netHostError: a desktop unix: entry may name a socket in the app's own folders", () => {
+  const desktop = { desktopTokens: true } as const;
+  for (
+    const entry of [
+      "unix:$DENO_DESKTOP_DATA/ipc/ctl.sock",
+      "unix:$DENO_DESKTOP_CACHE/x.sock",
+      "unix:$DENO_DESKTOP_DATA\\ipc\\ctl.sock",
+      "unix:$DENO_DESKTOP_DATA",
+      "unix:/run/app/ctl.sock",
+    ]
+  ) assertEquals(netHostError(entry, desktop), null, entry);
+  // The runtime expands only those two tokens, right after `unix:`, followed by a separator and
+  // no `..` segment; anything else is still a relative path it refuses.
+  for (
+    const entry of [
+      "unix:$APPDATA/ipc/ctl.sock",
+      "unix:$DENO_DESKTOP_DATAx/ctl.sock",
+      "unix:$DENO_DESKTOP_DATA/../ctl.sock",
+      "unix:$DENO_DESKTOP_CACHE/a/../../b.sock",
+      "unix:ctl.sock",
+    ]
+  ) {
+    assertEquals(isDesktopUnixTokenEntry(entry), false, entry);
+    assertEquals(
+      (netHostError(entry, desktop) ?? "").includes("absolute socket path"),
+      true,
+      entry,
+    );
+  }
+  // A compiled server binary expands no token.
+  assertEquals(typeof permissionListError("net", ["unix:$DENO_DESKTOP_DATA/a.sock"]), "string");
+  assertThrows(
+    () => validate({ compile: { permissions: { netListen: ["unix:$DENO_DESKTOP_DATA/a.sock"] } } }),
+    Error,
+    "absolute socket path",
+  );
+  validate({
+    desktop: { extraPermissions: { netListen: ["unix:$DENO_DESKTOP_DATA/ipc/a.sock"] } },
+  });
+  assertEquals(
+    sidecarListError([{
+      name: "a",
+      run: { module: "./a.ts" },
+      permissions: { netConnect: ["unix:$DENO_DESKTOP_DATA/ipc/a.sock"] },
+    }]),
+    null,
+  );
+  assertEquals(supportsDesktopUnixToken("3.0.0-denext.29"), false);
+  assertEquals(supportsDesktopUnixToken("3.0.0-denext.30"), true);
+});
+
+Deno.test("desktopBuildFlags: a unix: grant in the app's folders is baked only where it expands", () => {
+  const cfg = (identifier?: string) => ({
+    desktop: {
+      ...(identifier ? { app: { identifier } } : {}),
+      extraPermissions: { netListen: ["unix:$DENO_DESKTOP_DATA/ipc/a.sock"] },
+    },
+  });
+  const flags = desktopBuildFlags(cfg("com.acme.app"), "linux", { unixTokenScope: true });
+  assertEquals(flags[0].includes("unix:$DENO_DESKTOP_DATA/ipc/a.sock"), true, flags[0]);
+  assertThrows(
+    () => desktopBuildFlags(cfg("com.acme.app"), "linux", { unixTokenScope: false }),
+    Error,
+    "does not expand",
+  );
+  assertThrows(
+    () => desktopBuildFlags(cfg(), "linux", { unixTokenScope: true }),
+    Error,
+    "desktop.app.identifier",
+  );
 });
