@@ -141,7 +141,10 @@ random value in production — comma-separated to rotate keys. Without it a rand
 per-process key is used, so preview sessions don't survive a restart or span
 instances, and a one-time warning fires. A forged or unsigned preview cookie is
 ignored: it never discloses drafts. It is one of denext's
-[deliberate differences](/docs/differences).
+[deliberate differences](/docs/differences). A page rendered under a valid preview
+cookie answers `Cache-Control: private, no-cache, no-store, max-age=0,
+must-revalidate` (unless the page sets its own), so a cache in front of the app
+never stores a draft.
 
 ## Mixing with the App Router
 

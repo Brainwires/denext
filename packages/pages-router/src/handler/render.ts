@@ -17,9 +17,13 @@ import {
   withRequestCacheControl,
 } from "./shared.ts";
 
-/** Whether a page's data is computed per request (`getServerSideProps` / `getInitialProps`). */
+/**
+ * Whether a page's data is computed per request: `getServerSideProps` / `getInitialProps`, or a
+ * Preview Mode render (`getStaticProps` run live for the holder of the preview cookie).
+ */
 function isPerRequest(mod: PageModule, outcome: DataOutcome): boolean {
-  return mod.getServerSideProps != null || (outcome.kind === "props" && outcome.isServer);
+  return mod.getServerSideProps != null || outcome.preview === true ||
+    (outcome.kind === "props" && outcome.isServer);
 }
 
 /**

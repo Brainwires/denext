@@ -18,6 +18,11 @@ and this project adheres to
   the original origin.** `Authorization`, `Cookie` and `Proxy-Authorization` were dropped for a hop
   on another origin but sent again when a later hop came back to the original one; they now stay
   off for every later hop, as the fetch standard has it.
+- **Pages Router: a page rendered under Preview Mode is not stored by a shared cache.** A page
+  rendered live under a valid preview cookie carried no `Cache-Control`; it now answers
+  `private, no-cache, no-store, max-age=0, must-revalidate` (unless the page sets its own) like a
+  `getServerSideProps` page: the document, the soft-navigation data, and a redirect or not-found
+  resolved under preview (`@denext/pages-router` 0.13.2).
 
 ## [4.22.0] - 2026-11-23
 
