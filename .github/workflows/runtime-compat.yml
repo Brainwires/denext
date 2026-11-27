@@ -88,10 +88,13 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.runners.outputs.legs) }}
     steps:
-      - name: Check out the runtime channel tooling (development)
+      - name: Check out the runtime channel tooling (this workflow's commit)
+        # The dispatched commit, as the `runners` job reads: the tooling (release-doc, the suite's
+        # per-release exclusions) must be the one that picked the legs, not whatever `development`
+        # holds when the leg starts.
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          ref: development
+          ref: ${{ github.sha }}
           path: tooling
 
       - name: Check out denext ${{ matrix.denext }}
