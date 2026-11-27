@@ -1903,7 +1903,11 @@ const appChecks: Check[] = [
     const windows = setup.os === "windows";
     const spawn = windows
       ? { shell: "C:\\Windows\\System32\\cmd.exe", args: ["/d", "/c", "ping -n 30 127.0.0.1 >nul"] }
-      : { shell: "/bin/sh", args: ["-c", "sleep 30"] };
+      // `exec`: a shell that forks its `-c` command (dash) without job control keeps it in the
+      // shell's own process group, whose leader (the shell) is the terminal's foreground process;
+      // bash execs a lone command itself. With `exec` sleep replaces the shell on every shell, so
+      // the OS must report the program now running, not the one spawned.
+      : { shell: "/bin/sh", args: ["-c", "exec sleep 30"] };
     const term = await spawnPty({ cols: 80, rows: 24, ...spawn }).catch((err) => {
       if (isDesktopBridgeError(err) && (err.code === "unsupported" || err.code === "unavailable")) {
         throw new Skip(`no terminals here: ${err.message}`);
@@ -1911,7 +1915,7 @@ const appChecks: Check[] = [
       throw err;
     });
     try {
-      // The command the shell runs becomes the terminal's foreground process.
+      // The program the shell runs becomes the terminal's foreground process.
       const expected = windows ? /^(ping|cmd)\.exe$/i : /^sleep$/;
       const info = await waitFor(
         async () => {
@@ -1923,7 +1927,13 @@ const appChecks: Check[] = [
         async () => JSON.stringify(await ptyInfo(term.id)),
       );
       assert(info.pid > 0, `pid ${info.pid}`);
-      if (!windows) assert(info.tty, "no terminal device");
+      if (!windows) {
+        assert(info.tty, "no terminal device");
+        // The arguments are the running program's too, read from the OS (not the spawn's `sh -c`).
+        if (info.argv) {
+          assert(/(^|\/)sleep$/.test(info.argv[0] ?? ""), `argv ${JSON.stringify(info.argv)}`);
+        }
+      }
       return `${info.process} (pid ${info.foregroundPid ?? info.pid}${
         info.tty ? `, ${info.tty}` : ""
       })`;
