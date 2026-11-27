@@ -269,6 +269,72 @@ async function readAll(readable: ReadableStream<Uint8Array>): Promise<Uint8Array
   return out;
 }
 
+/**
+ * A plain `node:net` server on `path` for the client-side checks, which make one connection after
+ * another. Each accepted socket is destroyed once its client goes, and `settled()` waits until
+ * every connection `open()` made was accepted and closed again, so only one instance of a pipe is
+ * held at a time: Windows keeps a pipe instance until its server side closes, and a runtime whose
+ * pipe takes at most 4 instances (stock Deno 2.9.8) stops listening once the instance it makes
+ * for the next client fails, which would starve the fifth client of a server that kept every
+ * socket open.
+ */
+async function sequentialServer(path: string): Promise<{
+  open: () => net.Socket;
+  settled: () => Promise<void>;
+  close: () => Promise<void>;
+}> {
+  const live = new Set<net.Socket>();
+  let opened = 0;
+  let accepted = 0;
+  let wake: (() => void) | undefined;
+  const check = () => {
+    if (accepted === opened && live.size === 0) wake?.();
+  };
+  const server = net.createServer({ allowHalfOpen: true }, (s) => {
+    accepted++;
+    live.add(s);
+    s.on("error", () => s.destroy());
+    s.on("data", () => {});
+    s.once("end", () => s.destroy());
+    s.once("close", () => {
+      live.delete(s);
+      check();
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(path, () => resolve()));
+  return {
+    open: () => {
+      opened++;
+      return net.connect({ path, allowHalfOpen: true });
+    },
+    settled: async () => {
+      if (accepted === opened && live.size === 0) return;
+      let bound: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          wake = resolve;
+          bound = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `the server still holds connections (${accepted} of ${opened} accepted, ${live.size} open)`,
+                ),
+              ),
+            10_000,
+          );
+        });
+      } finally {
+        wake = undefined;
+        clearTimeout(bound);
+      }
+    },
+    close: async () => {
+      for (const s of live) s.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
 /** Write `bytes` in `pieces` writes, then close. */
 async function writeAll(writable: WritableStream<Uint8Array>, bytes: Uint8Array, pieces = 1) {
   const writer = writable.getWriter();
@@ -795,15 +861,13 @@ Deno.test("pipeServerRefusal: only a pipe this user's process serves is taken", 
 Deno.test("local IPC: a pipe served by another user (or one nobody can vouch for) is refused", async () => {
   const ch = await channel();
   try {
-    const peers: net.Socket[] = [];
-    const server = net.createServer({ allowHalfOpen: true }, (s) => {
-      peers.push(s);
-      s.on("error", () => {});
-      s.on("data", () => {});
-    });
-    await new Promise<void>((resolve) => server.listen(ch.path, () => resolve()));
+    const server = await sequentialServer(ch.path);
     const pipe = "\\\\.\\pipe\\dev.denext.squat.u.t";
-    const open = () => net.connect({ path: ch.path, allowHalfOpen: true });
+    // Each connection starts once the server let go of the one before (see `sequentialServer`).
+    const connectAs = async (path: string, identity: PipeIdentityLookup) => {
+      await server.settled();
+      return connectLocalIpcWith(server.open, path, {}, identity);
+    };
     const lookup = (sid: string | null, ownSid = "S-1-5-21-9-9-9-1001"): PipeIdentityLookup => ({
       server: () => Promise.resolve(sid === null ? null : { userSid: sid, pid: 4242 }),
       currentUserSid: () => Promise.resolve(ownSid),
@@ -811,13 +875,13 @@ Deno.test("local IPC: a pipe served by another user (or one nobody can vouch for
     try {
       // Another user's process created the name first: refused, the connection closed.
       const other = await assertRejects(
-        () => connectLocalIpcWith(open, pipe, {}, lookup("S-1-5-21-9-9-9-1002")),
+        () => connectAs(pipe, lookup("S-1-5-21-9-9-9-1002")),
         Deno.errors.PermissionDenied,
       );
       assertMatch(other.message, /served by another user/);
       // A lookup that cannot tell: refused too.
       await assertRejects(
-        () => connectLocalIpcWith(open, pipe, {}, lookup(null)),
+        () => connectAs(pipe, lookup(null)),
         Deno.errors.PermissionDenied,
         "could not verify",
       );
@@ -827,21 +891,20 @@ Deno.test("local IPC: a pipe served by another user (or one nobody can vouch for
         currentUserSid: () => Promise.resolve("S-1-5-21-9-9-9-1001"),
       };
       await assertRejects(
-        () => connectLocalIpcWith(open, pipe, {}, failing),
+        () => connectAs(pipe, failing),
         Deno.errors.PermissionDenied,
       );
       // This user's own server: connected.
-      const conn = await connectLocalIpcWith(open, pipe, {}, lookup("S-1-5-21-9-9-9-1001"));
+      const conn = await connectAs(pipe, lookup("S-1-5-21-9-9-9-1001"));
       conn.close();
       // A Unix socket path is never asked (its folder's ownership guards it). On Windows this
       // test's own channel is a pipe, which IS asked, so the path named there is a Unix one (the
-      // connection itself is `open`'s, whatever the path).
+      // connection itself is `server.open`'s, whatever the path).
       const unixPath = WINDOWS ? "/tmp/dnipc/t.sock" : ch.path;
-      const unix = await connectLocalIpcWith(open, unixPath, {}, lookup("S-1-5-21-9-9-9-1002"));
+      const unix = await connectAs(unixPath, lookup("S-1-5-21-9-9-9-1002"));
       unix.close();
     } finally {
-      for (const p of peers) p.destroy();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await server.close();
     }
   } finally {
     await ch.cleanup();
@@ -853,20 +916,15 @@ Deno.test("local IPC: a pipe served by another user (or one nobody can vouch for
 Deno.test("local IPC: the runtime's pipe server identity decides which pipe a client takes", async () => {
   const ch = await channel();
   try {
-    const peers: net.Socket[] = [];
-    const server = net.createServer({ allowHalfOpen: true }, (s) => {
-      peers.push(s);
-      s.on("error", () => {});
-      s.on("data", () => {});
-    });
-    await new Promise<void>((resolve) => server.listen(ch.path, () => resolve()));
+    const server = await sequentialServer(ch.path);
     const pipe = "\\\\.\\pipe\\dev.denext.ident.u.t";
-    const open = () => net.connect({ path: ch.path, allowHalfOpen: true });
     const me = "S-1-5-21-9-9-9-1001";
     const other = "S-1-5-21-9-9-9-1002";
     let reads = 0;
     let handed: object | undefined;
-    const connect = (answer: Partial<RuntimePipeServerIdentity> | null | Error) => {
+    // Each connection starts once the server let go of the one before (see `sequentialServer`).
+    const connect = async (answer: Partial<RuntimePipeServerIdentity> | null | Error) => {
+      await server.settled();
       const runtime = {
         pipeServerIdentity(connection: object): RuntimePipeServerIdentity | null {
           reads++;
@@ -876,7 +934,7 @@ Deno.test("local IPC: the runtime's pipe server identity decides which pipe a cl
           return { pid: 4242, userSid: me, ownerSid: me, currentUserSid: me, ...answer };
         },
       };
-      return connectLocalIpcWith(open, pipe, {}, runtimePipeIdentity(runtime));
+      return connectLocalIpcWith(server.open, pipe, {}, runtimePipeIdentity(runtime));
     };
     const refused = (answer: Partial<RuntimePipeServerIdentity> | null | Error, text: RegExp) =>
       assertRejects(() => connect(answer), Deno.errors.PermissionDenied).then((err) =>
@@ -911,8 +969,7 @@ Deno.test("local IPC: the runtime's pipe server identity decides which pipe a cl
       await refused({ currentUserSid: null }, /could not verify/);
       await refused(new Error("handle closed"), /could not verify/);
     } finally {
-      for (const p of peers) p.destroy();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await server.close();
     }
   } finally {
     await ch.cleanup();
