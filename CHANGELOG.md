@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.23.0] - 2026-11-27
+
 ### Changed
 
 - **Runtime 3.0.0-denext.30.** The bundled Deno toolchain and Desktop runtime move to
@@ -39,32 +41,27 @@ and this project adheres to
 - **`denext runtime prune` says it prunes for one project.** It keeps what the project in the
   current folder (and this machine's runtime selection) uses, and now says so, naming
   `denext --cwd <folder> runtime prune` for another project; `--json` carries the `project`.
-
 - **A static file under a symlinked folder no longer lists that folder on every request.** The
   check that a file is named exactly as requested now reads each non-symlink component's own
   stored name, so a request below `public/uploads` (a link to a folder of many files) no longer
   reads the whole folder; a symlink's own name and any other spelling are still checked by
   listing its parent.
-
 - **A local IPC client on Windows refuses a pipe served by another user.** Where the runtime
   reports who serves a pipe connection (`Deno.pipeServerIdentity`), `connectLocalIpc` takes only a
   pipe this user serves: a server run by another user, a pipe another user owns, or one whose
   identity can't be read is refused with `PermissionDenied` and the connection closed. On a runtime
   that doesn't report it the check is skipped: the client takes whichever process serves the name
   (the server still claims its pipe name as the first instance).
-
 - **Two local IPC servers starting at once on one Unix socket can no longer orphan each other.**
   The stale-socket check and the bind were not atomic, so the second could remove the first's new
   socket. A server now holds an OS lock beside its socket (`<path>.lock`) for as long as it serves;
   a second one is refused with `AddrInUse`. A process granted only the socket path itself (not its
   folder) serves without the lock, as before.
-
 - **A detached sidecar's start lock is an OS lock.** Two starts that both judged the old lock file
   stale could remove each other's lock, and a holder whose timers stalled for 30 s (a machine that
   slept) lost it; after a crash the next launch waited up to 30 s. The start lock is now an
   exclusive OS advisory lock (`flock` / `LockFileEx`), which the OS releases when its holder exits
   and which is never broken while held.
-
 - **A stalled denext.dev no longer fails a runtime install from the mirror.** `denext runtime
   install | use | upgrade` and a project pin give each host its own budget for the release
   document, so the GitHub mirror is still tried in full.
@@ -82,24 +79,19 @@ and this project adheres to
 - **`denext upgrade` warns when the project's runtime pin won't run on the new denext**, using the
   cached channel entry, and names the `denext runtime use <version> --project` fix (`runtimePin`
   in `--json`).
-
 - **`denext export` fails when copying `public/` fails.** Every error copying it read as "no
   `public/`", so a full disk or an unreadable file left an export without its public files and no
   error; only a missing `public/` is skipped now.
-
 - **A web view download no listener decides is cancelled after 5 minutes.** With `downloads:
   "app"`, an item the `will-download` listener neither saved nor cancelled stayed pending in the
   runtime until the view closed; it is now cancelled at the same limit as an unanswered
   permission request.
-
 - **`denext desktop package` refuses a macOS script that never copies `desktop.bundle.libraries`.**
   A `scripts/package-macos.ts` from before the libraries shipped the app without them, and only
   `denext desktop doctor` said so; the package run now stops with the regenerate command.
-
 - **`denext doctor` names deploy files generated before 4.21.** A `Dockerfile` or `build.sh`
   that still runs `denext … toolchain path` (a verb 4.21 removed) fails the image build or the
   host's build; the new "deploy files" check lists each one and how to regenerate it.
-
 - **The installer refuses a binary this machine can't run.** On a musl Linux (Alpine) it stops
   before downloading, and the downloaded `denext` must answer `--version` before it is installed,
   so `curl … | sh` no longer exits 0 with a binary an older glibc can't start. A shell under Rosetta
@@ -112,27 +104,22 @@ and this project adheres to
   longer deletes the rest of the startup file, a startup file it can't write is a warning with the
   lines to add, a download cut short in its last line runs nothing, and a failed
   `--runtime=<version>` after the binary was installed still puts it on PATH and says so.
-
 - **A detached sidecar survives a failed read of its registry record.** It ended itself on any
   error reading the record; now only a record that is gone, malformed or names another start ends
   it, and a read that fails otherwise (a scanner holding the file, no free descriptors) is retried
   at the next check.
-
 - **Local IPC on a Windows pipe refuses an oversized frame.** A frame header naming more than the
   1 MiB frame limit now errors the connection's read and closes it, instead of buffering until
   that many bytes arrive.
-
 - **The taint check walks each object of a result once.** Once anything was tainted, a Server
   Action result or Live data value with shared or cyclic references (an ORM parent whose children
   point back) was walked per path and could block the event loop; it is now walked per object.
-
 - **A full-app update stops every sidecar, detached ones included, before it quits.**
   `installAppUpdateAndRelaunch()` now returns a promise: it stops the app's sidecars and waits for
   them (a detached sidecar's shutdown went out from a promise continuation that a `force` quit
   never ran, so the sidecar kept running the old executable and, on Windows, held the install
   folder the swap must replace). A sidecar that cannot be stopped refuses the install with the new
   `AppUpdateError` code `sidecars_running`. Callers `await` it.
-
 - **A detached sidecar's log is rotated while it runs.** `logs: "file"` / `"both"` kept the
   documented 5 MB bound only when a fresh process started; the process now checks its own log
   every 10 s and rotates it to `.1` in place (copy, then truncate), so a sidecar that runs for days
@@ -151,12 +138,10 @@ and this project adheres to
   `gh attestation verify`'s own output, a checksum mismatch's expected and actual hashes, and long
   lines with a URL or a command to copy (warnings were wrapped the same way). Every line is now
   printed whole, followed by a one-line error.
-
 - **`denext runtime use <the bundled rollback> --project` writes the release's published
   integrity.** The rollback's pins were rebuilt with their keys in another order than the
   release document, so the pin's hash matched no channel entry and every other denext refused the
   project.
-
 - **`denext export` pre-renders only route handlers marked static, and never hangs on one.** As
   Next's `output: "export"` requires, a GET is written to its file only when the module exports
   `dynamic = "force-static"` (or a `revalidate` of `false` or a positive number); every other GET
@@ -169,7 +154,6 @@ and this project adheres to
 - **Exported files for params are written under their decoded names.** A `generateStaticParams`
   value such as `café` was written as `caf%C3%A9`, which a static host (decoding the URL) never
   served; a value that decodes to a path separator is skipped.
-
 - **`denext/desktop` and `denext/desktop/client` export every type their public types refer to**
   (`DesktopWindowLevel`, `TrayMouseDetail` and its `TrayModifiers` / `TrayEventType`,
   `StandardSchemaV1` and its result types, `SpaProxyConfig`, `DesktopUpdaterConfig`,
@@ -23341,7 +23325,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.22.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.23.0...development
+[4.23.0]: https://jsr.io/@denext/denext@4.23.0
 [4.22.0]: https://jsr.io/@denext/denext@4.22.0
 [4.21.0]: https://jsr.io/@denext/denext@4.21.0
 [4.20.1]: https://jsr.io/@denext/denext@4.20.1
