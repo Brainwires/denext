@@ -59,6 +59,21 @@ export const RUNTIME_COMPAT_EXCLUDED: Readonly<Record<string, readonly CompatExc
   "4.22": [
     { file: "tests/runtime-channel.test.ts", reason: CHANNEL_ENV },
     { file: "tests/runtime-select.test.ts", reason: PIN_FILE },
+    {
+      file: "tests/runtime-prune.test.ts",
+      reason: "asserts the bundled pin's version against a cache the candidate pin replaces",
+    },
+    {
+      file: "tests/desktop-sidecar-detached.test.ts",
+      reason:
+        "the first-attach deadline raced the child's import (test race, fixed in e945cc394), " +
+        "and 4.22.0's child exited twice on a module that fails to load (fixed in 2b95a8bfd)",
+    },
+    {
+      file: "tests/serial-tests.test.ts",
+      reason: "the re-emit test assumes a coverage report that skips a clobbered emit, which a " +
+        "runtime transpiling the module itself no longer does (test fixed in 1fdb2f6b1)",
+    },
   ],
 };
 
