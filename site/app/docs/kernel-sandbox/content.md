@@ -261,7 +261,7 @@ fixed the grant.
 | A packaged desktop app with `desktop.permissions: "strict"`                  | On (`enforce`). Any other desktop app stays off. See [Desktop and compiled apps](/docs/kernel-sandbox-desktop-and-compiled). |
 | `denext start`, the generated Docker image, the generated systemd unit       | On (`auto`).                                                                                                                 |
 | A bare non-interactive run: CI, a pipe, `--no-prompt`, no TTY                | On (`auto`).                                                                                                                 |
-| An interactive run that can prompt                                           | Off, as today. Prompts keep working.                                                                                         |
+| An interactive run that can prompt                                           | Only its `--deny-*` rules, as ceilings no prompt can lift (macOS); the rest stays off and prompts keep working.              |
 | `-A` / `--allow-all` with no `--deny-*`                                      | Off. There's nothing to narrow, so nothing changes.                                                                          |
 | `-A` with `--deny-*`                                                         | The denies are enforced where the kernel can express them exactly. The rest are reported.                                    |
 | `--watch`, HMR, `denext dev`                                                 | Off. They re-resolve modules after start, which a fixed policy can't serve.                                                  |

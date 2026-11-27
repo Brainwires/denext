@@ -163,9 +163,13 @@ Once the mode is known, the run's context decides what actually applies (`effect
 permission broker (`DENO_PERMISSION_BROKER_PATH`) can't use `enforce`. A prompt that would be
 possible doesn't stop `enforce`: it turns would-be prompts into denials.
 
-In the full sandbox, `auto` will choose `enforce` where the author fixed the permissions (a compiled
-program, or `auto` set explicitly) and `warn` where only the missing terminal or `--no-prompt` fixes
-them. In the preview it applies neither.
+In the full sandbox, `auto` will choose `enforce` wherever the permission set is fixed, and the
+broker where only Mode B holds a rule exactly. A run that can prompt keeps its prompts, and only
+its `--deny-*` rules are enforced, as ceilings no prompt can lift (held by the kernel on macOS;
+on Linux they stay Deno's checks for now, and the report says so). `-A` with `--deny-*` gets the
+same treatment. A mode `auto` chose never refuses to start: where neither Mode A nor Mode B can
+hold the grant, or the command isn't covered, it runs as `warn`. A packaged desktop app that isn't
+strict stays off. In the preview `auto` applies none of this.
 
 Jupyter builds its permissions separately, so the Jupyter kernel has no kernel sandbox layer yet,
 and `enforce` refuses to start there.
