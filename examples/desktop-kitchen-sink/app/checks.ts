@@ -35,6 +35,8 @@ import {
   appCapabilities,
   bounce,
   createTray,
+  getAppMenu,
+  getDockMenu,
   getLaunchAtLogin,
   isDesktopBridgeError,
   listShortcuts,
@@ -49,12 +51,18 @@ import {
   desktopExtension,
   desktopWebSocketUrl,
   desktopWsUrl,
+  killPty,
   onDesktopEvent,
+  ptyInfo,
+  spawnPty,
 } from "denext/desktop/client";
 import {
+  currentWindowId,
   focusWindow,
+  getPointer,
   getScreens,
   getTitleBarPreferences,
+  getWindowOrder,
   getWindows,
   getWindowState,
   maximizeWindow,
@@ -67,6 +75,7 @@ import {
   setWindowBackdrop,
   setWindowSize,
   setWindowTitle,
+  startDragSession,
   startFileDrag,
   unmaximizeWindow,
   windowCapabilities,
@@ -152,6 +161,9 @@ export interface CheckContext {
   readonly links: DeepLinkEvent[];
   readonly files: OpenedFile[];
 }
+
+/** A native menu item as `getAppMenu()` / `getDockMenu()` read it back. */
+type MenuItemRead = NonNullable<Awaited<ReturnType<typeof getAppMenu>>>[number];
 
 /** Thrown by a check that does not apply here; reported as `skip` with the reason. */
 class Skip extends Error {}
@@ -674,16 +686,43 @@ const windowChecks: Check[] = [
     // xfwm4 under Xvfb (the Linux CI session) answers `_NET_WM_STATE` late, past 5 s at times
     // (three desktop-window runs in October 2026), so the state change gets 10 s; a WM that
     // never answers still fails, with the state it reports.
+    // xfwm4 can also drop the request outright: the clamp check before this one lifts the maximum
+    // size and resizes without waiting for the WM, and a maximize that lands while the old maximum
+    // hint is still in force is ignored (run 45158824754). So the request is sent again every
+    // 2.5 s while waiting; maximizing an already maximized window changes nothing.
     const state = async () => JSON.stringify(await getWindowState());
+    const resend = (send: () => Promise<unknown>) => {
+      let last = Date.now();
+      return async () => {
+        if (Date.now() - last >= 2500) {
+          last = Date.now();
+          await send();
+        }
+      };
+    };
     await maximizeWindow();
+    const reMax = resend(maximizeWindow);
     await unlessTiled(
       "maximized",
-      () => waitFor(async () => (await getWindowState()).maximized, "maximized", 10_000, state),
+      () =>
+        waitFor(
+          async () => (await getWindowState()).maximized || (await reMax(), false),
+          "maximized",
+          10_000,
+          state,
+        ),
     );
     await unmaximizeWindow();
+    const reUnmax = resend(unmaximizeWindow);
     await unlessTiled(
       "unmaximized",
-      () => waitFor(async () => !(await getWindowState()).maximized, "unmaximized", 10_000, state),
+      () =>
+        waitFor(
+          async () => !(await getWindowState()).maximized || (await reUnmax(), false),
+          "unmaximized",
+          10_000,
+          state,
+        ),
     );
     return "ok";
   }],
@@ -1777,6 +1816,188 @@ const appChecks: Check[] = [
         await refocusMain({ focus: focusWindow, hasFocus: () => document.hasFocus() });
       }
       return `title "${SECONDARY_TITLE}"; click → ${got[0]} (${win.id})`;
+    },
+  ],
+  [
+    "windows: the stacking order puts the focused window in front, from the OS where it tells",
+    async ({ setup }) => {
+      if (!setup.pinnedRuntime) throw new Skip("the stock runtime has no window order");
+      const caps = await windowCapabilities();
+      // Wayland tells no app the stacking order: the focus order stands in for it there.
+      const expected = onWayland(caps, setup) ? "focus" : "os";
+      const main = await currentWindowId();
+      const win = await openWindow({
+        url: "/second",
+        title: "Kitchen order",
+        width: 360,
+        height: 240,
+      });
+      try {
+        await win.focus();
+        // The runtime's window ids map onto denext's: the window just focused is in front.
+        const order = await waitFor(
+          async () => {
+            const o = await getWindowOrder();
+            return o.ids[0] === win.id ? o : null;
+          },
+          `${win.id} in front`,
+          10_000,
+          async () => JSON.stringify(await getWindowOrder()),
+        );
+        eq(order.source, expected, "getWindowOrder().source");
+        assert(order.ids.includes(main), `the main window (${main}) is listed: ${order.ids}`);
+        return `${order.ids.join(" > ")} (${order.source})`;
+      } finally {
+        await win.close().catch(() => {});
+        await refocusMain({ focus: focusWindow, hasFocus: () => document.hasFocus() });
+      }
+    },
+  ],
+  [
+    "windows: the pointer, asked of the OS (null where the session does not tell)",
+    async ({ setup }) => {
+      if (!setup.pinnedRuntime) throw new Skip("the stock runtime has no pointer read");
+      const caps = await windowCapabilities();
+      const p = await getPointer();
+      if (onWayland(caps, setup)) {
+        eq(p, null, "getPointer() under Wayland");
+        return "null (Wayland)";
+      }
+      assert(p, "getPointer() answered null outside Wayland");
+      assert(Number.isFinite(p.x) && Number.isFinite(p.y), `coordinates ${p.x},${p.y}`);
+      assert(Number.isInteger(p.buttons) && p.buttons >= 0, `buttons ${p.buttons}`);
+      // The window under it is one of the app's (by denext's id) or none: never a runtime id.
+      if (p.window !== null) {
+        const ids = (await getWindows()).map((w) => w.id);
+        assert(ids.includes(p.window), `window ${p.window} is not one of ${ids}`);
+        assert(
+          Number.isFinite(p.clientX) && Number.isFinite(p.clientY),
+          `client coordinates for ${p.window}: ${p.clientX},${p.clientY}`,
+        );
+      }
+      return `${p.x},${p.y} buttons ${p.buttons} over ${p.window ?? "no app window"}`;
+    },
+  ],
+  [
+    "windows: a drag session asks the OS for the pointer (refused with no button held)",
+    async ({ setup }) => {
+      if (!setup.pinnedRuntime) throw new Skip("the stock runtime has no drag sessions");
+      const caps = await windowCapabilities();
+      const refused = await rejection(startDragSession({ data: { kitchen: true } }));
+      if (onWayland(caps, setup)) {
+        eq(refused, "unsupported", "startDragSession() under Wayland");
+        return "unsupported (Wayland)";
+      }
+      const p = await getPointer();
+      if (p && p.buttons !== 0) {
+        throw new Skip(
+          `a mouse button is held here (buttons ${p.buttons})`,
+        );
+      }
+      // Unattended nothing holds a button: the runtime sampled the pointer and refused the session.
+      eq(refused, "not_dragging", "startDragSession() with no button held");
+      return "not_dragging";
+    },
+  ],
+  ["pty: a terminal's foreground process, asked of the OS (ptyInfo)", async ({ setup }) => {
+    const windows = setup.os === "windows";
+    const spawn = windows
+      ? { shell: "C:\\Windows\\System32\\cmd.exe", args: ["/d", "/c", "ping -n 30 127.0.0.1 >nul"] }
+      // `exec`: a shell that forks its `-c` command (dash) without job control keeps it in the
+      // shell's own process group, whose leader (the shell) is the terminal's foreground process;
+      // bash execs a lone command itself. With `exec` sleep replaces the shell on every shell, so
+      // the OS must report the program now running, not the one spawned.
+      : { shell: "/bin/sh", args: ["-c", "exec sleep 30"] };
+    const term = await spawnPty({ cols: 80, rows: 24, ...spawn }).catch((err) => {
+      if (isDesktopBridgeError(err) && (err.code === "unsupported" || err.code === "unavailable")) {
+        throw new Skip(`no terminals here: ${err.message}`);
+      }
+      throw err;
+    });
+    try {
+      // The program the shell runs becomes the terminal's foreground process.
+      const expected = windows ? /^(ping|cmd)\.exe$/i : /^sleep$/;
+      const info = await waitFor(
+        async () => {
+          const i = await ptyInfo(term.id);
+          return i.process !== undefined && expected.test(i.process) ? i : null;
+        },
+        `the foreground process ${expected}`,
+        10_000,
+        async () => JSON.stringify(await ptyInfo(term.id)),
+      );
+      assert(info.pid > 0, `pid ${info.pid}`);
+      if (!windows) {
+        assert(info.tty, "no terminal device");
+        // The arguments are the running program's too, read from the OS (not the spawn's `sh -c`).
+        if (info.argv) {
+          assert(/(^|\/)sleep$/.test(info.argv[0] ?? ""), `argv ${JSON.stringify(info.argv)}`);
+        }
+      }
+      return `${info.process} (pid ${info.foregroundPid ?? info.pid}${
+        info.tty ? `, ${info.tty}` : ""
+      })`;
+    } finally {
+      await killPty(term.id, "SIGKILL").catch(() => {});
+    }
+  }],
+  [
+    "menus: the native app menu and Dock menu read back what was set",
+    async ({ setup }) => {
+      const caps = await appCapabilities();
+      if (caps.menuSnapshot !== true) {
+        throw new Skip(`this runtime has no menu read-back (menuSnapshot: ${caps.menuSnapshot})`);
+      }
+      await setAppMenu([
+        {
+          label: "Kitchen",
+          submenu: [{
+            id: "kitchen-readback",
+            label: "Read Back",
+            accelerator: "CommandOrControl+Shift+R",
+          }],
+        },
+      ]);
+      const find = (
+        items: readonly MenuItemRead[] | null,
+        id: string,
+      ): MenuItemRead | undefined => {
+        for (const item of items ?? []) {
+          if (item.id === id) return item;
+          const inner = find(item.submenu ?? null, id);
+          if (inner) return inner;
+        }
+        return undefined;
+      };
+      const item = await waitFor(
+        async () => find(await getAppMenu(), "kitchen-readback"),
+        "the app menu item read back",
+        5000,
+        async () => JSON.stringify(await getAppMenu()),
+      );
+      eq(item.label, "Read Back", "the item's label");
+      assert(item.accelerator?.endsWith("+R"), `the item's accelerator ${item.accelerator}`);
+      let dock = "n/a here";
+      if (setup.os === "darwin") {
+        await setQuickActions([{ id: "kitchen-readback-dock", title: "Read Back" }]);
+        try {
+          const entry = await waitFor(
+            async () =>
+              (await getDockMenu())?.find((i) =>
+                i.id === "kitchen-readback-dock" || i.label === "Read Back"
+              ),
+            "the Dock menu item read back",
+            5000,
+            async () => JSON.stringify(await getDockMenu()),
+          );
+          dock = `Dock "${entry.label}"`;
+        } finally {
+          await setQuickActions([]);
+        }
+      } else {
+        eq(await getDockMenu(), null, "getDockMenu() off macOS");
+      }
+      return `app menu "${item.label}" ${item.accelerator}; ${dock}`;
     },
   ],
   [

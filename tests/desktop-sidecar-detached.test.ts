@@ -32,6 +32,7 @@ import {
   listDetachedSidecars,
   newDetachedKey,
   parseDetachedRecord,
+  probeDetachedControl,
   readDetachedRecord,
   removeDetachedRecord,
   serveDetachedControl,
@@ -43,9 +44,11 @@ import {
 import {
   detachedChildInitError,
   type DetachedChildProcess,
+  rotateDetachedLog,
   runDetachedSidecarChild,
 } from "../src/desktop/sidecar-detached-child.ts";
-import { detachedSidecarLauncher } from "../src/desktop/sidecar-launch.ts";
+import { detachedInit, detachedSidecarLauncher } from "../src/desktop/sidecar-launch.ts";
+import { localIpcPath, registerLocalIpcAppId } from "../src/desktop/local-ipc.ts";
 import {
   createSidecarSupervisor,
   type SidecarClock,
@@ -207,8 +210,18 @@ Deno.test("detachedChildInitError: the init's fields are checked", () => {
   assertEquals(detachedChildInitError({ ...init, secrets: null }), "init.secrets");
   assertEquals(detachedChildInitError({ ...init, secrets: "s" }), "init.secrets");
   assertEquals(detachedChildInitError({ ...init, exitAfterMs: "1" }), "init.exitAfterMs");
+  assertEquals(detachedChildInitError({ ...init, logFile: "" }), "init.logFile");
+  assertEquals(detachedChildInitError({ ...init, logRotateBytes: 0 }), "init.logRotateBytes");
+  assertEquals(detachedChildInitError({ ...init, logCheckMs: "1" }), "init.logCheckMs");
+  assertEquals(detachedChildInitError({ ...init, appId: 1 }), "init.appId");
+  assertEquals(detachedChildInitError({ ...init, appId: "" }), "init.appId");
+  assertEquals(detachedChildInitError({ ...init, appId: "dev.example.app" }), null);
   // The optional fields, when present and well-formed, pass.
   assertEquals(detachedChildInitError({ ...init, port: 5000, exitAfterMs: 0 }), null);
+  assertEquals(
+    detachedChildInitError({ ...init, logFile: "/x/d.log", logRotateBytes: 10, logCheckMs: 5 }),
+    null,
+  );
 });
 
 Deno.test("currentAppVersion: the updater's version and the executable's stamp; dev unpackaged", () => {
@@ -307,39 +320,78 @@ Deno.test("parseDetachedRecord: a malformed or foreign record is refused", () =>
   assertEquals(parseDetachedRecord("[]"), null);
 });
 
-Deno.test("withDetachedLock: serializes two starts; a stale lock is broken; a held one times out", async () => {
+/**
+ * Hold the OS lock on `path` from another process until the returned function ends it: the
+ * process prints `locked` once it holds the lock.
+ */
+async function lockFromAnotherProcess(path: string): Promise<() => Promise<void>> {
+  const child = new Deno.Command(Deno.execPath(), {
+    args: [
+      "eval",
+      `const f = Deno.openSync(${JSON.stringify(path)}, { read: true, write: true, create: true });
+f.lockSync(true);
+console.log("locked");
+setTimeout(() => {}, 60_000);`,
+    ],
+    stdout: "piped",
+    stderr: "null",
+  }).spawn();
+  const reader = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
+  let seen = "";
+  while (!seen.includes("locked")) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error("the locking process ended early");
+    seen += value;
+  }
+  return async () => {
+    child.kill("SIGKILL");
+    await child.status;
+    await reader.cancel().catch(() => {});
+  };
+}
+
+Deno.test("withDetachedLock: two starts take turns; a held lock is never broken; the OS frees a dead holder's", async () => {
   const dir = await tempDir("lock");
   try {
+    // Two concurrent starters in one process: exactly one inside at a time, both run.
     const order: string[] = [];
-    await Promise.all([
+    let inside = 0;
+    const start = (tag: string) =>
       withDetachedLock(dir, "d", async () => {
-        order.push("a+");
-        await sleep(150);
-        order.push("a-");
-      }),
-      (async () => {
-        await sleep(20);
-        await withDetachedLock(dir, "d", () => {
-          order.push("b");
-          return Promise.resolve();
-        });
-      })(),
-    ]);
-    assertEquals(order, ["a+", "a-", "b"]);
-    // A lock its holder stopped refreshing (it is gone) is broken.
+        inside++;
+        assertEquals(inside, 1, "one start at a time");
+        order.push(`${tag}+`);
+        await sleep(100);
+        order.push(`${tag}-`);
+        inside--;
+      });
+    await Promise.all([start("a"), start("b")]);
+    assertEquals(order.length, 4);
+    assertEquals([order[0][0], order[1]], [order[0][0], `${order[0][0]}-`]);
+    // Held by another process: waited for, never broken, however old the file looks (a holder
+    // whose timers stalled, a machine that slept).
     const lock = join(dir, "d.lock");
-    await Deno.writeTextFile(lock, "{}");
-    const past = new Date(Date.now() - 60_000);
+    const release = await lockFromAnotherProcess(lock);
+    const past = new Date(Date.now() - 3600_000);
     await Deno.utime(lock, past, past);
-    assertEquals(await withDetachedLock(dir, "d", () => Promise.resolve(7)), 7);
-    // A fresh one is respected until the wait gives up.
-    await Deno.writeTextFile(lock, "{}");
+    let ran = false;
     await assertRejects(
-      () => withDetachedLock(dir, "d", () => Promise.resolve(), { timeoutMs: 200 }),
+      () =>
+        withDetachedLock(dir, "d", () => {
+          ran = true;
+          return Promise.resolve();
+        }, { timeoutMs: 300 }),
       Error,
       "holds the start lock",
     );
-    await Deno.remove(lock);
+    assertEquals(ran, false);
+    // Its holder dies (a crash, a kill): the OS frees the lock at once, no stale wait.
+    await release();
+    assertEquals(
+      await withDetachedLock(dir, "d", () => Promise.resolve(7), { timeoutMs: 2000 }),
+      7,
+    );
+    assert(await Deno.stat(lock).then(() => true), "the lock file is kept for the next start");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -368,6 +420,7 @@ async function testServer(key: string, opts: {
   pid?: number;
   appVersion?: string;
   name?: string;
+  port?: number;
 } = {}) {
   const shutdowns: number[] = [];
   const attached: number[] = [];
@@ -378,6 +431,7 @@ async function testServer(key: string, opts: {
       pid: opts.pid ?? 999_999,
       startedAt: 5,
       appVersion: opts.appVersion ?? "1.0.0",
+      ...(opts.port ? { port: opts.port } : {}),
     },
     onShutdown: (g) => {
       shutdowns.push(g);
@@ -520,7 +574,8 @@ Deno.test({
 });
 
 Deno.test({
-  name: "control: an oversized line, a slow handshake and too many pending connections are closed",
+  name:
+    "control: an oversized line and a slow handshake are closed; past the cap the oldest pending connection makes room",
   fn: async () => {
     const key = newDetachedKey();
     const { server } = await testServer(key, { handshakeMs: 300, maxPending: 2 });
@@ -533,23 +588,294 @@ Deno.test({
       await bigLine.send(JSON.stringify({ t: "hello", v: 1, nonce: "x".repeat(9000) }) + "\n");
       assertEquals(await bigLine.line(), null);
       bigLine.close();
-      // Silent: closed once the handshake budget passed.
-      const started = Date.now();
+      // Silent: closed by the server once its 300 ms handshake budget passed (long before the
+      // client's own 5 s wait would read "timeout").
       const slow = await raw(server.port);
-      assertEquals(await slow.line(2000), null);
-      assert(Date.now() - started < 1500);
+      assertEquals(await slow.line(5000), null);
       slow.close();
-      // Two pending connections fill the cap; a third is closed at once.
-      const a = await raw(server.port);
-      const b = await raw(server.port);
-      await sleep(50);
-      const c = await raw(server.port);
-      assertEquals(await c.line(250), null);
-      assertEquals(await a.line(100), "timeout"); // still open, waiting for its hello
+    } finally {
+      server.close();
+    }
+    // The pending cap, on a server whose handshake budget far outlasts the probes, so only the
+    // cap (never the budget) can close a connection here.
+    const capped = (await testServer(key, { handshakeMs: 60_000, maxPending: 2 })).server;
+    try {
+      // Two pending connections fill the cap, accepted in order; a third takes the oldest's place.
+      const a = await raw(capped.port);
+      assert(await waitFor(() => capped.pending() === 1, 5000), "one pending");
+      const b = await raw(capped.port);
+      assert(await waitFor(() => capped.pending() === 2, 5000), "two pending");
+      const c = await raw(capped.port);
+      assertEquals(await a.line(5000), null); // the oldest, closed to make room
+      assertEquals(await b.line(100), "timeout"); // still open, waiting for its hello
+      assertEquals(await c.line(100), "timeout");
+      // With the cap held by connections that say nothing, the app still attaches.
+      const session = await connectDetachedControl({ port: capped.port, key, name: "d" });
+      assert(session, "an authenticated client is heard past idle pending connections");
+      assert(await session.ping());
+      session.close();
       a.close();
       b.close();
       c.close();
     } finally {
+      capped.close();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "probeDetachedControl: refused or unproven is stale; accepted but unanswered is busy, waited for",
+  fn: async () => {
+    const key = newDetachedKey();
+    // Nothing listens: stale.
+    const gone = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const gonePort = (gone.addr as Deno.NetAddr).port;
+    gone.close();
+    assertEquals(await probeDetachedControl({ port: gonePort, key, timeoutMs: 200 }), {
+      state: "stale",
+    });
+    // A listening socket whose process never answers (an event loop blocked in synchronous
+    // work: the OS still accepts the connection): busy, never stale.
+    const blocked = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const blockedPort = (blocked.addr as Deno.NetAddr).port;
+    try {
+      assertEquals(
+        await probeDetachedControl({ port: blockedPort, key, timeoutMs: 100, busyWaitMs: 100 }),
+        { state: "busy", waitedMs: 200 },
+      );
+    } finally {
+      blocked.close();
+    }
+    // One that answers but cannot prove the key: stale.
+    const impostor = await testServer(newDetachedKey());
+    try {
+      assertEquals(await probeDetachedControl({ port: impostor.server.port, key }), {
+        state: "stale",
+      });
+    } finally {
+      impostor.server.close();
+    }
+    // A sidecar that answers only after the handshake budget, within the busy wait: a session.
+    const late = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const latePort = (late.addr as Deno.NetAddr).port;
+    const { server } = await testServer(key, { name: "d" });
+    const relay = (async () => {
+      // Accept late, then relay the connection to the real endpoint.
+      await sleep(300);
+      const inbound = await late.accept();
+      const outbound = await Deno.connect({ hostname: "127.0.0.1", port: server.port });
+      await Promise.allSettled([
+        inbound.readable.pipeTo(outbound.writable),
+        outbound.readable.pipeTo(inbound.writable),
+      ]);
+    })();
+    try {
+      const probe = await probeDetachedControl({
+        port: latePort,
+        key,
+        name: "d",
+        timeoutMs: 100,
+        busyWaitMs: 5000,
+      });
+      assertEquals(probe.state, "session");
+      if (probe.state === "session") probe.session.close();
+    } finally {
+      server.close();
+      late.close();
+      await relay.catch(() => {});
+    }
+  },
+});
+
+Deno.test({
+  name: "probeDetachedControl: a connect still pending past the budget is aborted and ended",
+  fn: async () => {
+    const key = newDetachedKey();
+    // One that ends when aborted (a refusal the OS reports only after its own retries).
+    let aborted: AbortSignal | undefined;
+    let ended = false;
+    const pending = (_port: number, signal: AbortSignal) => {
+      aborted = signal;
+      return new Promise<never>((_, reject) =>
+        signal.addEventListener("abort", () => {
+          ended = true;
+          reject(signal.reason);
+        }, { once: true })
+      );
+    };
+    assertEquals(await probeDetachedControl({ port: 1, key, timeoutMs: 20, connect: pending }), {
+      state: "stale",
+    });
+    assertEquals(aborted?.aborted, true);
+    assertEquals(ended, true, "the attempt ended before the probe answered");
+    // One whose connection arrives as the budget passes: closed, never left open.
+    let closed = 0;
+    const late = (_port: number, signal: AbortSignal) =>
+      new Promise<
+        { readable: ReadableStream<Uint8Array>; write(): Promise<number>; close(): void }
+      >(
+        (resolve) =>
+          signal.addEventListener("abort", () =>
+            resolve({
+              readable: new ReadableStream<Uint8Array>(),
+              write: () => Promise.resolve(0),
+              close: () => void closed++,
+            }), { once: true }),
+      );
+    assertEquals(await probeDetachedControl({ port: 1, key, timeoutMs: 20, connect: late }), {
+      state: "stale",
+    });
+    assertEquals(closed, 1);
+    // One that throws instead of returning a promise: stale.
+    const throws = () => {
+      throw new Error("no socket");
+    };
+    assertEquals(await probeDetachedControl({ port: 1, key, connect: throws }), { state: "stale" });
+  },
+});
+
+Deno.test({
+  name: "launcher: a recorded instance that is alive but busy fails the start; no second instance",
+  fn: async () => {
+    const data = await tempDir("busy");
+    const dir = detachedRegistryDir(data);
+    // The recorded sidecar's endpoint accepts (its process runs) but its event loop is blocked.
+    const blocked = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const key = newDetachedKey();
+    try {
+      await writeDetachedRecord(dir, record("daemon", (blocked.addr as Deno.NetAddr).port, key));
+      let spawned = false;
+      const child = new Proxy(NO_SPAWN, {
+        get(target, prop, recv) {
+          if (prop === "args") spawned = true;
+          return Reflect.get(target, prop, recv);
+        },
+      });
+      await assertRejects(
+        () =>
+          detachedSidecarLauncher({
+            child,
+            registryDir: dir,
+            appVersion: "1.0.0",
+            stopOptions: { busyWaitMs: 100 },
+          })(launchCtx(DAEMON, [])),
+        Error,
+        "is running but did not answer its control connection",
+      );
+      assertEquals(spawned, false, "no second instance is started");
+      assertEquals((await readDetachedRecord(dir, "daemon"))?.key, key, "its record is kept");
+      // Stopping it by name reports it as still running (its record removed, so it ends itself).
+      await assertRejects(
+        () => stopDetachedRecord(dir, "daemon", 0, { busyWaitMs: 100 }),
+        Error,
+        "is running but did not answer",
+      );
+      assertEquals(await readDetachedRecord(dir, "daemon"), null);
+    } finally {
+      blocked.close();
+      await Deno.remove(data, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "control: a connection closed before ok is asked again after retryMs; an endpoint that cannot prove the key never is",
+  fn: async () => {
+    const key = newDetachedKey();
+    const { server } = await testServer(key, { port: 6200 });
+    // An endpoint that closes every connection at once (a server holding its cap).
+    const closer = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const closerPort = (closer.addr as Deno.NetAddr).port;
+    const closing = (async () => {
+      for await (const conn of closer) conn.close();
+    })().catch(() => {});
+    try {
+      /** A `connect` whose first `closed` connections are closed before any answer. */
+      const flaky = (closed: number) => {
+        const state = { connects: 0 };
+        const connect = (port: number, signal: AbortSignal) =>
+          Deno.connect({
+            hostname: "127.0.0.1",
+            port: state.connects++ < closed ? closerPort : port,
+            signal,
+          });
+        return { state, connect };
+      };
+      const twice = flaky(2);
+      const s = await connectDetachedControl({
+        port: server.port,
+        key,
+        name: "d",
+        retryMs: [10, 10],
+        connect: twice.connect,
+      });
+      assert(s, "the third attempt authenticates");
+      assertEquals(twice.state.connects, 3);
+      assertEquals(s.info.port, 6200); // the sidecar's own port, from the authenticated ok
+      s.close();
+      // Out of attempts: not there.
+      const once = flaky(2);
+      assertEquals(
+        await connectDetachedControl({
+          port: server.port,
+          key,
+          retryMs: [10],
+          connect: once.connect,
+        }),
+        null,
+      );
+      assertEquals(once.state.connects, 2);
+      // The probe reads an endpoint that closed every attempt before its `ok` as stale.
+      const probed = flaky(2);
+      assertEquals(
+        await probeDetachedControl({
+          port: server.port,
+          key,
+          retryMs: [10],
+          connect: probed.connect,
+        }),
+        { state: "stale" },
+      );
+      assertEquals(probed.state.connects, 2);
+      // No retryMs: one attempt, as a fresh start's own connection makes.
+      const none = flaky(1);
+      assertEquals(
+        await connectDetachedControl({ port: server.port, key, connect: none.connect }),
+        null,
+      );
+      assertEquals(none.state.connects, 1);
+      // What answers without proving the key is not asked again.
+      const wrong = flaky(0);
+      assertEquals(
+        await connectDetachedControl({
+          port: server.port,
+          key: newDetachedKey(),
+          retryMs: [10, 10],
+          connect: wrong.connect,
+        }),
+        null,
+      );
+      assertEquals(wrong.state.connects, 1);
+      // Nothing listening is not asked again either.
+      const gone = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+      const gonePort = (gone.addr as Deno.NetAddr).port;
+      gone.close();
+      const absent = flaky(0);
+      assertEquals(
+        await connectDetachedControl({
+          port: gonePort,
+          key,
+          retryMs: [10, 10],
+          connect: absent.connect,
+        }),
+        null,
+      );
+      assertEquals(absent.state.connects, 1);
+    } finally {
+      closer.close();
+      await closing;
       server.close();
     }
   },
@@ -971,6 +1297,64 @@ Deno.test({
 
 Deno.test({
   name:
+    "launcher: a reattached instance's port is the one its authenticated ok reports, whatever the record says",
+  fn: async () => {
+    const data = await tempDir("reattach-port");
+    const dir = detachedRegistryDir(data);
+    const key = newDetachedKey();
+    const { server } = await testServer(key, { name: "daemon", port: 6200 });
+    try {
+      await writeDetachedRecord(dir, record("daemon", server.port, key, { port: 6100 }));
+      const inst = await detachedSidecarLauncher({
+        child: NO_SPAWN,
+        registryDir: dir,
+        appVersion: "1.0.0",
+      })(launchCtx(DAEMON, []));
+      assertEquals([inst.reattached, inst.port], [true, 6200]);
+      inst.detach!();
+      await inst.exited;
+    } finally {
+      server.close();
+      await Deno.remove(data, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "launcher: a running instance is reattached while unauthenticated connections hold its endpoint's cap",
+  fn: async () => {
+    const data = await tempDir("reattach-busy");
+    const dir = detachedRegistryDir(data);
+    const key = newDetachedKey();
+    const { server, shutdowns } = await testServer(key, { name: "daemon" });
+    const idle: Awaited<ReturnType<typeof raw>>[] = [];
+    try {
+      await writeDetachedRecord(dir, record("daemon", server.port, key, {}));
+      // The default cap of connections that never say hello.
+      for (let i = 0; i < 16; i++) idle.push(await raw(server.port));
+      await sleep(50);
+      // No app to spawn: this start succeeds only by reattaching the recorded instance.
+      const inst = await detachedSidecarLauncher({
+        child: NO_SPAWN,
+        registryDir: dir,
+        appVersion: "1.0.0",
+      })(launchCtx(DAEMON, []));
+      assertEquals(inst.reattached, true);
+      assert(await readDetachedRecord(dir, "daemon"), "the record is kept");
+      assertEquals(shutdowns, []);
+      inst.detach!();
+      await inst.exited;
+    } finally {
+      for (const c of idle) c.close();
+      server.close();
+      await Deno.remove(data, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name:
     "launcher: another app version's instance is shut down and replaced; keepAcrossUpdates keeps it",
   ...FAILED_SPAWN,
   fn: async () => {
@@ -1209,12 +1593,16 @@ Deno.test({
       await sleep(50); // its exit reaches the child handle
     };
     try {
-      // Ends before it reports its endpoint (it read the init first: no broken pipe).
+      // Ends before it reports its endpoint (it read the init first: no broken pipe). Its init
+      // names the log and its size, so the process rotates its own log while it runs.
       await assertRejects(
-        () => start('read -r init <&"$fd"; exit 3'),
+        () => start('read -r init <&"$fd"; echo "$init"; exit 3', DAEMON, 4096),
         Error,
         "exited before it served its control endpoint (3)",
       );
+      const init = JSON.parse((await Deno.readTextFile(logFile)).trim().split("\n").at(-1)!);
+      assertEquals([init.logFile, init.logRotateBytes], [logFile, 4096]);
+      await Deno.remove(logFile);
       // Never answers: the ready budget runs out and the process is killed by its handle.
       await Deno.writeTextFile(logFile, "x".repeat(64)); // a log past its size is rotated
       await assertRejects(
@@ -1264,15 +1652,38 @@ Deno.test({
 const FIXTURE = new URL("./fixtures/sidecar-detached/", import.meta.url);
 const CONFIG = fromFileUrl(new URL("../deno.json", import.meta.url));
 
-/** The pids of processes whose command line has `marker`. */
-async function pidsOf(marker: string): Promise<number[]> {
-  const out = await new Deno.Command("pgrep", { args: ["-f", marker], stdout: "piped" }).output();
-  return new TextDecoder().decode(out.stdout).split("\n").filter(Boolean).map(Number);
+/**
+ * Whether process `pid` is running, asked of the OS: `tasklist` on Windows, signal 0 elsewhere
+ * (the detached processes are not this test's children: once ended, init reaps them).
+ */
+async function processRunning(pid: number): Promise<boolean> {
+  if (Deno.build.os !== "windows") return processExists(pid);
+  const out = await new Deno.Command("tasklist", {
+    args: ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"],
+    stdout: "piped",
+    stderr: "null",
+  }).output();
+  return new TextDecoder().decode(out.stdout).includes(`"${pid}"`);
 }
 
-/** End every process carrying `marker` (this test's own children only: the marker is unique). */
-async function killMarked(marker: string): Promise<void> {
-  for (const pid of await pidsOf(marker)) {
+/**
+ * The running processes of the fixture's detached sidecar: each writes its pid as a file under
+ * `pidDir` (its `marker` argument) when it starts, and the OS says which still run.
+ */
+async function pidsOf(pidDir: string): Promise<number[]> {
+  const pids: number[] = [];
+  try {
+    for await (const e of Deno.readDir(pidDir)) {
+      const pid = Number(e.name);
+      if (Number.isSafeInteger(pid) && pid > 0 && await processRunning(pid)) pids.push(pid);
+    }
+  } catch { /* none started yet */ }
+  return pids.sort((a, b) => a - b);
+}
+
+/** End every process the fixture recorded under `pidDir` (this test's own, by its pid). */
+async function killMarked(pidDir: string): Promise<void> {
+  for (const pid of await pidsOf(pidDir)) {
     try {
       Deno.kill(pid, "SIGKILL");
     } catch { /* gone */ }
@@ -1315,13 +1726,16 @@ async function launchApp(
   return lines;
 }
 
-/** Run `fn` with a fresh data folder and marker, ending every marked process afterwards. */
+/**
+ * Run `fn` with a fresh data folder and marker (the folder the sidecar records its pid in),
+ * ending every recorded process afterwards.
+ */
 async function withApp(
   name: string,
   fn: (data: string, marker: string) => Promise<void>,
 ): Promise<void> {
   const data = await tempDir(name);
-  const marker = `DENEXT_DETACHED_TEST_${crypto.randomUUID().replaceAll("-", "")}`;
+  const marker = join(data, "pids");
   try {
     await fn(data, marker);
   } finally {
@@ -1331,11 +1745,8 @@ async function withApp(
   }
 }
 
-const REAL = { ignore: Deno.build.os === "windows" } as const;
-
 Deno.test({
   name: "real: a detached sidecar outlives its app; the next launch reattaches and stops it",
-  ...REAL,
   fn: () =>
     withApp("lifecycle", async (data, marker) => {
       const first = (await launchApp("exit", data, marker, "1.0.0")).STATUS;
@@ -1372,7 +1783,6 @@ Deno.test({
 
 Deno.test({
   name: "real: a detached sidecar whose registry record is deleted ends itself",
-  ...REAL,
   fn: () =>
     withApp("record", async (data, marker) => {
       const status = (await launchApp("exit", data, marker, "1.0.0", { pollMs: 200 })).STATUS;
@@ -1387,7 +1797,6 @@ Deno.test({
 
 Deno.test({
   name: "real: detached.exitAfterMs ends it once no app was attached that long",
-  ...REAL,
   fn: () =>
     withApp("idle", async (data, marker) => {
       const status = (await launchApp("exit", data, marker, "1.0.0", {
@@ -1403,7 +1812,6 @@ Deno.test({
 
 Deno.test({
   name: "real: an impostor on the recorded control port is refused and the record replaced",
-  ...REAL,
   fn: () =>
     withApp("impostor", async (data, marker) => {
       const first = (await launchApp("exit", data, marker, "1.0.0")).STATUS;
@@ -1446,7 +1854,6 @@ Deno.test({
 
 Deno.test({
   name: "real: another app version replaces the running detached sidecar",
-  ...REAL,
   fn: () =>
     withApp("update", async (data, marker) => {
       const first = (await launchApp("exit", data, marker, "1.0.0")).STATUS;
@@ -1517,6 +1924,7 @@ async function startDetachedChild(opts: {
   dir: string;
   init?: Record<string, unknown>;
   firstAttachMs?: number;
+  armFirstAttach?: (fire: () => void, ms: number) => ReturnType<typeof setTimeout>;
   writeRecord?: boolean;
   entry?: string;
 }) {
@@ -1534,6 +1942,7 @@ async function startDetachedChild(opts: {
     process: proc,
     exit: (code) => exits.push(code),
     firstAttachMs: opts.firstAttachMs ?? 10_000,
+    ...(opts.armFirstAttach ? { armFirstAttach: opts.armFirstAttach } : {}),
   });
   proc.emit("message", { t: "status" }); // not the init: ignored
   proc.emit("message", {
@@ -1732,13 +2141,69 @@ Deno.test("runDetachedSidecarChild: no app attaching after the start ends it", a
   const dir = await tempDir("child-first");
   try {
     const order: string[] = [];
-    const started = Date.now();
-    const { exits, sidecar } = await startDetachedChild({ dir, firstAttachMs: 80 });
+    // The deadline is armed (with its budget) before the module is imported; the test fires it
+    // once the module's shutdown handler is in place, so no wall clock decides the order.
+    const armed: Array<{ fire: () => void; ms: number }> = [];
+    const { exits, sidecar } = await startDetachedChild({
+      dir,
+      firstAttachMs: 80,
+      armFirstAttach: (fire, ms) => {
+        armed.push({ fire, ms });
+        return setTimeout(() => {}, 0);
+      },
+    });
+    assertEquals(armed.map((a) => a.ms), [80]);
     sidecar.onShutdown(() => void order.push("handler"));
-    assert(await waitFor(() => exits.length >= 1, 3000));
-    assert(Date.now() - started >= 70);
+    assertEquals(exits, [], "nothing ends it before its deadline");
+    armed[0].fire();
+    assert(await waitFor(() => exits.length >= 1, 5000));
     assertEquals(exits[0], 0);
     assertEquals(order, ["handler"]);
+    assert(await waitFor(() => exits.length === 2, 2000));
+  } finally {
+    clearDetachedChildGlobal();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("rotateDetachedLog: past the size the log moves to .1 and the open append descriptor writes anew", async () => {
+  const dir = await tempDir("log-rotate");
+  const log = join(dir, "sidecar-d.log");
+  const fs = await import("node:fs");
+  // The descriptor the app opened for the process's output (append mode), kept open.
+  const fd = fs.openSync(log, "a", 0o600);
+  try {
+    fs.writeSync(fd, "old-".repeat(10)); // 40 bytes
+    assertEquals(await rotateDetachedLog(log, 100), false, "under the size: left alone");
+    fs.writeSync(fd, "old-".repeat(20)); // 120 bytes
+    assertEquals(await rotateDetachedLog(log, 100), true);
+    assertEquals(await Deno.readTextFile(`${log}.1`), "old-".repeat(30));
+    // The process keeps writing through the same descriptor: into the emptied file.
+    fs.writeSync(fd, "new");
+    assertEquals(await Deno.readTextFile(log), "new");
+    // A missing log is no error.
+    assertEquals(await rotateDetachedLog(join(dir, "none.log"), 1), false);
+  } finally {
+    fs.closeSync(fd);
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("runDetachedSidecarChild: its log is rotated while it runs, not only at a start", async () => {
+  const dir = await tempDir("child-log");
+  const log = join(dir, "sidecar-d.log");
+  try {
+    await Deno.writeTextFile(log, "x".repeat(64));
+    const { exits, key, control } = await startDetachedChild({
+      dir,
+      init: { logFile: log, logRotateBytes: 32, logCheckMs: 20 },
+    });
+    assert(await waitFor(async () => (await Deno.stat(log)).size === 0, 3000), "rotated");
+    assertEquals(await Deno.readTextFile(`${log}.1`), "x".repeat(64));
+    const s = await connectDetachedControl({ port: control.port, key, name: "d" });
+    assert(s);
+    assert(await s.shutdown(20));
+    // The shutdown's own exit, then its grace's (each `exit` is a fake here).
     assert(await waitFor(() => exits.length === 2, 2000));
   } finally {
     clearDetachedChildGlobal();
@@ -1763,6 +2228,34 @@ Deno.test("runDetachedSidecarChild: a record another start replaced ends it at t
     const end = await s.closed;
     assertEquals(end.bye?.reason, "its registry record is gone or was replaced");
     assertEquals(exits[0], 0);
+    assert(await waitFor(() => exits.length === 2, 2000));
+  } finally {
+    clearDetachedChildGlobal();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("runDetachedSidecarChild: a record that cannot be read just now does not end it", async () => {
+  const dir = await tempDir("child-unreadable");
+  try {
+    const { exits, key, control, recordDir, recordPath } = await startDetachedChild({
+      dir,
+      init: { recordPollMs: 30 },
+    });
+    const s = await connectDetachedControl({ port: control.port, key, name: "d" });
+    assert(s);
+    // The read fails with something other than NotFound (here: a folder in its place, as a
+    // scanner holding the file or no free descriptors would): checked again, never an end.
+    await Deno.remove(recordPath);
+    await Deno.mkdir(recordPath);
+    await sleep(300);
+    assertEquals(exits, []);
+    assert(s.open);
+    // Readable again, naming another start: it ends at the next check.
+    await Deno.remove(recordPath);
+    await writeDetachedRecord(recordDir, record("d", 1, newDetachedKey()));
+    const end = await s.closed;
+    assertEquals(end.bye?.reason, "its registry record is gone or was replaced");
     assert(await waitFor(() => exits.length === 2, 2000));
   } finally {
     clearDetachedChildGlobal();
@@ -1823,6 +2316,30 @@ Deno.test("runDetachedSidecarChild: exitAfterMs ends it once no app was attached
   }
 });
 
+Deno.test("runDetachedSidecarChild: a module that fails after the first-attach deadline ended the start exits once, with 0", async () => {
+  const dir = await tempDir("child-late-fail");
+  const errors: unknown[][] = [];
+  const realError = console.error;
+  console.error = (...args: unknown[]) => void errors.push(args);
+  try {
+    // The module outlives the 50 ms deadline, then throws: the shutdown the deadline began ends
+    // the process, and the failure is only reported (no exit 1 after it).
+    const entry = "data:text/javascript," +
+      encodeURIComponent(
+        `await new Promise((r) => setTimeout(r, 400)); throw new Error("late boom ${crypto.randomUUID()}");`,
+      );
+    const { exits } = await startDetachedChild({ dir, entry, firstAttachMs: 50 });
+    assert(exits.length >= 1);
+    assert(exits.every((c) => c === 0));
+    assertEquals(errors.length, 1);
+    assertMatch(String(errors[0][0]), /^sidecar d: Error: late boom/);
+  } finally {
+    console.error = realError;
+    clearDetachedChildGlobal();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("runDetachedSidecarChild: a module that fails to load is reported and exits 1", async () => {
   const dir = await tempDir("child-fail");
   const errors: unknown[][] = [];
@@ -1832,7 +2349,8 @@ Deno.test("runDetachedSidecarChild: a module that fails to load is reported and 
     const { exits, sent } = await startDetachedChild({
       dir,
       entry: `data:text/javascript,throw new Error("module boom ${crypto.randomUUID()}");`,
-      firstAttachMs: 100,
+      // Room for the import on a slow runner: an expired deadline would end it first (exit 0).
+      firstAttachMs: 2000,
     });
     assertEquals((sent[0] as { t: string }).t, "control");
     assertEquals(exits, [1]);
@@ -1843,6 +2361,40 @@ Deno.test("runDetachedSidecarChild: a module that fails to load is reported and 
     assertEquals(exits, [1]);
   } finally {
     console.error = realError;
+    clearDetachedChildGlobal();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+// ── local IPC inside a detached sidecar: the app's identifier travels in the init ──────────────
+
+Deno.test("detachedInit: carries the identifier the app registered, and none when it has none", () => {
+  const o = { child: NO_SPAWN, registryDir: "/x", appVersion: "1.0.0" };
+  const start = { key: "k", startedAt: 1 };
+  try {
+    registerLocalIpcAppId("dev.example.app");
+    assertEquals(detachedInit(o, launchCtx(DAEMON, []), start).appId, "dev.example.app");
+    registerLocalIpcAppId(undefined);
+    assertEquals("appId" in detachedInit(o, launchCtx(DAEMON, []), start), false);
+  } finally {
+    registerLocalIpcAppId(undefined);
+  }
+});
+
+Deno.test("runDetachedSidecarChild: the init's appId makes localIpcPath(name) work with no appId", async () => {
+  const dir = await tempDir("child-appid");
+  try {
+    registerLocalIpcAppId(undefined);
+    const { exits } = await startDetachedChild({
+      dir,
+      init: { appId: "dev.example.app" },
+      firstAttachMs: 300,
+    });
+    assertEquals(localIpcPath("ptyd"), localIpcPath("ptyd", { appId: "dev.example.app" }));
+    // No app attaches: it ends itself (the shutdown, then the grace exit).
+    assert(await waitFor(() => exits.length === 2, 5000));
+  } finally {
+    registerLocalIpcAppId(undefined);
     clearDetachedChildGlobal();
     await Deno.remove(dir, { recursive: true });
   }

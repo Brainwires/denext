@@ -77,7 +77,13 @@ export {
   type SystemStatsWatchOptions,
 } from "./system-stats-client.ts";
 import type { SidecarInfo, SidecarStatus } from "./sidecar.ts";
-export type { SidecarInfo, SidecarState, SidecarStatus } from "./sidecar.ts";
+export type {
+  SidecarExit,
+  SidecarExposedValue,
+  SidecarInfo,
+  SidecarState,
+  SidecarStatus,
+} from "./sidecar.ts";
 
 /** The operating system a Deno Desktop app runs on, as Deno spells it (`Deno.build.os`). */
 export type DesktopOs =

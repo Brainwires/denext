@@ -9,6 +9,7 @@ import {
   assertFalse,
   assertRejects,
   assertStringIncludes,
+  assertThrows,
 } from "@std/assert";
 import { join } from "@std/path";
 import {
@@ -42,12 +43,15 @@ import {
   maybeReexecToolchain,
   type ReexecToolchainDeps,
   revocationCheckFor,
+  runtimeNoticeFor,
 } from "../src/cli/self-exec.ts";
 import { runtimeRevocationsCheck } from "../src/cli/commands/doctor.ts";
 import {
   main as pinMain,
   type PinFile,
+  revokedFrom,
   rollbackFor,
+  rollbackProblem,
   runtimeRollbackOf,
   type ToolchainPinFile,
   toolchainRollbackOf,
@@ -301,6 +305,15 @@ Deno.test("the list is not consulted for a pin override or a given pin; the tool
   } finally {
     await w.close();
   }
+});
+
+Deno.test("start and job never ask for the newer-runtime notice (it may read the network)", () => {
+  assertEquals(runtimeNoticeFor({ name: "start" }), false);
+  assertEquals(runtimeNoticeFor({ name: "job" }), false);
+  assertEquals(runtimeNoticeFor({ name: "dev" }), true);
+  assertEquals(runtimeNoticeFor({ name: "build" }), true);
+  // A project or plugin verb that happens to be named so is not the production boot.
+  assertEquals(runtimeNoticeFor({ name: "start", source: "project" }), true);
 });
 
 Deno.test("start and job read only the cached list: a stale list is never fetched at boot", async () => {
@@ -661,7 +674,7 @@ function pins(
     deno: "9.9.9",
     denoSha: "",
     laufeySha: "",
-    laufeyApiVersion: null,
+    laufeyApiVersion: 58,
     targets: {},
   };
   const toolchain: ToolchainPinFile = {
@@ -679,6 +692,41 @@ function pins(
     toolchain: { ...toolchain, rollback: toolchainRollbackOf(prev.toolchain) },
   };
 }
+
+Deno.test("rollbackProblem: a rollback this denext could not run (floor, laufey API, esbuild)", () => {
+  const ok = pins("3.0.0-denext.30");
+  const rb = {
+    runtime: runtimeRollbackOf(ok.runtime),
+    toolchain: toolchainRollbackOf(ok.toolchain),
+  };
+  assertEquals(rollbackProblem(rb, { minRuntime: "3.0.0-denext.25" }), null);
+  assertEquals(rollbackProblem({}), null);
+  assertStringIncludes(
+    rollbackProblem(rb, { minRuntime: "3.0.0-denext.31" })!,
+    "older than 3.0.0-denext.31",
+  );
+  const oldLaufey = { ...rb, runtime: { ...rb.runtime, laufeyApiVersion: 57 } };
+  assertStringIncludes(rollbackProblem(oldLaufey, { minRuntime: "0.0.0" })!, "laufey API 57");
+  const noLaufey = { ...rb, runtime: { ...rb.runtime, laufeyApiVersion: null } };
+  assertStringIncludes(rollbackProblem(noLaufey, { minRuntime: "0.0.0" })!, "laufey API (none)");
+  const cli = { file: "x.zip", url: "u", sha256: "0".repeat(64), size: 1, format: "zip" as const };
+  const otherEsbuild = {
+    ...rb,
+    toolchain: {
+      ...rb.toolchain,
+      targets: { "x": { ...cli, esbuild: { version: "0.24.0", sha256: "0".repeat(64) } } },
+    },
+  };
+  assertStringIncludes(rollbackProblem(otherEsbuild, { minRuntime: "0.0.0" })!, "esbuild 0.24.0");
+  const noEsbuild = { ...rb, toolchain: { ...rb.toolchain, targets: { "x": cli } } };
+  assertStringIncludes(rollbackProblem(noEsbuild, { minRuntime: "0.0.0" })!, "esbuild (none)");
+});
+
+Deno.test("revokedFrom: a list that could not be read refuses, never reads as nothing revoked", async () => {
+  assertThrows(() => revokedFrom({ list: null }), Error, "could not be read");
+  const check = revokedFrom({ list: { revoked: [{ version: "3.0.0-denext.26" }] } });
+  assertEquals([await check("3.0.0-denext.26"), await check("3.0.0-denext.27")], [true, false]);
+});
 
 Deno.test("rollbackFor: the replaced pin, unless it is the same release or itself revoked", async () => {
   const notRevoked = () => Promise.resolve(false);
@@ -731,7 +779,7 @@ async function releaseFiles(
     version,
     tag,
     deno: { version: "2.9.7", sha: "abc" },
-    laufey: { sha: "def", apiVersion: 3 },
+    laufey: { sha: "def", apiVersion: 58 },
     targets: {
       "x86_64-apple-darwin": {
         runtimeLib: "libdenort.dylib",
@@ -748,6 +796,7 @@ async function releaseFiles(
           sha256: sha(2),
           size: 5002,
           format: "zip",
+          esbuild: { version: "0.25.5", sha256: sha(3) },
         },
       },
     },
@@ -834,6 +883,17 @@ Deno.test("desktop:pin-runtime writes the replaced pins as the new pins' rollbac
     await write(pins("2.9.7-denext.4", "2.9.7-denext.3"));
     const floored = await run(["2.9.7-denext.4"], [], "2.9.7-denext.4");
     assertEquals([floored.runtime.rollback, floored.toolchain.rollback], [undefined, undefined]);
+    // A replaced pin whose Deno Desktop runtime is below the laufey API denext needs: dropped too.
+    const lowLaufey = pins("2.9.7-denext.4", "2.9.7-denext.3");
+    await write({ ...lowLaufey, runtime: { ...lowLaufey.runtime, laufeyApiVersion: 40 } });
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      const dropped = await run([]);
+      assertEquals([dropped.runtime.rollback, dropped.toolchain.rollback], [undefined, undefined]);
+    } finally {
+      console.warn = warn;
+    }
   } finally {
     console.log = log;
     await Deno.remove(dir, { recursive: true });

@@ -14,6 +14,8 @@ import {
   channelMinSequenceIn,
   type CompatLeg,
   compatLegs,
+  compatRunRefusal,
+  compatRunTitle,
   entriesText,
   main,
   publishedBundledPinRefusal,
@@ -172,7 +174,12 @@ async function world(over: Partial<ChannelDeps> = {}): Promise<World> {
   const run = async (cmd: string, args: string[], stdin?: string): Promise<RunResult> => {
     w.calls.push({ cmd, args, ...(stdin !== undefined ? { stdin } : {}) });
     if (cmd === "security") return fakeSecurity(w.keychain, args, stdin);
-    if (cmd === "gh") return gh(args, stdin);
+    if (cmd === "gh") {
+      const result = gh(args, stdin);
+      // The mirror branch moved: the mirror base now serves what the web base does.
+      if (result.code === 0 && args[3]?.includes("git/refs")) mirrorWeb(w);
+      return result;
+    }
     if (cmd === "rsync") {
       for (const [rel, text] of await staged(args.at(-2)!.replace(/\/$/, ""))) {
         w.web.push([rel, text]);
@@ -259,7 +266,7 @@ Deno.test("publish: green on both legs → entry, signed index, document before 
   const w = await withKey();
   try {
     const out = join(w.dir, "out");
-    await main(["publish", TAG, "--out", out, "--security"], w.deps);
+    await main(["publish", TAG, "--first", "--out", out, "--security"], w.deps);
     assertEquals(w.compatCalls, [TAG]);
     const [entry] = readEntries(JSON.parse(await Deno.readTextFile(w.deps.entriesFile!)));
     assertEquals(entry.version, VERSION);
@@ -329,7 +336,7 @@ Deno.test("publish --bundled: only for the checked-out pin or its rollback, with
   try {
     const out = join(w.dir, "out");
     await assertRejects(
-      () => main(["publish", TAG, "--bundled", "--out", out, "--no-publish"], w.deps),
+      () => main(["publish", TAG, "--first", "--bundled", "--out", out, "--no-publish"], w.deps),
       Error,
       "--min-denext",
     );
@@ -356,6 +363,7 @@ Deno.test("publish --bundled: only for the checked-out pin or its rollback, with
       "--out",
       out,
       "--no-publish",
+      "--first",
     ], w.deps);
     assertEquals(w.compatCalls, [], "no compat run for a bundled release");
     assertEquals(
@@ -374,6 +382,7 @@ Deno.test("publish --bundled: only for the checked-out pin or its rollback, with
       "--out",
       out,
       "--no-publish",
+      "--first",
     ], w.deps);
     const versions = readEntries(JSON.parse(await Deno.readTextFile(w.deps.entriesFile!))).map((
       e,
@@ -388,8 +397,8 @@ Deno.test("publish: a listed version keeps its document; another document for it
   const w = await withKey();
   try {
     const out = join(w.dir, "out");
-    await main(["publish", TAG, "--out", out, "--no-publish"], w.deps);
-    await main(["publish", TAG, "--out", out, "--no-publish"], w.deps);
+    await main(["publish", TAG, "--first", "--out", out, "--no-publish"], w.deps);
+    await main(["publish", TAG, "--first", "--out", out, "--no-publish"], w.deps);
     assertStringIncludes(w.logged.join("\n"), `kept ${VERSION}`);
     const changed = await withKey();
     try {
@@ -399,7 +408,7 @@ Deno.test("publish: a listed version keeps its document; another document for it
       (changed.deps as { releaseDocument: ChannelDeps["releaseDocument"] }).releaseDocument = () =>
         Promise.resolve(other);
       await assertRejects(
-        () => main(["publish", TAG, "--out", out, "--no-publish"], changed.deps),
+        () => main(["publish", TAG, "--first", "--out", out, "--no-publish"], changed.deps),
         Error,
         "never changes",
       );
@@ -411,16 +420,75 @@ Deno.test("publish: a listed version keeps its document; another document for it
   }
 });
 
-Deno.test("publish: an entries file that drops a published release is refused", async () => {
+Deno.test("publish: signing starts from the published entries, never a stale checkout's", async () => {
   const w = await withKey();
   try {
-    await main(["publish", TAG, "--out", join(w.dir, "out")], w.deps);
+    const out = join(w.dir, "out");
+    await main(["publish", TAG, "--first", "--out", out], w.deps);
+    await main(["yank", VERSION, "--reason", "crashes on start", "--out", out], w.deps);
+    // A checkout without the yank (or without the release at all) publishes the next release:
+    // the published entries are kept, the yank is not undone, and the file catches up.
+    for (const stale of ['{ "releases": [] }\n', JSON.stringify({ releases: [] })]) {
+      await Deno.writeTextFile(w.deps.entriesFile!, stale);
+      w.logged.length = 0;
+      await main(["publish", `denext-runtime-v${NEXT}`, "--out", out], w.deps);
+      assertStringIncludes(w.logged.join("\n"), "starting from the published entries");
+      const index = await verifyRuntimeChannel(published(w)!, [w.pub], { now: T });
+      const old = index!.releases.find((r) => r.version === VERSION);
+      assertEquals(old?.yanked, { reason: "crashes on start" });
+      assert(index!.releases.some((r) => r.version === NEXT));
+      const file = readEntries(JSON.parse(await Deno.readTextFile(w.deps.entriesFile!)));
+      assertEquals(file.find((r) => r.version === VERSION)?.yanked?.reason, "crashes on start");
+    }
+    // Without an agreed index (--first), an entries file that drops a release a base lists is
+    // still refused.
+    w.served.delete(new URL("channel.json", CHANNEL_BASES[1]).href);
     await Deno.writeTextFile(w.deps.entriesFile!, '{ "releases": [] }\n');
     await assertRejects(
-      () => main(["publish", `denext-runtime-v${NEXT}`, "--no-publish"], w.deps),
+      () => main(["publish", `denext-runtime-v${NEXT}`, "--first", "--no-publish"], w.deps),
       Error,
       "leaves out",
     );
+  } finally {
+    await cleanup(w);
+  }
+});
+
+Deno.test("publish / yank / resign: refused unless every base serves the same verified index", async () => {
+  const w = await withKey();
+  try {
+    const out = join(w.dir, "out");
+    await main(["publish", TAG, "--first", "--out", out], w.deps);
+    const mirrorIndex = new URL("channel.json", CHANNEL_BASES[1]).href;
+    const stale = w.served.get(mirrorIndex)!;
+    await main(["yank", VERSION, "--reason", "broken", "--out", out], w.deps);
+    // The mirror push failed once: it still serves the index before the yank.
+    w.served.set(mirrorIndex, stale);
+    for (
+      const args of [["resign"], ["yank", VERSION, "--reason", "x"], [
+        "publish",
+        `denext-runtime-v${NEXT}`,
+      ]]
+    ) {
+      await assertRejects(
+        () => main([...args, "--no-publish", "--out", out], w.deps),
+        Error,
+        "the bases serve different indexes",
+      );
+    }
+    await assertRejects(() => main(["verify"], w.deps), Error, "different indexes");
+    // A base that serves nothing is no agreement either.
+    w.served.delete(mirrorIndex);
+    await assertRejects(
+      () => main(["resign", "--no-publish", "--out", out], w.deps),
+      Error,
+      `${CHANNEL_BASES[1]}: no index served`,
+    );
+    // --first signs above the newest copy any base serves: the yank stays.
+    await main(["resign", "--first", "--out", out], w.deps);
+    const index = await verifyRuntimeChannel(published(w)!, [w.pub], { now: T });
+    assertEquals(index?.releases[0].yanked, { reason: "broken" });
+    await main(["verify"], w.deps);
   } finally {
     await cleanup(w);
   }
@@ -437,7 +505,7 @@ Deno.test("signing: a keychain key that is not compiled in is refused; --with-ba
     const other = btoa(String.fromCharCode(...spki));
     await assertRejects(
       () =>
-        main(["publish", TAG, "--out", join(w.dir, "out"), "--no-publish"], {
+        main(["publish", TAG, "--first", "--out", join(w.dir, "out"), "--no-publish"], {
           ...w.deps,
           keys: [other],
         }),
@@ -445,19 +513,19 @@ Deno.test("signing: a keychain key that is not compiled in is refused; --with-ba
       "not one of them",
     );
     await assertRejects(
-      () => main(["publish", TAG, "--no-publish"], { ...w.deps, keys: [] }),
+      () => main(["publish", TAG, "--first", "--no-publish"], { ...w.deps, keys: [] }),
       Error,
       "no runtime channel public key",
     );
     await assertRejects(
-      () => main(["publish", TAG, "--with-backup", "--no-publish"], w.deps),
+      () => main(["publish", TAG, "--first", "--with-backup", "--no-publish"], w.deps),
       Error,
       "backup key in the keychain",
     );
     await main(["keygen", "--slot", "backup"], w.deps);
     const backup = w.logged.at(-1)!;
     const out = join(w.dir, "out");
-    await main(["publish", TAG, "--with-backup", "--out", out, "--no-publish"], {
+    await main(["publish", TAG, "--first", "--with-backup", "--out", out, "--no-publish"], {
       ...w.deps,
       keys: [w.pub, backup],
     });
@@ -473,7 +541,7 @@ Deno.test("yank marks a release and re-signs; resign --if-due waits until 15 day
   const w = await withKey();
   try {
     const out = join(w.dir, "out");
-    await main(["publish", TAG, "--out", out], w.deps);
+    await main(["publish", TAG, "--first", "--out", out], w.deps);
     await assertRejects(() => main(["yank", VERSION], w.deps), Error, "--reason");
     await assertRejects(
       () => main(["yank", "3.0.0-denext.99", "--reason", "x"], w.deps),
@@ -503,7 +571,8 @@ Deno.test("yank marks a release and re-signs; resign --if-due waits until 15 day
     await main(["resign"], { ...w.deps, keys: [] });
     assertStringIncludes(w.logged.join("\n"), "nothing to re-sign");
     w.served.clear();
-    await assertRejects(() => main(["resign"], w.deps), Error, "could not read");
+    await assertRejects(() => main(["resign"], w.deps), Error, "no agreed published index");
+    await assertRejects(() => main(["resign", "--first"], w.deps), Error, "could not read");
   } finally {
     await cleanup(w);
   }
@@ -512,7 +581,8 @@ Deno.test("yank marks a release and re-signs; resign --if-due waits until 15 day
 Deno.test("verify: every base's index and every document it lists; a tampered copy names its URL", async () => {
   const w = await withKey();
   try {
-    await main(["publish", TAG, "--out", join(w.dir, "out")], w.deps);
+    await main(["publish", TAG, "--first", "--out", join(w.dir, "out")], w.deps);
+    w.served.delete(new URL("channel.json", CHANNEL_BASES[1]).href); // the mirror push failed
     await assertRejects(
       () => main(["verify"], w.deps),
       Error,
@@ -551,7 +621,7 @@ Deno.test("expiry: the release gate's warning, never a throw", async () => {
   try {
     assertEquals(await publishedChannelExpiryWarning({ ...w.deps, keys: [] }), null);
     assertStringIncludes((await publishedChannelExpiryWarning(w.deps))!, "could be read");
-    await main(["publish", TAG, "--out", join(w.dir, "out")], w.deps);
+    await main(["publish", TAG, "--first", "--out", join(w.dir, "out")], w.deps);
     assertEquals(await publishedChannelExpiryWarning(w.deps), null);
     const soon = await publishedChannelExpiryWarning({
       ...w.deps,
@@ -584,7 +654,7 @@ Deno.test("floor: raises the compiled-in minimum sequence to the published index
     const source = withChannelMinSequence(real, 0);
     assertEquals(channelMinSequenceIn(source), 0);
     await Deno.writeTextFile(keysModule, source);
-    await main(["publish", TAG, "--out", join(w.dir, "out")], w.deps);
+    await main(["publish", TAG, "--first", "--out", join(w.dir, "out")], w.deps);
     await main(["floor", "--file", keysModule], w.deps);
     const raised = channelMinSequenceIn(await Deno.readTextFile(keysModule));
     assertEquals(raised, T / 1000);
@@ -612,7 +682,10 @@ Deno.test("pin: a published document becomes the bundled pin, the old pin kept a
   const w = await withKey();
   try {
     const next = NEXT;
-    await main(["publish", `denext-runtime-v${next}`, "--out", join(w.dir, "out")], w.deps);
+    await main(
+      ["publish", `denext-runtime-v${next}`, "--first", "--out", join(w.dir, "out")],
+      w.deps,
+    );
     await main(["pin", next], w.deps);
     const toolchain = JSON.parse(await Deno.readTextFile(w.deps.pinFiles!.toolchain));
     const desktop = JSON.parse(await Deno.readTextFile(w.deps.pinFiles!.desktop));
@@ -704,6 +777,40 @@ Deno.test("compatLegs reads the run's `compat (denext <v>)` jobs", () => {
       { denext: "4.19.0", ok: false },
       { denext: "5.0.0-rc.1", ok: false },
     ],
+  );
+});
+
+Deno.test("compatRunRefusal: only a finished, green dispatch on development titled for exactly this tag", () => {
+  const tag = "denext-runtime-v3.0.0-denext.3";
+  const green = [
+    { name: "pick legs and runners", conclusion: "success" },
+    { name: "compat (denext 4.22.0)", conclusion: "success" },
+    { name: "compat (denext 4.21.0)", conclusion: "success" },
+  ];
+  const run = {
+    displayTitle: compatRunTitle(tag),
+    status: "completed",
+    event: "workflow_dispatch",
+    headBranch: "development",
+    jobs: green,
+  };
+  assertEquals(compatRunRefusal("7", run, tag), null);
+  // `…denext.30`'s run is not `…denext.3`'s (a substring match took it).
+  const thirty = { ...run, displayTitle: compatRunTitle("denext-runtime-v3.0.0-denext.30") };
+  assertStringIncludes(compatRunRefusal("7", thirty, tag)!, "is not a runtime-compat.yml run for");
+  // A run on another branch (its own copy of the workflow), or not a dispatch: refused.
+  assertStringIncludes(
+    compatRunRefusal("7", { ...run, headBranch: "fix/always-green" }, tag)!,
+    "not a dispatch on development",
+  );
+  assertStringIncludes(compatRunRefusal("7", { ...run, event: "push" }, tag)!, "push run");
+  assertStringIncludes(
+    compatRunRefusal("7", { ...run, status: "in_progress" }, tag)!,
+    "has not finished",
+  );
+  assertStringIncludes(
+    compatRunRefusal("7", { ...run, jobs: green.slice(0, 2) }, tag)!,
+    "is not green",
   );
 });
 
@@ -855,7 +962,7 @@ Deno.test("bundled-pin: no key is a note; an unreadable index refuses; a listed 
       (await publishedBundledPinRefusal(w.deps, "4.21.0")).refusal!,
       "no published runtime channel index could be read",
     );
-    await main(["publish", TAG, "--out", join(w.dir, "out")], w.deps);
+    await main(["publish", TAG, "--first", "--out", join(w.dir, "out")], w.deps);
     const listed = await publishedBundledPinRefusal(w.deps, "4.21.0");
     assertEquals(listed.refusal, null);
     assertStringIncludes(listed.note, `the bundled runtime ${VERSION} is listed in index #`);

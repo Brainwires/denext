@@ -11,13 +11,13 @@ import { createApp } from "./helpers/released-app.ts";
 import type { AppConfig } from "../src/server/app-config.ts";
 import type { PageRoute, RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
-import { createMiddlewareRunner } from "../src/server/middleware.ts";
+import { createMiddlewareRunner, matcherSpellings } from "../src/server/middleware.ts";
 import { decodeUnreserved, externalRewriteHeaders } from "../src/server/request-pipeline.ts";
 import { REGEN_HEADER, REGEN_TOKEN } from "../src/server/app-config.ts";
 import { verifyOrigin } from "../src/server/origin-check.ts";
 import { inMemoryCacheStore, setCacheStore, unstable_cache } from "../src/server/cache.ts";
 import { serveStatic } from "../src/server/static.ts";
-import { localImageFetcher, optimizeImage } from "../src/server/image-optimizer.ts";
+import { createGate, localImageFetcher, optimizeImage } from "../src/server/image-optimizer.ts";
 import { type NextRequest, NextResponse, NextURL } from "../src/compat/next/server.ts";
 import { createPagesHandler } from "../packages/pages-router/src/handler.ts";
 import type { PagesScan } from "../packages/pages-router/src/scan.ts";
@@ -149,14 +149,103 @@ Deno.test("middleware bypass: an encoded path separator never names a public/ fi
     ) {
       const res = await probe(app, spelling);
       assert(!res.leaked, `${spelling} reached the guarded file`);
-      assertEquals(res.status, 404, spelling);
+      // The matcher is shown the path the separators decode to, so the guard answers.
+      assertEquals(res.status, 401, spelling);
       assertEquals(await serveStatic(root, spelling), null, spelling);
     }
+    // Without a middleware the file is still not named by any of them.
+    const open = appWith({ pages: {}, publicDir: root });
+    assertEquals((await probe(open, "/private%2Freport.txt")).status, 404);
     assertEquals(await serveStatic(root, "/private/report.txt%00"), null);
     // The plain spelling is still served (by the primitive; the app's middleware refuses it).
     assertEquals(await (await serveStatic(root, "/private/report.txt"))!.text(), SECRET);
   } finally {
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("matcherSpellings: a path with an encoded separator is also tested as the path it decodes to", () => {
+  assertEquals(matcherSpellings("/docs/private/a"), ["/docs/private/a"]);
+  assertEquals(matcherSpellings("/caf%C3%A9/a%20b"), ["/caf%C3%A9/a%20b"]);
+  assertEquals(matcherSpellings("/docs/private%2Fa"), ["/docs/private%2Fa", "/docs/private/a"]);
+  assertEquals(matcherSpellings("/docs/private%2fa%5Cb")[1], "/docs/private/a/b");
+  assertEquals(matcherSpellings("/docs/private%5ca")[1], "/docs/private/a");
+  // Dot segments and runs of `/` in the decoded spelling are resolved as for any path.
+  assertEquals(matcherSpellings("/docs/x%2F..%2Fprivate%2Fa")[1], "/docs/private/a");
+  assertEquals(matcherSpellings("/docs%2F%2Fprivate%2F.%2Fa")[1], "/docs/private/a");
+  assertEquals(matcherSpellings("/docs/private%2F")[1], "/docs/private/");
+  // A doubly encoded separator is not one.
+  assertEquals(matcherSpellings("/docs/private%252Fa"), ["/docs/private%252Fa"]);
+});
+
+Deno.test("middleware matchers: a dynamic or catch-all segment with an encoded separator is matched as the path its param decodes to", async () => {
+  const seen: string[] = [];
+  const page = (name: string) => ({
+    default: async ({ params }: { params: Promise<Record<string, string | string[]>> }) => {
+      const value = (await params)[name];
+      seen.push(Array.isArray(value) ? value.join("/") : value);
+      return h("h1", null, SECRET);
+    },
+  });
+  const app = appWith({
+    pages: { "/docs/[...slug]": page("slug"), "/files/[key]": page("key") },
+    getMiddleware: () => guard(["/docs/private/:path*", "/files/reports/:path*"]),
+  });
+  // The guarded paths, as the matcher has always seen them.
+  assertEquals((await probe(app, "/docs/private/plan")).status, 401);
+  // The params these decode to name the same guarded keys: the guard answers for them too.
+  for (
+    const spelling of [
+      "/docs/private%2Fplan",
+      "/docs/private%2fplan",
+      "/docs/private%5Cplan",
+      "/docs/private%2Fa/b",
+      "/docs/x%2F..%2Fprivate%2Fplan",
+      "/docs%2Fprivate%2Fplan",
+      "/files/reports%2Fq3",
+      "/files/reports%2f2026%2fq3",
+    ]
+  ) {
+    const res = await probe(app, spelling);
+    assert(!res.leaked, `${spelling} reached the guarded content`);
+    assertEquals(res.status, 401, spelling);
+  }
+  assertEquals(seen, [], "no guarded route rendered");
+  // Outside the matcher a param still decodes to a value holding a separator, in one segment.
+  assertEquals((await probe(app, "/docs/public%2Fnotes")).status, 200);
+  assertEquals((await probe(app, "/files/a%2Fb")).status, 200);
+  assertEquals(seen, ["public/notes", "a/b"]);
+  // An object matcher and a matcher's conditions take both spellings as well.
+  const conditional = appWith({
+    pages: { "/docs/[...slug]": page("slug") },
+    getMiddleware: () =>
+      createMiddlewareRunner({
+        middleware: () => new Response("blocked", { status: 401 }),
+        config: {
+          matcher: [{ source: "/docs/private/:path*", missing: [{ type: "cookie", key: "s" }] }],
+        },
+      }),
+  });
+  assertEquals((await probe(conditional, "/docs/private%2Fplan")).status, 401);
+  assertEquals((await probe(conditional, "/docs/private%2Fplan", { cookie: "s=1" })).status, 200);
+  // A config header rule applies to both spellings too.
+  const ruled = appWith({
+    pages: { "/docs/[...slug]": page("slug") },
+    headerRules: [{
+      source: "/docs/private/:path*",
+      headers: [{ key: "x-robots-tag", value: "noindex" }],
+    }],
+  });
+  for (
+    const [path, want] of [
+      ["/docs/private/plan", "noindex"],
+      ["/docs/private%2Fplan", "noindex"],
+      ["/docs/public%2Fplan", null],
+    ] as const
+  ) {
+    const res = await ruled(new Request("http://localhost" + path));
+    await res.body?.cancel();
+    assertEquals([res.status, res.headers.get("x-robots-tag")], [200, want], path);
   }
 });
 
@@ -498,6 +587,170 @@ Deno.test("image endpoint: the fetch of a local source is the visitor's own GET 
   await fetchLocal("//evil.example/x.png", new Request("http://app.example/i"));
   for (const f of fetches) assertEquals(new URL(f.url).origin, "http://app.example");
 });
+
+Deno.test("image endpoint: a local source fetched through the app is cached by the bytes it answered", async () => {
+  /** A `w`×`w` PNG of one grey level. */
+  const flat = async (w: number, level: number): Promise<Uint8Array> => {
+    const { PhotonImage } = await import("@denext/photon");
+    const img = new PhotonImage(new Uint8Array(w * w * 4).fill(level), w, w);
+    try {
+      return img.get_bytes();
+    } finally {
+      img.free();
+    }
+  };
+  const sources: Record<string, Uint8Array> = {
+    "session=a": await flat(96, 40),
+    "session=b": await flat(96, 220),
+    "": await flat(96, 128),
+  };
+  // One URL, a different image per visitor (a route such as `/api/me/avatar`).
+  const fetchLocal = (_src: string, request: Request) =>
+    Promise.resolve(
+      new Response(sources[request.headers.get("cookie") ?? ""] as BodyInit, {
+        headers: { "content-type": "image/png" },
+      }),
+    );
+  // Every source read and encode happens inside the gate: its count is the requests that
+  // were not answered from the cache under the URL alone.
+  let gated = 0;
+  const gate = () => {
+    gated++;
+    return Promise.resolve(() => {});
+  };
+  const image = async (cookie?: string) => {
+    const res = await optimizeImage(
+      new Request("http://localhost/_denext/image?url=%2Fapi%2Fme%2Favatar&w=64", {
+        headers: cookie ? { cookie } : {},
+      }),
+      { fetchLocal },
+      gate,
+    );
+    assertEquals(res.status, 200);
+    return new Uint8Array(await res.arrayBuffer());
+  };
+  const a = await image("session=a");
+  const b = await image("session=b");
+  const anonymous = await image();
+  assertEquals(gated, 3, "each visitor's own source was read and encoded");
+  assert(!equalBytes(a, b), "the second visitor got the first visitor's image");
+  assert(!equalBytes(a, anonymous), "an anonymous visitor got a signed-in visitor's image");
+  assert(!equalBytes(b, anonymous));
+  // Again, in another order: each visitor still gets the image of their own source. A request
+  // without credentials is answered from the cache under the URL, outside the gate; one with
+  // credentials has its source read (inside the gate) to find the variant of those bytes.
+  assert(equalBytes(await image("session=b"), b));
+  assert(equalBytes(await image("session=a"), a));
+  assertEquals(gated, 5);
+  assert(equalBytes(await image(), anonymous));
+  assertEquals(gated, 5, "the credential-free variant is a cache hit under the URL");
+  // A visitor whose source changes gets the new image, not the one cached for the URL.
+  sources["session=a"] = await flat(96, 90);
+  const changed = await image("session=a");
+  assert(!equalBytes(changed, a));
+  assertEquals(gated, 6);
+  // An answer the app marks per-visitor is treated so without a credential on the request.
+  const marks: Record<string, string>[] = [
+    { "cache-control": "private" },
+    { vary: "Accept, Cookie" },
+    { vary: "*" },
+  ];
+  for (const mark of marks) {
+    const marked = { src: await flat(96, 10) };
+    const ask = async () => {
+      const res = await optimizeImage(
+        new Request("http://localhost/_denext/image?url=%2Fapi%2Fbadge&w=64"),
+        {
+          fetchLocal: () =>
+            Promise.resolve(new Response(marked.src as BodyInit, { headers: mark })),
+        },
+        gate,
+      );
+      return new Uint8Array(await res.arrayBuffer());
+    };
+    const first = await ask();
+    marked.src = await flat(96, 250);
+    assert(!equalBytes(await ask(), first), JSON.stringify(mark));
+  }
+  const before = gated;
+  // A source over the size limit is refused before anything is hashed or encoded.
+  const huge = await optimizeImage(
+    new Request("http://localhost/_denext/image?url=%2Fbig.png&w=64"),
+    {
+      fetchLocal: () =>
+        Promise.resolve(new Response("x", { headers: { "content-length": String(2 ** 30) } })),
+    },
+    gate,
+  );
+  assertEquals([huge.status, gated], [404, before + 1]);
+});
+
+Deno.test("image endpoint: the gate bounds how many local sources are read at once", async () => {
+  const source = await png(72, 72);
+  let reading = 0;
+  let most = 0;
+  let fetches = 0;
+  // Each fetch answers at once with a body that is only produced when read, slowly.
+  const fetchLocal = () => {
+    fetches++;
+    let started = false;
+    let sent = false;
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        if (!started) {
+          started = true;
+          most = Math.max(most, ++reading);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        if (sent) {
+          reading--;
+          controller.close();
+          return;
+        }
+        sent = true;
+        controller.enqueue(source);
+      },
+    }, { highWaterMark: 0 });
+    return Promise.resolve(new Response(body, { headers: { "content-type": "image/png" } }));
+  };
+  const gate = createGate(2, 64);
+  const ask = (cookie: string) =>
+    optimizeImage(
+      new Request("http://localhost/_denext/image?url=%2Fapi%2Fme%2Fphoto&w=64", {
+        headers: { cookie },
+      }),
+      { fetchLocal },
+      gate,
+    );
+  const answers = await Promise.all(Array.from({ length: 12 }, (_, i) => ask(`session=${i}`)));
+  for (const res of answers) {
+    assertEquals(res.status, 200);
+    await res.body?.cancel();
+  }
+  assertEquals(fetches, 12, "every visitor's own fetch ran");
+  assertEquals(reading, 0);
+  assertEquals(most, 2, "no more sources were held than the gate admits");
+  // Past the gate's queue the request is shed before its source is read.
+  const small = createGate(1, 1);
+  const burst = await Promise.all(
+    Array.from({ length: 4 }, (_, i) =>
+      optimizeImage(
+        new Request("http://localhost/_denext/image?url=%2Fapi%2Fme%2Fphoto&w=64", {
+          headers: { cookie: `burst=${i}` },
+        }),
+        { fetchLocal },
+        small,
+      )),
+  );
+  for (const res of burst) await res.body?.cancel();
+  assertEquals(burst.map((r) => r.status).sort(), [200, 200, 503, 503]);
+  assertEquals(reading, 0);
+});
+
+/** Whether two byte arrays hold the same bytes. */
+function equalBytes(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
 
 // ---------------------------------------------------------------------------
 // Pages Router (CVE-2024-46982 / CVE-2025-49005 / CVE-2023-46298 class): a getServerSideProps

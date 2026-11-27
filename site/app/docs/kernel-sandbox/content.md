@@ -5,80 +5,107 @@ lead: Kernel-enforced permissions. When a run's --allow-* grant can't change, th
 ---
 
 > [!IMPORTANT]
-> **An opt-in preview ships in denext 4.20; the full sandbox, with automatic enforcement, lands
-> in denext 5.0.** The pages in this section describe the full design. The preview enforces
-> when you ask it to: `--kernel-sandbox=enforce` confines `deno run` and `deno serve` on Linux and
-> macOS ([What `enforce` does today](#what-enforce-does-today)). With no setting nothing changes:
-> the default, `auto`, applies nothing in denext 4.x. `--kernel-sandbox=warn` (or the `deno.json`
-> key) prints how many rules only Deno's checks would hold, `--kernel-sandbox-report` prints the
-> policy and its gaps, and `broker` (Mode B) still refuses to start. A run that doesn't enforce
-> keeps Deno's permissions as
-> [least-privilege guardrails](/docs/permissions#least-privilege-guardrails-not-a-sandbox). Flag names, defaults and the per-kernel details can still change. Where a
-> point is still open, the page says so.
+> **An opt-in preview ships in denext 4.x; automatic enforcement lands in denext 5.0.** The pages
+> in this section describe the full design and say where a part isn't built yet. The preview
+> enforces when you ask it to: `--kernel-sandbox=enforce` confines `deno run`, `deno serve`,
+> `deno test` and `deno bench` on Linux and macOS, and `deno compile --kernel-sandbox=enforce`
+> builds a program that confines itself ([What `enforce` does today](#what-enforce-does-today)).
+> With no setting nothing changes: the default, `auto`, applies nothing yet. `--kernel-sandbox=warn`
+> (or the `deno.json` key) reports what `enforce` would refuse, and `--kernel-sandbox-report`
+> prints the policy and its gaps. A run that doesn't enforce keeps Deno's permissions as
+> [least-privilege guardrails](/docs/permissions#least-privilege-guardrails-not-a-sandbox). Flag
+> names, defaults and the per-kernel details can still change. Where a point is still open, the
+> page says so.
 
 ## What `enforce` does today
 
 Most of this section describes the full design. This is the part that runs now, when a run asks
 for it with `--kernel-sandbox=enforce`:
 
-- **Where.** `deno run` and `deno serve`, on Linux (x86_64 and aarch64, with Landlock: kernel
+- **Where.** `deno run` and `deno serve`, and `deno test` and `deno bench` once their own setup is
+  done (the type check, the coverage folder), on Linux (x86_64 and aarch64, with Landlock: kernel
   5.13 or later) and on macOS. `deno info --json` reports `kernelSandbox.enforcerBuilt: true`
-  where the runtime has an enforcer. Windows has none yet.
-- **Mode A only.** The process confines itself. The Mode B supervisor isn't built yet, so a rule
-  only it could hold refuses to start: on Linux, a host-scoped `--allow-net`
-  (`--allow-net=api.example.com:443`) and a write deny inside a write allow.
-  `--kernel-sandbox=broker` refuses to start.
-- **What refuses to start.** Only a rule the kernel would hold _more loosely_ than Deno's own
-  check, a `fail-open` gap. The error names each rule.
+  where the runtime has an enforcer. `deno run` on Windows has none; a program compiled for Windows
+  gets the [small tier](/docs/kernel-sandbox-windows). Compiled programs are covered on
+  [Desktop and compiled apps](/docs/kernel-sandbox-desktop-and-compiled).
+- **Mode A, and Mode B where only it can hold a rule.** The process confines itself (Mode A)
+  whenever the kernel can hold the grant. Where only the supervising broker
+  ([Mode B](#mode-a-and-mode-b)) holds a rule exactly, `enforce` starts under the broker instead:
+  a host name in `--allow-net` (`--allow-net=api.example.com:443`, Linux and macOS), a
+  `--deny-net`, and on Linux a write deny inside a write allow, a Unix socket granted by path and a
+  TCP port list on a kernel without Landlock's port rules. `--kernel-sandbox=broker` asks for the
+  broker for every scoped network or file rule, even where Mode A would do.
+- **Under a broker-held network, native code and children have no network of their own.** The
+  broker makes the program's sockets and holds the grant exactly: it resolves names itself, and a
+  granted public name that resolves to an address on this machine or its networks (loopback, a
+  private range, `169.254.169.254`) is refused unless the grant names that address too. Native
+  code (FFI, Node-API addons) and child processes can't open a network socket at all, so `git
+  fetch`, `curl` or an addon's own HTTP client fail. A `deno` (or a compiled Deno program) that the
+  program starts reaches the same broker, after its own permission checks. UDP is refused under a
+  host-scoped grant (`Deno.listenDatagram`, `node:dgram`, QUIC, WebRTC's UDP candidates); a DNS
+  query to a name server the grant names still works.
+- **What refuses to start.** Only a rule neither the kernel nor the broker would hold as strictly
+  as Deno's own check, a `fail-open` gap. The error names each rule.
 - **What runs with a documented gap.** A rule the kernel holds, but more coarsely than Deno does,
   runs, and `--kernel-sandbox-report` lists it as `documented`. Read those lines before relying on
   a port list or an `--allow-ffi` scope:
-  - **macOS `--allow-net=<host>:<port>`**: the kernel holds the port, not the host. Native code
-    and children may reach any host on that port, and resolve any name.
-  - **A port list of IP addresses or `localhost`** (Linux and macOS): any address on those ports,
-    `169.254.169.254` (the cloud metadata address) included.
+  - **A port list of IP addresses or `localhost`** (Linux and macOS) stays with the kernel (Mode
+    A): native code and children may reach any address on those ports, `169.254.169.254` (the
+    cloud metadata address) included. Under `--kernel-sandbox=broker` the broker holds it exactly.
   - **A scoped `--allow-ffi=<paths>`** (Linux and macOS): native code may load any library it can
     read. Library loading is bounded by the read scope, not by the `--allow-ffi` list.
-- **Commands that refuse under `enforce`.** `deno test` (before type-checking), `deno bench`, the
-  REPL, Jupyter, `deno eval` with a deny rule, a package's native executable under `deno x`, and
-  (on Linux) a program read from stdin. They refuse to start rather than run unconfined. `deno
-  lint` and the language server's lint plugins are neither covered nor refused: they run with no
-  kernel sandbox (`deno lint` warns when `deno.json` sets the key), until confining them lands
-  before 5.0. `deno compile --kernel-sandbox=enforce` is refused too: compiled programs
-  have no enforcer yet.
+- **Commands that refuse under `enforce`.** The REPL, Jupyter, `deno eval` with a deny rule, a
+  program read from stdin, a package's native executable under `deno x`, and a `deno test` that
+  loads a Vitest or Jest config (its code runs while the tests are found). They refuse to start
+  rather than run unconfined. `enforce` doesn't cover a test run with `--update-snapshots` either,
+  nor a `test` or `bench` whose workspace members bring permission sets of their own (the kernel
+  holds the top-level grant only). `deno lint` and the language server's lint plugins
+  are neither covered nor refused: they run with no kernel sandbox (`deno lint` warns when
+  `deno.json` sets the key), until confining them lands before 5.0.
 
 > [!WARNING]
 > **Don't put `"kernelSandbox": "enforce"` in `deno.json`.** The key applies to every command that
-> runs your code in the project (lint plugins aside, which it doesn't cover), so `deno test`, `deno bench`, `deno repl` and `denext dev` refuse to start there.
-> Put the flag on the command that starts the app instead, for example a `start` task of
-> `deno run --kernel-sandbox=enforce --allow-read=. main.ts`. `"kernelSandbox": "warn"` is safe in
-> `deno.json`.
+> runs your code in the project (lint plugins aside, which it doesn't cover), so `deno repl`,
+> `denext dev` and anything run with `--watch` refuse to start there, and so does a test run that
+> loads a Vitest or Jest config. Put the flag on the command that starts the app instead, for example a
+> `start` task of `deno run --kernel-sandbox=enforce --allow-read=. main.ts`.
+> `"kernelSandbox": "warn"` is safe in `deno.json` (but see
+> [the warn observer](/docs/kernel-sandbox-modes#warn-mode) before you use it with programs that
+> apply a sandbox of their own).
 
-What changes inside an `enforce` run on Linux:
+What changes inside an `enforce` run:
 
-- **The environment is scrubbed.** Without an unscoped `--allow-env`, the process keeps only the
-  `--allow-env` names plus a short runtime list (`PATH`, `HOME`, `TMPDIR`, `DENO_DIR`, `LANG`,
-  `LC_*`, `TZ`, the proxy variables, `NO_COLOR`, `TERM`). Child processes inherit only that set,
-  so `SSH_AUTH_SOCK`, `USER`, `CI`, `NODE_ENV` and tokens are gone unless granted
-  (`--allow-env=CI,NODE_ENV`). macOS keeps the environment.
-- **chmod, chown, utime and extended-attribute writes by path are refused, inside the write scope
-  too.** `Deno.chmod`, `Deno.utime`, `cp -p`, `tar` and git setting a file's executable bit fail
-  with `EPERM`. The forms that take an open file descriptor still work.
-- **A read deny inside a read allow** is held by expansion: each entry beside the denied path gets
-  its own rule at startup. A file created there after start is unreadable, a symlink there gets no
-  rule, and a folder of more than 20,000 entries or 64 levels deep refuses to start.
-- **A TCP port list** needs Landlock ABI 4 (Linux 6.7). On an older kernel it refuses to start.
+- **The environment is scrubbed** (Linux and macOS). Without an unscoped `--allow-env`, the process
+  keeps only the `--allow-env` names plus a short runtime list (`PATH`, `HOME`, `TMPDIR`,
+  `DENO_DIR`, `LANG`, `LC_*`, `TZ`, the proxy variables, `NO_COLOR`, `TERM`). Child processes
+  inherit only that set, so `SSH_AUTH_SOCK`, `USER`, `CI`, `NODE_ENV` and tokens are gone unless
+  granted (`--allow-env=CI,NODE_ENV`).
+- **chmod, chown, utime and extended-attribute writes by path are refused on Linux, inside the
+  write scope too.** `Deno.chmod`, `Deno.utime`, `cp -p`, `tar` and git setting a file's executable
+  bit fail with `EPERM`. The forms that take an open file descriptor still work.
+- **A read deny inside a read allow** is held by expansion on Linux: each entry beside the denied
+  path gets its own rule at startup. A file created there after start is unreadable, a symlink
+  there gets no rule, and a folder of more than 20,000 entries or 64 levels deep refuses to start.
+  macOS holds it exactly.
+- **A write deny inside a write allow** on Linux is held by the broker for Deno's own operations.
+  Native code and children get a fail-closed view: they can't create, rename or remove directly in
+  the folders that lead to the deny, or in folders made after start. macOS holds it exactly.
+- **A server that only listens** (Linux): an `--allow-net-listen` list whose every entry is an
+  address with a port (`--allow-net-listen=127.0.0.1:8000`) is bound before the sandbox applies,
+  so with no connect grant the process needs no network access of its own. Those addresses stay
+  bound for the life of the process, and UDP on them is refused.
 - **Remote modules come from the cache only.** The program's static module graph is loaded first;
   a dynamic `import()` of a remote module that wasn't cached fails with the usual "not found in
   cache" error.
-- **`.npmrc` isn't readable**, because it can hold registry tokens. It's treated as absent, with a
-  one-time warning, and the report names it on a `skipped:` line. Run once without `enforce` to
-  cache the packages, or grant the file with `--allow-read=<path>/.npmrc` if you accept the
-  exposure.
+- **`.npmrc` isn't readable** (Linux and macOS), because it can hold registry tokens. It's treated
+  as absent, with a one-time warning, and the report names it on a `skipped:` line. Run once
+  without `enforce` to cache the packages, or grant the file with `--allow-read=<path>/.npmrc` if
+  you accept the exposure.
 
-On macOS the profile is applied in place, with no re-exec, where the system's sandbox call is
-available, and otherwise the process re-executes under `/usr/bin/sandbox-exec`. Inside another
-Seatbelt sandbox (App Sandbox, an agent's sandbox, `sandbox-exec`) it refuses to start. See
+The process re-executes itself once the module graph is loaded, and the new image applies the
+policy first thing (on macOS through the system's sandbox call, or under `/usr/bin/sandbox-exec`
+where that call is missing). Inside another Seatbelt sandbox (App Sandbox, an agent's sandbox,
+`sandbox-exec`) it refuses to start on macOS. See [Linux](/docs/kernel-sandbox-linux) and
 [macOS](/docs/kernel-sandbox-macos).
 
 **The default costs nothing.** With no setting (`auto`) or `off`, and no
@@ -137,13 +164,13 @@ needs a narrower policy built from your actual grant.
 Each operating system offers different tools, and none covers everything on its own. The
 sandbox combines the ones each platform has:
 
-| Platform | Mechanism                      | What it holds                                                                                                                                   |
-| -------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Linux    | **Landlock**                   | Which files and folders the process and its children may read, write or execute. On newer kernels, which TCP ports they may connect to or bind. |
-| Linux    | **seccomp**                    | A system-call filter. It refuses dangerous calls outright, and refuses networking or starting programs entirely when no grant allows them.      |
-| macOS    | **Seatbelt**                   | Files, network and program execution in one sandbox profile.                                                                                    |
-| Windows  | **Job object + low integrity** | Children stay contained, and writes are limited by integrity level. Reads and network are still enforced by Deno only.                          |
-| All      | **Mode B supervisor** (design) | Rules too fine for any kernel, such as one host name or a folder with an exception, handled by a small unconfined helper process.               |
+| Platform     | Mechanism                      | What it holds                                                                                                                                   |
+| ------------ | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Linux        | **Landlock**                   | Which files and folders the process and its children may read, write or execute. On newer kernels, which TCP ports they may connect to or bind. |
+| Linux        | **seccomp**                    | A system-call filter. It refuses dangerous calls outright, and refuses networking or starting programs entirely when no grant allows them.      |
+| macOS        | **Seatbelt**                   | Files, network and program execution in one sandbox profile.                                                                                    |
+| Windows      | **Job object + low integrity** | Children stay contained, and writes are limited by integrity level. Reads and network are still enforced by Deno only.                          |
+| Linux, macOS | **Mode B supervisor**          | Rules too fine for any kernel, such as one host name or a folder with an exception, handled by a small unconfined helper process.               |
 
 What the terms mean:
 
@@ -168,22 +195,23 @@ What the terms mean:
   job can forbid children altogether). Lowering the process's integrity level to _Low_ means it can
   only write to objects labelled Low. Neither one limits reads or network, which is why on Windows
   those stay with Deno's checks. See [Windows](/docs/kernel-sandbox-windows).
-- **The Mode B supervisor** (not built yet) is what this section calls **Mode B**. When a rule is finer
+- **The Mode B supervisor** is what this section calls **Mode B**. When a rule is finer
   than the kernel can express, such as "only `api.example.com`", "this folder except `.env`" or
   "this one Unix socket", `deno` splits in two. A small unconfined **supervisor** with no
   JavaScript engine and no user code stays outside the sandbox. The confined process asks it to
   open a file or connect a socket. The supervisor checks the request against the same policy,
   performs the operation, and passes back the already-opened file or connected socket. Native
   code in the confined process can use only the handles it has been given. It can't open new
-  ones the kernel would refuse.
+  ones the kernel would refuse. Mode B runs on Linux and macOS; Windows and packaged desktop apps
+  have none.
 
 ### Mode A and Mode B
 
 - **Mode A (self-confinement).** The process confines itself and keeps running as one process.
   Nothing unconfined is left over, and it costs nothing at run time. This is used whenever the
   kernel can express the grant exactly: a folder list, no network, all network, no programs.
-- **Mode B (supervisor + broker).** As described above. It's chosen automatically when the
-  policy needs it, or explicitly with `--kernel-sandbox=broker`. Mode B behaves the same on every
+- **Mode B (supervisor + broker).** As described above. `enforce` chooses it when the policy
+  needs it, and `--kernel-sandbox=broker` asks for it explicitly. Mode B behaves the same on every
   kernel, which is how host-scoped network and "folder except X" rules are held consistently,
   even where Landlock is old or missing its port rules.
 
@@ -191,8 +219,23 @@ The supervisor isn't a yes-man. It holds the compiled policy, never asks the con
 is allowed, never prompts, and never widens anything. Native code can write any bytes it likes
 to the socket between them, so the supervisor treats every request as untrusted.
 
-**Status:** Mode B is design. It isn't built yet, so `--kernel-sandbox=broker` refuses to start,
-and under `enforce` a rule only Mode B could hold refuses to start too.
+**Status:** Mode B runs on Linux and macOS, for the commands `enforce` covers and in compiled
+programs for those systems. What it changes for the process tree:
+
+- **The process the shell sees is the supervisor.** It keeps the PID the program was started
+  with, passes on the signals a process sends it, and exits with the program's exit code, or by
+  the signal that ended it. The confined program is its child, with a PID of its own.
+- **Native code and children** get the kernel's fail-closed view: no network socket under a
+  broker-held network, and no change directly in a folder that leads to a broker-held write deny.
+  A `deno` or compiled Deno program they start reaches the same broker.
+- **Service managers.** A signal sent to the whole process group or control group (`kill -TERM
+  -<pgid>`, systemd's default `KillMode=control-group`) reaches the program twice, once directly
+  and once passed on. `sd_notify` from the program needs `NotifyAccess=all`, since the program
+  isn't the main PID. `SIGTSTP` sent to the supervisor's PID alone isn't passed on.
+- **If the supervisor ends,** on Linux the program ends with it; on macOS the program keeps
+  running, confined, with every operation the broker would answer refused.
+
+See [Mode B in detail](/docs/kernel-sandbox-modes#mode-b-broker-in-detail).
 
 **Two different "brokers".** The `broker` mode and "Mode B supervisor" on these pages are the
 kernel sandbox's own helper process. They are unrelated to the **external permission broker**, a
@@ -203,26 +246,26 @@ with an external permission broker can't use `enforce`: its grant isn't fixed.
 ## When it switches on
 
 **Status:** in denext 4.x nothing switches on by itself. The preview's settings take effect only
-when you opt in with the flag or the `deno.json` key ([Modes](#modes)), and `enforce` confines a
-`run` or `serve` that asks for it. The table below is the design: automatic enforcement for the
-fixed contexts below, bare CI runs included, comes with the full sandbox in denext 5.0.
+when you opt in with the flag, the `deno.json` key or a mode baked by `deno compile`
+([Modes](#modes)). The table below is the design: automatic enforcement for the fixed contexts
+below, bare CI runs included, comes with the full sandbox in denext 5.0.
 
 The kernel layer can only narrow. If a prompt could widen the grant halfway through a run, a
 kernel policy fixed at startup would be wrong. So the sandbox switches on by itself **only when
 the permission set can't change during the run**: nobody can be prompted, and the author has
 fixed the grant.
 
-| How the program runs                                                         | With the full sandbox                                                                                                    |
-| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| A compiled binary (`deno compile`, `denext build --compile`)                 | On (`auto`). The mode is baked in at compile time.                                                                       |
-| A packaged desktop app with `desktop.permissions: "strict"`                  | On (`enforce`). See [Desktop and compiled apps](/docs/kernel-sandbox-desktop-and-compiled).                              |
-| `denext start`, the generated Docker image, the generated systemd unit       | On (`auto`).                                                                                                             |
-| A bare non-interactive run: CI, a pipe, `--no-prompt`, no TTY                | On (`auto`).                                                                                                             |
-| An interactive run that can prompt                                           | Off, as today. Prompts keep working.                                                                                     |
-| `-A` / `--allow-all` with no `--deny-*`                                      | Off. There's nothing to narrow, so nothing changes.                                                                      |
-| `-A` with `--deny-*`                                                         | The denies are enforced where the kernel can express them exactly. The rest are reported.                                |
-| `--watch`, HMR, `denext dev`                                                 | Off. They re-resolve modules after start, which a fixed policy can't serve.                                              |
-| `deno task`, `install`, `add`, `cache`, `compile`, `fmt`, `lint`, `check`, … | Not sandboxed themselves. Each `deno run` a task starts decides for itself, and install scripts keep the lifecycle jail. |
+| How the program runs                                                         | With the full sandbox                                                                                                        |
+| ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| A compiled binary (`deno compile`, `denext build --compile`)                 | On (`auto`). The mode is baked in at compile time.                                                                           |
+| A packaged desktop app with `desktop.permissions: "strict"`                  | On (`enforce`). Any other desktop app stays off. See [Desktop and compiled apps](/docs/kernel-sandbox-desktop-and-compiled). |
+| `denext start`, the generated Docker image, the generated systemd unit       | On (`auto`).                                                                                                                 |
+| A bare non-interactive run: CI, a pipe, `--no-prompt`, no TTY                | On (`auto`).                                                                                                                 |
+| An interactive run that can prompt                                           | Only its `--deny-*` rules, as ceilings no prompt can lift (macOS); the rest stays off and prompts keep working.              |
+| `-A` / `--allow-all` with no `--deny-*`                                      | Off. There's nothing to narrow, so nothing changes.                                                                          |
+| `-A` with `--deny-*`                                                         | The denies are enforced where the kernel can express them exactly. The rest are reported.                                    |
+| `--watch`, HMR, `denext dev`                                                 | Off. They re-resolve modules after start, which a fixed policy can't serve.                                                  |
+| `deno task`, `install`, `add`, `cache`, `compile`, `fmt`, `lint`, `check`, … | Not sandboxed themselves. Each `deno run` a task starts decides for itself, and install scripts keep the lifecycle jail.     |
 
 "Can prompt" uses the same test as Deno's permission prompt: prompting isn't disabled and both
 stdin and stderr are terminals. If any of those fails, no prompt can happen, and the set is
@@ -240,28 +283,28 @@ Two consequences are worth knowing up front:
 
 ## Modes
 
-**Status:** the denext 4.20 preview accepts all five modes, from the command-line flag or the
-`deno.json` key, and changes nothing unless you ask for it. `warn` reports; `enforce` applies the
-policy to `deno run` and `deno serve` on Linux and macOS (Mode A); `broker` still refuses to start,
-because the Mode B supervisor isn't built yet; `auto` applies nothing in denext 4.x. Automatic
-enforcement arrives with the full sandbox in denext 5.0.
+**Status:** the preview accepts all five modes, from the command-line flag, the `deno.json` key or
+`deno compile`, and changes nothing unless you ask for it. `warn` reports; `enforce` applies the
+policy to `deno run`, `deno serve`, `deno test` and `deno bench` on Linux and macOS, taking Mode B
+where a rule needs it; `broker` runs Mode B on Linux and macOS; `auto` applies nothing in denext
+4.x. Automatic enforcement arrives with the full sandbox in denext 5.0.
 
 One setting picks the behaviour:
 
-| Where                      | How                                                                                                                                                                 |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| In a compiled binary       | `deno compile --kernel-sandbox=<mode>`, baked in at build time. Always wins.                                                                                        |
-| On the command line        | `--kernel-sandbox=<mode>` on `run`, `serve`, `test`, `bench`, `repl`, `compile` and `install -g`. Overrides `deno.json`. `enforce` runs only for `run` and `serve`. |
-| In the environment         | `DENO_KERNEL_SANDBOX=off` or `warn`. Can only lower the mode.                                                                                                       |
-| In a project's `deno.json` | `"permissions": { "kernelSandbox": "warn" }`. A workspace member's overrides the root's.                                                                            |
+| Where                      | How                                                                                                                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| In a compiled binary       | `deno compile --kernel-sandbox=<mode>`, baked in at build time. Always wins.                                                                                                    |
+| On the command line        | `--kernel-sandbox=<mode>` on `run`, `serve`, `test`, `bench`, `repl`, `compile` and `install -g`. Overrides `deno.json`. `enforce` runs for `run`, `serve`, `test` and `bench`. |
+| In the environment         | `DENO_KERNEL_SANDBOX=off` or `warn`. Can only lower the mode.                                                                                                                   |
+| In a project's `deno.json` | `"permissions": { "kernelSandbox": "warn" }`. A workspace member's overrides the root's.                                                                                        |
 
-| Mode             | What it does                                                                                                                                                                                          |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `off`            | No kernel layer. Deno's checks only, as today.                                                                                                                                                        |
-| `warn`           | Runs normally and prints one line saying how many rules would be held by Deno's checks only (see [Warn mode](/docs/kernel-sandbox-modes#warn-mode)). Nothing is refused.                              |
-| `auto` (default) | Applies everything this kernel supports where the permission set is fixed; rules it can't express stay Deno-only and are reported. In the preview it applies nothing and records what it would apply. |
-| `enforce`        | Applies the policy. A rule the kernel would hold more loosely than Deno (a `fail-open` gap) is a startup error; a rule it holds more coarsely runs, with a `documented` gap in the report.            |
-| `broker`         | `enforce` plus the Mode B supervisor, even when Mode A would be enough. Not built yet: refuses to start.                                                                                              |
+| Mode             | What it does                                                                                                                                                                                                                              |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `off`            | No kernel layer. Deno's checks only, as today.                                                                                                                                                                                            |
+| `warn`           | Runs normally and reports what `enforce` would refuse: the rules it couldn't start with, and each access it would refuse, with the grant that would allow it (see [Warn mode](/docs/kernel-sandbox-modes#warn-mode)). Nothing is refused. |
+| `auto` (default) | Applies everything this kernel supports where the permission set is fixed; rules it can't express stay Deno-only and are reported. In the preview it applies nothing and records what it would apply.                                     |
+| `enforce`        | Applies the policy. A rule the kernel would hold more loosely than Deno (a `fail-open` gap) is a startup error; a rule it holds more coarsely runs, with a `documented` gap in the report.                                                |
+| `broker`         | `enforce` with the Mode B supervisor holding every scoped network rule (and, on Linux, the file rules the kernel can't), even when Mode A would be enough. Linux and macOS.                                                               |
 
 `DENO_KERNEL_SANDBOX` is the emergency switch that needs no command edit. It's read from the real
 environment before any `--env-file`, so a `.env` file can't lower the mode. Compiled programs,
@@ -301,14 +344,12 @@ What that means in practice:
 
 1. **Nothing breaks on an old kernel.** In `auto` and `warn` modes, Deno applies what the kernel
    supports. `--kernel-sandbox-report` lists each rule it couldn't hold.
-2. **`enforce` fails loudly.** If the kernel would allow more than a rule you asked to enforce,
-   Deno refuses to start and names the rule and the kernel feature it needs. A port list on a
-   kernel before 6.7 (Landlock ABI 4) is one such rule.
-3. **The supervisor evens things out (design).** Host-scoped network rules and "folder except X"
-   rules are meant to go through Mode B, which works the same on every kernel. Landlock's port
-   rules can't resolve host names and don't exist before 6.7, so they never carry a host-scoped
-   grant on their own. Until Mode B is built, those rules refuse to start under `enforce` on
-   Linux.
+2. **`enforce` fails loudly.** If neither the kernel nor the broker would hold a rule you asked to
+   enforce, Deno refuses to start and names the rule and the kernel feature it needs.
+3. **The supervisor evens things out.** Host-scoped network rules, "folder except X" write rules,
+   and on a kernel before 6.7 (Landlock ABI 4) a port list, go through Mode B, which works the
+   same on every kernel. Landlock's port rules can't resolve host names and don't exist before
+   6.7, so they never carry a host-scoped grant on their own.
 4. **Two gaps remain before 6.12.** On older kernels, confined code can still send signals to
    other processes of the same user, and abstract Unix sockets aren't scoped. Both are listed in
    the [guarantee matrix](/docs/kernel-sandbox-guarantees).
@@ -349,17 +390,18 @@ starts, lives inside the grant.
   system folders ordinary programs need to start (`/usr`, `/bin`, `/lib*`, `/etc` minus the
   credential files, and the system and developer-tool paths on macOS). Your project's
   credentials and the home directory aren't part of it.
-- **A nested `deno`** inside a confined tree is held by the inherited policy. Today it sees the
-  kernel's raw `EPERM` / `EACCES` for what the policy refuses. (Design: a nested `deno` will
-  intersect its own flags with the inherited policy and report `NotCapable` instead.)
+- **A nested `deno`** inside a confined tree is held by the inherited policy. It reads the policy
+  its ancestor handed down and intersects its own grant with it, so its own checks report
+  `NotCapable` for what the inherited policy refuses, even under `-A`.
 - **When a child fails** under the sandbox, Deno prints one hint per run naming the kernel sandbox
   and `--kernel-sandbox-report`.
 - **`--allow-run=git,node` limits which programs Deno starts, not what those programs start.**
   Restricting every descendant to the list would break `git` (it runs `ssh` and its helpers),
   compilers and shells. With a program list, files and network stay confined for the whole tree,
   but native code can execute any program it can read. With no `--allow-run` at all, nothing in
-  the process can start a program, FFI included. A stricter opt-in mode that limits execution for
-  the whole tree is planned.
+  the process can start a program, FFI included. `--kernel-sandbox-exec=strict` limits the whole
+  tree to the `--allow-run` programs (and the interpreters they need); a program that starts
+  others (git runs `ssh`) then needs them listed too.
 
 ## What changes for programs
 
@@ -395,7 +437,7 @@ here is what to expect:
 - **A refusal says where it came from.** When a Deno operation fails because the kernel refused
   it, the error ends with "(refused by the kernel sandbox; see --kernel-sandbox-report)", so an
   implicit-set gap doesn't look like a Deno bug.
-- **Environment variables are scrubbed on Linux.** Under `enforce`, without an unscoped
+- **Environment variables are scrubbed.** Under `enforce` on Linux and macOS, without an unscoped
   `--allow-env`, the process and its children keep only the `--allow-env` names and a short
   runtime list ([above](#what-enforce-does-today)).
 - **chmod and utime by path fail on Linux**, inside the write scope too: `cp -p`, `tar`, and git
@@ -408,10 +450,10 @@ These are the honest limits. Each one is also a row in the
 gap, not a vulnerability.
 
 - **Environment variables.** They live in the process's own memory, and native code can read
-  them directly. On macOS, and on Linux outside `enforce`, `--allow-env` stays a Deno check
-  (`--clean-run-env` controls what children inherit). On Linux under `enforce` the environment is
-  scrubbed to the `--allow-env` names plus a short runtime list before the program starts, so
-  what's left is what the grant names.
+  them directly. Outside `enforce`, `--allow-env` stays a Deno check (`--clean-run-env` controls
+  what children inherit). Under `enforce` on Linux and macOS the environment is scrubbed to the
+  `--allow-env` names plus a short runtime list before the program starts, so what's left is what
+  the grant names.
 - **`sys` information.** The kernel can narrow some of it (load average, memory, network
   interfaces), but host name, user id and similar calls can't be refused without breaking libc.
   On Linux, `/proc/self`, `/proc/thread-self`, `/proc/cpuinfo`, `/proc/stat` and the cgroup limit
@@ -423,19 +465,21 @@ gap, not a vulnerability.
 - **Library loading under a scoped `--allow-ffi`.** On Linux and macOS, native code may load any
   library it can read: the read scope bounds it, the `--allow-ffi` list doesn't. A `documented`
   gap.
-- **Port grants hold the port, not the host or address.** A macOS `host:port` grant lets native
-  code reach any host on that port, and a port list of IP addresses or `localhost` lets it reach
-  any address on those ports, `169.254.169.254` included. Both are `documented` gaps.
+- **Port grants of addresses hold the port, not the address.** In Mode A a port list of IP
+  addresses or `localhost` lets native code reach any address on those ports, `169.254.169.254`
+  included: a `documented` gap. `--kernel-sandbox=broker` holds such a list exactly.
 - **Workers and `Deno.permissions.revoke()`.** The kernel policy is per process and equals the
   top-level grant. A worker's narrower `permissions` and a run-time `revoke()` stay API-level.
   For a kernel boundary between components, run the component as a subprocess with narrower
   flags: it gets its own, narrower sandbox.
 - **Windows reads and network.** On Windows, the kernel layer contains children and limits
   writes. Reads and network stay Deno-only. See [Windows](/docs/kernel-sandbox-windows).
-- **Host names without the supervisor.** No kernel can filter by host name. Kernels can filter
-  by port at most, so host-scoped grants need Mode B. Without it, a host-scoped rule is
-  Deno-only and the report says so; on Linux `enforce` refuses to start over it, and on macOS it
-  runs held by port.
+- **Host names need the supervisor.** No kernel can filter by host name. Kernels can filter by
+  port at most, so `enforce` holds a host-scoped grant through Mode B. Where no supervisor runs
+  (Windows, packaged desktop apps), a host-scoped rule is Deno-only and the report says so.
+- **The network of native code and children under Mode B.** The broker makes only the program's
+  own sockets. Native code and child processes other than `deno` have no network under a
+  broker-held network grant (fail closed), and UDP is refused under a host-scoped grant.
 - **Signals and abstract Unix sockets before Linux 6.12**, as above.
 - **Changing file attributes on Linux.** Landlock doesn't restrict changing a file's mode,
   timestamps or extended attributes. Under `enforce`, seccomp refuses the path forms of those calls
@@ -445,9 +489,9 @@ gap, not a vulnerability.
 - **File metadata on macOS.** Path resolution needs to look up every parent folder, so the
   profile allows reading file metadata everywhere. That reveals whether a file exists and how
   big it is, not what it contains. Linux's Landlock doesn't control metadata reads either.
-- **Name lookups on macOS in Mode A.** When network is allowed, any confined code can resolve any
-  name through the system resolver, and a lookup can carry data out. Mode B moves name
-  resolution into the supervisor.
+- **Name lookups on macOS in Mode A.** When network is allowed by port or unscoped, any confined
+  code can resolve any name through the system resolver, and a lookup can carry data out. Under
+  Mode B the supervisor resolves names and the profile denies the confined process all network.
 - **A write grant to something that is executed later is still code execution.** If the grant
   lets the program write `deno.json`, `node_modules`, `.git/hooks` or a shell startup file, the
   _next_ run, outside this sandbox, executes what was written. The sandbox doesn't change that
@@ -456,12 +500,14 @@ gap, not a vulnerability.
 - **Existing hard links.** A hard link to a protected file that already exists inside an allowed
   folder can be read through that folder, as with any path-based rule. Creating new links or
   renames that would gain rights is refused.
-- **Desktop apps.** A browser engine limits what a packaged app gets. From the first experiments:
-  WKWebView apps on macOS and WebKitGTK apps on Linux are confined in-process (though WKWebView's
-  own processes sit outside the app's sandbox, and the Linux session bus is a gap); CEF apps are
-  confined on Linux where user namespaces are allowed and get headless guarantees only on macOS;
-  Windows desktop apps get the job object's containment. Compiled command-line apps get the full
-  matrix everywhere. See [Desktop and compiled apps](/docs/kernel-sandbox-desktop-and-compiled).
+- **Desktop apps.** Only a package whose build baked `--kernel-sandbox=enforce` is confined, and
+  a browser engine limits what it gets: WKWebView apps on macOS and WebKitGTK apps on Linux are
+  confined in-process (though WKWebView's own processes sit outside the app's sandbox, and the
+  Linux session bus is a gap); CEF apps are confined on Linux where Chromium's namespace sandbox
+  works and get headless guarantees only on macOS; Windows desktop apps have no kernel layer. The
+  network of a desktop app isn't narrowed by host. Compiled command-line apps get the full matrix
+  on Linux and macOS and the small tier on Windows. See
+  [Desktop and compiled apps](/docs/kernel-sandbox-desktop-and-compiled).
 
 ## How it's proven
 
@@ -500,8 +546,10 @@ You don't have to guess:
 - **`deno info --json`** carries a `kernelSandbox` object: the mode asked for, its `source`, the
   `effective` mode after the context rules, what `auto` `wouldApply`, whether this runtime has an
   enforcer (`enforcerBuilt`), the mechanism (`osSandbox`), the Landlock ABI, and the machine's
-  capabilities. Its `enforced` field is always `false` in this runtime, even for a project whose
-  `deno.json` sets `enforce`: read `effective` and `enforcerBuilt` instead. A runtime without the
+  capabilities, whether the broker holds file rules and network (`brokerBuilt`, `brokerNetBuilt`)
+  and how far `auto`'s rollout has come (`stage`). Its `enforced` field is always `false` in this
+  runtime, even for a project whose `deno.json` sets `enforce`: read `effective` and
+  `enforcerBuilt` instead. A runtime without the
   sandbox leaves the object out, so a tool can detect the feature by checking for it.
   [Field reference](/docs/kernel-sandbox-modes#deno-info---json--kernelsandbox).
 - **`denext doctor`** (design: not built yet) will check the machine (Landlock ABI and whether

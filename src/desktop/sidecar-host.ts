@@ -474,6 +474,13 @@ export async function createSidecarHost(options: SidecarHostOptions): Promise<Si
     }
     killExecSidecars();
   };
+  /** Before a full-app update: every sidecar stopped and waited for (detached ones too). */
+  const updateAll = async () => {
+    const results = await Promise.allSettled([...supervisors.values()].map((s) => s.stop()));
+    killExecSidecars();
+    const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+    if (failed) throw failed.reason;
+  };
   const stopAll = async () => {
     await Promise.all([...supervisors.values()].map((s) => s.stop()));
     // What the sidecars printed up to their exit is in their log files before this returns.
@@ -508,7 +515,7 @@ export async function createSidecarHost(options: SidecarHostOptions): Promise<Si
     },
     ...(proxied ? { proxied } : {}),
     startAll() {
-      registerSidecarStopper({ kill: killAll, stop: stopAll });
+      registerSidecarStopper({ kill: killAll, stop: stopAll, update: updateAll });
       // Undeclared leftovers (an update dropped them) and stale records, in the background.
       if (registryDir) {
         void cleanDetachedLeftovers(registryDir, detachedNames, SIDECAR_DEFAULTS.graceMs);

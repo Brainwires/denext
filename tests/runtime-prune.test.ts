@@ -280,6 +280,9 @@ Deno.test("runtimeRemove: prune keeps the project's denext's toolchain (its publ
     );
     assertStringIncludes(dry, "would remove Deno toolchain 1.0.0-denext.1");
     assertStringIncludes(dry, "would free 10 B");
+    // A prune says it looked at this project alone, and how to prune for another.
+    assertStringIncludes(dry, `Kept what the project in ${project} uses; other projects' pins`);
+    assertStringIncludes(dry, "denext --cwd <its folder> runtime prune");
     assert(await exists(join(roots.deno, "1.0.0-denext.1")), "a dry run removes nothing");
     assertEquals(asked, ["0.0.1"]);
     const json = JSON.parse(
@@ -287,6 +290,7 @@ Deno.test("runtimeRemove: prune keeps the project's denext's toolchain (its publ
     );
     assertEquals(json.removed.map((e: { version: string }) => e.version), ["1.0.0-denext.1"]);
     assertEquals(json.freedBytes, 10);
+    assertEquals(json.project, project);
     assertEquals(
       json.kept.map((e: { kind: string; version: string }) => `${e.kind} ${e.version}`).sort(),
       ["deno 1.0.0-denext.2", "deno 1.0.0-denext.3", "desktop-runtime 1.0.0-denext.2"],

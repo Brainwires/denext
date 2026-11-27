@@ -465,6 +465,26 @@ export function supportsDesktopDataToken(version: string): boolean {
 }
 
 /**
+ * The first Deno Desktop runtime that expands `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE` right
+ * after `unix:` in a baked `--allow-net` / `--allow-net-connect` / `--allow-net-listen` value (and
+ * the matching `--deny-*`), so a socket grant can name a path in the app's own folders
+ * (Brainwires/deno DENEXT.md item 501). An older runtime reads the token as a relative socket path,
+ * which the network grant parser refuses, so the app would not start.
+ */
+const FIRST_DESKTOP_UNIX_TOKEN_RUNTIME = "3.0.0-denext.30";
+
+/**
+ * Whether the Deno Desktop runtime `version` expands the app-folder tokens in a `unix:` network
+ * grant (from {@linkcode FIRST_DESKTOP_UNIX_TOKEN_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @returns Whether a `unix:$DENO_DESKTOP_DATA/…` / `unix:$DENO_DESKTOP_CACHE/…` grant may be baked.
+ */
+export function supportsDesktopUnixToken(version: string): boolean {
+  return compareDenoVersions(version, FIRST_DESKTOP_UNIX_TOKEN_RUNTIME) >= 0;
+}
+
+/**
  * The first Deno Desktop runtime with `Deno.openPty` (a pseudo-terminal: a program started on a
  * PTY, its output as a stream, `resize` and `kill`; checked against `--allow-run` like
  * `Deno.Command`), which the `pty` desktop capability is built on. (Its work was tagged

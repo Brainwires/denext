@@ -27,4 +27,4 @@ export const RUNTIME_CHANNEL_PUBLIC_KEYS: readonly [active: string, backup: stri
  * yank. `deno task release` raises it to the published index's sequence before the release commit
  * (`deno task runtime:channel floor`); `0` until an index is published.
  */
-export const RUNTIME_CHANNEL_MIN_SEQUENCE: number = 1795440000;
+export const RUNTIME_CHANNEL_MIN_SEQUENCE: number = 1795782488;

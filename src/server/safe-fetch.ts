@@ -725,12 +725,14 @@ export const safeFetch: (url: string | URL, opts?: SafeFetchOptions) => Promise<
 
 /**
  * Caller headers for one redirect hop. Credentials (`authorization`, `cookie`,
- * `proxy-authorization`) are forwarded only while the hop stays on the ORIGINAL origin —
- * a redirect to another host must not receive them (the fetch-spec rule).
+ * `proxy-authorization`) are forwarded only until the chain first leaves the ORIGINAL origin:
+ * a redirect to another host must not receive them, and neither does any later hop, a return
+ * to the original origin included, since the other host chose where it leads (the fetch-spec
+ * rule: once removed, the headers stay removed).
  */
-function hopHeaders(headers: HeadersInit | undefined, url: URL, origin: string): Headers {
+function hopHeaders(headers: HeadersInit | undefined, leftOrigin: boolean): Headers {
   const out = new Headers(headers);
-  if (url.origin !== origin) {
+  if (leftOrigin) {
     for (const name of ["authorization", "cookie", "proxy-authorization"]) out.delete(name);
   }
   return out;
@@ -755,12 +757,14 @@ export function makeSafeFetch(
     };
     const origin = hop.url.origin;
     const signal = requestSignal(opts);
+    let leftOrigin = false;
     for (let i = 0; i <= maxRedirects; i++) {
       assertHttpUrl(hop.url);
+      leftOrigin ||= hop.url.origin !== origin;
       if (!hostAllowed(hop.url.hostname, opts.allowedHosts)) {
         throw new SafeFetchError("host-not-allowed", `host ${hop.url.hostname} is not allowlisted`);
       }
-      const res = await sendHop(pinned, hop, hopHeaders(opts.headers, hop.url, origin), {
+      const res = await sendHop(pinned, hop, hopHeaders(opts.headers, leftOrigin), {
         signal,
         jar: opts.cookieJar,
       });

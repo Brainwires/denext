@@ -556,6 +556,9 @@ Deno.test("test-run: profiledModules lists the existing emitted modules under th
 Deno.test("test-run: a module another config re-emitted is reported again after reEmitCovered", async () => {
   // `deno coverage` reads a module's emit from the shared emit cache; a process transpiling it under
   // another config (a test app's build) overwrites that entry, and the report skips the module.
+  // A Deno whose `deno coverage` no longer depends on that entry (denext's toolchain transpiles the
+  // module itself) never skips it: there the report is whole before the re-emit and stays whole
+  // after it. Which one runs is told by the report, not by a version.
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_reemit_" }));
   const deno = Deno.execPath();
   const run = async (args: string[]) => {
@@ -579,7 +582,9 @@ Deno.test("test-run: a module another config re-emitted is reported again after 
     );
     await run(["test", "--coverage=cov", "--coverage-raw-data-only", "lib_test.ts"]);
     await run(["run", "--config", "other.json", "mod/lib.ts"]);
-    assert((await run(["coverage", "cov"])).includes("Missing transpiled source"), "clobbered");
+    const before = await run(["coverage", "cov"]);
+    const clobbered = before.includes("Missing transpiled source");
+    if (!clobbered) assert(before.includes("lib.ts"), before);
     const reEmitted = await reEmitCovered(join(dir, "cov"), {
       bin: deno,
       config: join(dir, "deno.json"),

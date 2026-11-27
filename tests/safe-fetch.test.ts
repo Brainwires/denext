@@ -459,6 +459,80 @@ Deno.test("safeFetch preserves method + body across a 307 redirect", async () =>
   assertStringIncludes(requests[1], "keepme", "307 preserves the body");
 });
 
+Deno.test("safeFetch sends caller credentials only until a redirect chain first leaves the original origin", async () => {
+  const credentials = {
+    authorization: "Bearer app-token",
+    cookie: "session=app",
+    "proxy-authorization": "Basic cHJveHk=",
+    "x-trace": "kept",
+  };
+  const carried = (request: string) =>
+    /^authorization:/im.test(request) || /^cookie:/im.test(request) ||
+    /^proxy-authorization:/im.test(request);
+  // a.example → a.example (same origin) → b.example → a.example → a.example.
+  const locations = [
+    "https://a.example/step",
+    "https://b.example/hop",
+    "https://a.example/back",
+    "/again",
+  ];
+  const { transport, requests } = scriptedTransport((_req, hop) =>
+    hop < locations.length
+      ? rawResponse(307, { location: locations[hop] }, "")
+      : rawResponse(200, { "content-length": "2" }, "ok")
+  );
+  const fetch = makeSafeFetch({ resolver: () => Promise.resolve(["93.184.216.34"]), transport });
+  const res = await fetch("https://a.example/start", {
+    method: "POST",
+    body: "payload",
+    headers: credentials,
+  });
+  assertEquals(res.status, 200);
+  assertEquals(requests.map((r) => r.split(" HTTP/1.1")[0]), [
+    "POST /start",
+    "POST /step",
+    "POST /hop",
+    "POST /back",
+    "POST /again",
+  ]);
+  // Same-origin hops before the chain left carry them; no hop from the other origin on does,
+  // the hops back on the original origin included.
+  assertEquals(requests.map(carried), [true, true, false, false, false]);
+  // Other headers are the caller's on every hop.
+  for (const request of requests) assert(/^x-trace: kept/im.test(request));
+
+  // A chain that never leaves the origin keeps them throughout.
+  const same = scriptedTransport((_req, hop) =>
+    hop < 2
+      ? rawResponse(302, { location: `/n${hop}` }, "")
+      : rawResponse(200, { "content-length": "2" }, "ok")
+  );
+  await makeSafeFetch({
+    resolver: () => Promise.resolve(["93.184.216.34"]),
+    transport: same.transport,
+  })(
+    "https://a.example/start",
+    { headers: credentials },
+  );
+  assertEquals(same.requests.map(carried), [true, true, true]);
+  // Another port or scheme of the same host is another origin.
+  const port = scriptedTransport((_req, hop) =>
+    hop === 0
+      ? rawResponse(302, { location: "https://a.example:8443/x" }, "")
+      : hop === 1
+      ? rawResponse(302, { location: "https://a.example/y" }, "")
+      : rawResponse(200, { "content-length": "2" }, "ok")
+  );
+  await makeSafeFetch({
+    resolver: () => Promise.resolve(["93.184.216.34"]),
+    transport: port.transport,
+  })(
+    "https://a.example/start",
+    { headers: credentials },
+  );
+  assertEquals(port.requests.map(carried), [true, false, false]);
+});
+
 Deno.test("safeFetch: the timeout actually firing surfaces a network error", async () => {
   // A transport that never responds on its own — only the combined timeout signal
   // ends it. Proves timeoutMs elapsing (not just a pre-aborted controller) works.

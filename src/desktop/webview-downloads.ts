@@ -27,7 +27,10 @@ import type {
   WebViewPermissionRequest,
 } from "./webview.ts";
 
-/** How long a permission handler may take before its request is refused. */
+/**
+ * How long a permission handler may take before its request is refused, and a `will-download`
+ * listener before an item it neither saved nor cancelled is cancelled.
+ */
 const PERMISSION_ANSWER_MS = 5 * 60 * 1000;
 
 /** The download states the runtime reports. */
@@ -58,7 +61,10 @@ export interface WebViewMediaOps {
   fail(code: string, message: string): Error;
   /** A throwing `updated` / `done` listener (it never stops the others). */
   onListenerError(err: unknown): void;
-  /** The permission handler's limit (tests shorten it; default 5 minutes). */
+  /**
+   * The permission handler's limit, and how long a requested download may wait for `save`,
+   * `saveAs` or `cancel` before it is cancelled (tests shorten it; default 5 minutes).
+   */
   readonly answerMs?: number;
 }
 
@@ -83,6 +89,14 @@ interface LiveDownload {
   over: boolean;
   /** Its item (made once: `will-download` and `updated` hand the same object). */
   item?: WebViewDownloadItem;
+  /** Cancels it once nothing saved or cancelled it in time (cleared by the decision). */
+  decideTimer?: ReturnType<typeof setTimeout>;
+}
+
+/** The app decided `live` (saved it, or cancelled it): it no longer waits on the deadline. */
+function decided(live: LiveDownload): void {
+  clearTimeout(live.decideTimer);
+  live.decideTimer = undefined;
 }
 
 /** A pending permission request. */
@@ -167,9 +181,16 @@ function itemOf(m: MediaState, live: LiveDownload): WebViewDownloadItem {
     save: async (target) => {
       await control("save", target);
       live.savedTo = target;
+      decided(live);
     },
-    saveAs: () => control("saveAs"),
-    cancel: () => control("cancel"),
+    saveAs: async () => {
+      await control("saveAs");
+      decided(live);
+    },
+    cancel: async () => {
+      await control("cancel");
+      decided(live);
+    },
     pause: () => control("pause"),
     resume: () => control("resume"),
     reveal: () => {
@@ -199,6 +220,7 @@ function listenOn(live: LiveDownload) {
 function finish(m: MediaState, live: LiveDownload): void {
   if (live.over) return;
   live.over = true;
+  decided(live);
   m.downloads.delete(live.data.id);
   const d = live.data;
   const done: WebViewDownloadDone = {
@@ -220,6 +242,14 @@ function requested(m: MediaState, e: WebViewDownloadEvent): void {
   }
   const live: LiveDownload = { data: { ...e }, updated: new Set(), done: new Set(), over: false };
   m.downloads.set(e.id, live);
+  // A listener that never saves or cancels it would leave it pending in the runtime until the view
+  // closes: past the limit it is cancelled, as an unanswered permission request is refused.
+  live.decideTimer = setTimeout(() => {
+    live.decideTimer = undefined;
+    if (!live.over && live.data.state === "requested") {
+      m.ops.control(e.id, "cancel").catch(() => {});
+    }
+  }, m.ops.answerMs ?? PERMISSION_ANSWER_MS);
   m.ops.fire("will-download", itemOf(m, live));
 }
 
@@ -236,6 +266,7 @@ function progressed(m: MediaState, e: WebViewDownloadEvent): void {
   else delete d.paused;
   if (e.canResume !== undefined) d.canResume = e.canResume;
   if (e.reason !== undefined) d.reason = e.reason;
+  if (d.state !== "requested") decided(live); // under way: it was decided
   if (isFinal(d)) return finish(m, live);
   callAll(live.updated, itemOf(m, live), m.ops.onListenerError);
 }

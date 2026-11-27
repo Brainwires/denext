@@ -1086,7 +1086,7 @@ async function appFolderDestination(
   if (!dirs) throw invalid("the app folders are not available");
   if (rel === "") throw invalid("target.path must name a file in the app folder");
   const target = await confineRelative(dirs[directory], rel);
-  await refuseReservedDataPath(dirs.data, target);
+  await refuseReservedDataPath(dirs.data, target, dirs.cache);
   await ensureDir(dirname(target));
   return target;
 }

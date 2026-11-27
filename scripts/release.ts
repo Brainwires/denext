@@ -16,7 +16,8 @@
 //      coverage, backend-integration — a push to `development` skips them; dispatch ci.yml) is
 //      green, and so are the newest desktop-ci.yml, e2e.yml, desktop-window.yml and
 //      native-plugins.yml runs on HEAD (every job), else ABORT
-//      (scripts/release-ci.ts)
+//      (scripts/release-ci.ts); and the newest final release tag must be on origin/main (its
+//      development → main PR merged), else ABORT
 //   0b. warn (never abort) when the published revoked-runtimes list expires within 10 days, has
 //      expired or can't be read (`deno task revocations expiry`), while there is time to re-sign;
 //      the same for the runtime channel index within 15 days (`deno task runtime:channel expiry`)
@@ -61,7 +62,7 @@
 // wait for @denext/docs-corpus), `tag`, `push`, `pr`. `--resume-from <step>` names the step.
 // Every resume requires the gate-pass marker step 5 records (in the git directory: the release,
 // the CI-green base commit and the gated tree's hash), matching the tree it would publish; without
-// one it refuses, and `--regate` re-runs step 0 and step 5 on the tree first.
+// one it refuses, and `--regate` re-runs, on the tree first, every check a fresh release runs (0, 0c, the corpus, 5, 6).
 //
 // After tagging, every release gets a `development → main` PR so main catches up to the
 // tag (a hard rule — see AGENTS.md "Releasing"); this script prints the `gh pr create`
@@ -639,8 +640,10 @@ async function currentGateState(version: string, step: PublishStep): Promise<Gat
 
 /**
  * Refuse to resume at `step` unless a gate pass is recorded for exactly the base and tree it
- * would publish. `--regate` re-runs step 0 (CI on the base) and step 5 (the local gate, plus doc
- * lint) on the tree as it is, and records the pass when both are green.
+ * would publish. `--regate` re-runs, on the tree as it is, every check a fresh release runs
+ * before recording its pass: step 0 (CI on the base), 0c (the bundled runtime pin), the docs
+ * corpus check, step 5 (the local gate) and step 6's doc lint, size guard and stripped publish
+ * dry-run; it records the pass when all are green.
  */
 async function requireGatePass(
   target: { version: string; tag: string; branch: string },
@@ -650,11 +653,11 @@ async function requireGatePass(
   const current = await currentGateState(target.version, step);
   if (opts.regate) {
     await checkCi(target.branch, false, current.base);
+    const runtimeRefusal = await checkBundledRuntime(target.version);
+    if (runtimeRefusal) die(`0c. ${runtimeRefusal}`);
+    await checkCorpus(target.version);
     await runReleaseGate(opts.fullGate);
-    if (await run("deno", "task", "doc-lint") !== 0) die("doc-lint failed — release aborted.");
-    if (await run("deno", "run", "-A", "scripts/publish-strip.ts") !== 0) {
-      die("the package is over its size guard — release aborted BEFORE tagging.");
-    }
+    await prePublishChecks();
     const after = await currentGateState(target.version, step);
     if (after.tree !== current.tree) die("the gate changed the tree — release aborted.");
     return await recordGatePass(current);
@@ -855,6 +858,50 @@ async function checkPreconditions(tag: string, branch: string): Promise<void> {
   if (branch !== "development") {
     console.warn(`release: warning — on branch "${branch}", not "development".`);
   }
+  await checkPreviousReleaseMerged();
+}
+
+/**
+ * The newest final release tag (`v4.22.0`; an rc never) among `tags`.
+ *
+ * @param tags Tag names, any order.
+ * @returns The tag, or null when there is none.
+ */
+export function newestFinalTag(tags: readonly string[]): string | null {
+  const finals = tags.filter((t) => /^v\d+\.\d+\.\d+$/.test(t));
+  const key = (t: string) => t.slice(1).split(".").map(Number);
+  finals.sort((a, b) => {
+    const [x, y] = [key(a), key(b)];
+    return y[0] - x[0] || y[1] - x[1] || y[2] - x[2];
+  });
+  return finals[0] ?? null;
+}
+
+/**
+ * Why a release can't start while the previous final release is not on `main` (`main` must equal
+ * what is published, and the PR step only prints the merge), else null.
+ *
+ * @param tag The newest final release tag.
+ * @param merged Whether `origin/main` contains it.
+ * @returns The refusal, or null.
+ */
+export function previousReleaseRefusal(tag: string | null, merged: boolean): string | null {
+  if (tag === null || merged) return null;
+  return `${tag} is not merged into main (main must always equal the published release): ` +
+    "merge its development → main PR first (`gh pr create --base main --head development`, " +
+    "then `gh pr merge <n> --merge`), then release again.";
+}
+
+/** Step 0: refuse while the newest final release tag is not on `origin/main`. */
+async function checkPreviousReleaseMerged(): Promise<void> {
+  if (await run("git", "fetch", "--quiet", "origin", "main") !== 0) {
+    die("could not fetch origin/main to check the previous release was merged — release aborted.");
+  }
+  const tag = newestFinalTag((await capture("git", "tag", "--list", "v*")).split("\n"));
+  const merged = tag === null ||
+    await run("git", "merge-base", "--is-ancestor", tag, "origin/main") === 0;
+  const refusal = previousReleaseRefusal(tag, merged);
+  if (refusal) die(refusal);
 }
 
 /**
@@ -991,7 +1038,15 @@ async function runGate(version: string, fullGate: boolean): Promise<void> {
   }
   await refreshLocks();
   await runReleaseGate(fullGate);
-  // What the publish job will do after the tag — fail HERE instead (rc.6's slow-type incident).
+  await prePublishChecks();
+}
+
+/**
+ * What the publish job will do after the tag — fail HERE instead (rc.6's slow-type incident):
+ * doc lint, the size guard and the stripped `deno publish --dry-run`. A fresh release and
+ * `--regate` both run it.
+ */
+async function prePublishChecks(): Promise<void> {
   console.log("\n6. Doc lint + publish dry-run…");
   if (await run("deno", "task", "doc-lint") !== 0) die("doc-lint failed — release aborted.");
   await checkPublishSize();

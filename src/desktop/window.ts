@@ -250,6 +250,16 @@ export interface WindowCapabilities {
   readonly titleVisibility: boolean;
   /** {@linkcode setToolbarStyle} works (macOS 11 and later). */
   readonly toolbarStyle: boolean;
+  /**
+   * `getWindowOrder()` reads the real stacking order from the OS (macOS, Windows, Linux on X11; on
+   * Wayland, or a runtime without it, it falls back to the focus order).
+   */
+  readonly windowOrder: boolean;
+  /**
+   * `getPointer()` answers where the pointer is on the screen (macOS, Windows, Linux on X11; not
+   * on Wayland, or on a runtime without it).
+   */
+  readonly pointer: boolean;
   /** Any other key the runtime reports. */
   readonly [key: string]: boolean | string | null;
 }
@@ -1692,8 +1702,9 @@ export interface DragSessionEnd {
   /** It was cancelled: no window got a `drop`. */
   readonly cancelled: boolean;
   /**
-   * With `cancelled`: `"cancelled"` ({@linkcode DragSession.cancel}), `"timeout"` (ten minutes),
-   * `"unavailable"` (the OS stopped telling the pointer).
+   * With `cancelled`: `"cancelled"` ({@linkcode DragSession.cancel}), `"closed"` (the window the
+   * drag started in closed), `"timeout"` (ten minutes), `"unavailable"` (the OS stopped telling the
+   * pointer).
    */
   readonly reason?: string;
 }

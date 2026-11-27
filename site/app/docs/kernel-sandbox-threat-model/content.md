@@ -5,13 +5,13 @@ lead: What the kernel sandbox defends against, what it doesn't, and where the bo
 ---
 
 > [!IMPORTANT]
-> **An opt-in preview ships in denext 4.20; the full sandbox, with automatic enforcement, lands
-> in denext 5.0.** **Draft, being validated.** This threat model is checked
-> against the escape-test corpus alongside the [guarantee matrix](/docs/kernel-sandbox-guarantees),
-> and is finished before the release. Today the kernel holds the matrix only in a `deno run` or
-> `deno serve` started with `--kernel-sandbox=enforce` on Linux or macOS, and the `documented` gaps
-> that run lists (port grants held by port, library loading bounded by the read scope) are part of
-> the boundary described here. The [overview](/docs/kernel-sandbox) has the design.
+> **An opt-in preview ships in denext 4.x; automatic enforcement lands in denext 5.0.** **Draft,
+> being validated.** This threat model is checked against the escape-test corpus alongside the
+> [guarantee matrix](/docs/kernel-sandbox-guarantees), and is finished before the release. Today
+> the kernel holds the matrix only in a run started with `--kernel-sandbox=enforce` (or `broker`)
+> on Linux or macOS and in a program compiled with it, and the `documented` gaps that run lists
+> (port lists of addresses held by port, library loading bounded by the read scope) are part of the
+> boundary described here. The [overview](/docs/kernel-sandbox) has the design.
 
 ## The attacker
 
@@ -44,11 +44,11 @@ Within the cells the [guarantee matrix](/docs/kernel-sandbox-guarantees) marks *
 - **Runs that can prompt, and `-A` runs.** A prompt can widen the grant, so there's no fixed policy
   to enforce. Plain `-A` has nothing to narrow.
 - **`env` and `sys`.** Environment variables live in the process's memory, and system information
-  comes from calls libc needs. (On Linux under `enforce` the environment is scrubbed to the
+  comes from calls libc needs. (On Linux and macOS under `enforce` the environment is scrubbed to the
   `--allow-env` names and a short runtime list before the program starts, and `/proc/self`,
   `/proc/cpuinfo`, `/proc/stat` and the cgroup limit files stay readable.)
-- **The `documented` gaps of an `enforce` run.** A macOS `host:port` grant reaches any host on the
-  port; a port list of IP addresses or `localhost` reaches any address on those ports; a scoped
+- **The `documented` gaps of an `enforce` run.** In Mode A a port list of IP addresses or
+  `localhost` reaches any address on those ports; a scoped
   `--allow-ffi` loads any library in the read scope; macOS's `sandbox-exec` fallback can start the
   runtime's own binary again, under the same profile.
 - **Workers and `Deno.permissions.revoke()`.** The kernel policy is per process and equals the
@@ -68,18 +68,40 @@ Platform gaps are listed cell by cell in the [guarantee matrix](/docs/kernel-san
 
 ## The supervisor's trust boundary
 
-_Design, being written as this lands (Mode B isn't built yet)._ How Mode B's supervisor is kept
-small and strict: no JavaScript
-engine, no user code, no configuration read after the split, the same compiled policy, one handle
-per answer, a strict message format with size and rate limits, and the connection closed on any
-malformed message. Why a policy passed from a parent can only narrow a child.
+Mode B's supervisor (Linux and macOS) stays outside the sandbox, so it is kept small and strict:
+
+- **Nothing of the program runs in it.** It has one thread, no JavaScript engine, and loads no
+  module or configuration. It can't be attached to by a debugger (not dumpable on Linux,
+  `PT_DENY_ATTACH` on macOS).
+- **It decides, the confined side only asks.** It holds the run's own compiled grant (never the
+  runtime's implicit set), and the confined image checks that the policy the supervisor holds is
+  the one it compiles itself. Native code can write any bytes to the channel, so every request is
+  untrusted, and is decided against that grant alone (network requests by the same permission
+  code Deno's own checks use, with prompting off).
+- **Files.** It resolves every path itself, opens it beneath an allowed root and outside every
+  deny, decides on the object it opened, and hands back only that descriptor. It hands out only
+  regular files, folders and FIFOs, and never resolves the confined side's `/proc`, `/sys` or
+  `/dev` paths for it.
+- **Network.** It resolves names itself, refuses an answer on this machine or its networks unless
+  the grant names that address, and connects each socket to exactly the address it checked.
+- **The channel.** Fixed-size frames with a bounded length, at most one descriptor per answer, no
+  descriptor ever sent toward the supervisor, and no request that refers to another, so it keeps no
+  state per requester. A malformed frame closes the channel.
+- **Children.** A `deno` started by the program gets a channel of its own only where it accepted
+  the kernel-verified policy of a confined ancestor, and the supervisor answers it against the one
+  policy it holds: the child gets no more than native code in its parent could already ask for.
+
+A policy passed from a parent can only narrow a child: a nested `deno` intersects its own grant
+with every layer it inherited.
 
 ## Time-of-check races
 
-_Being written as this lands._ Where checking a path and then opening it by name could be raced
-(today's documented limit on [Permissions](/docs/permissions#symlinks-and-allow-scopes)), how
-handing back the opened file instead of a yes/no closes it, and why it doesn't matter for rules the
-kernel enforces itself. Outside the kernel sandbox, an external permission broker that speaks
+Checking a path and then opening it by name could be raced (the documented limit on
+[Permissions](/docs/permissions#symlinks-and-allow-scopes)). Mode B's supervisor closes it for the
+rules it holds by handing back the file it opened and checked, never a yes/no. Rules the kernel
+enforces itself are checked by the kernel on every access, so a race doesn't reach past them.
+_Being written as this lands:_ the race-safe opens Deno's own file operations use on Linux and
+macOS. Outside the kernel sandbox, an external permission broker that speaks
 [protocol v2](/docs/permissions#the-external-permission-broker) already hands back the opened file
 on Unix.
 

@@ -514,6 +514,54 @@ export async function importVersionsCheck(dir: string): Promise<Check | null> {
   };
 }
 
+/** A denext invocation of the `toolchain` verb (removed in 4.21; `runtime path` replaced it). */
+const REMOVED_TOOLCHAIN_VERB = /\bdenext\b[^\n]*\btoolchain (?:path|install)\b/;
+
+/**
+ * The deploy files a project keeps that denext once generated (`Dockerfile`, `build.sh`, at the
+ * project root or under `.denext/deploy/<preset>/`), with their text.
+ */
+async function generatedDeployFiles(dir: string, outDir: string): Promise<[string, string][]> {
+  const candidates = [join(dir, "Dockerfile"), join(dir, "build.sh")];
+  try {
+    for await (const e of Deno.readDir(join(outDir, "deploy"))) {
+      if (e.isDirectory) candidates.push(join(outDir, "deploy", e.name, "build.sh"));
+    }
+  } catch { /* no deploy output */ }
+  const out: [string, string][] = [];
+  for (const path of candidates) {
+    const text = await Deno.readTextFile(path).catch(() => null);
+    if (text !== null) out.push([path, text]);
+  }
+  return out;
+}
+
+/**
+ * The stale-deploy-files check: a `Dockerfile` or `build.sh` generated before denext 4.21 links the
+ * toolchain with `denext … toolchain path`, a verb 4.21 removed, so the image build (or the
+ * host's `build.sh`, after its build ran) fails at that step. A failure naming each file and the
+ * command that regenerates it; null when no generated deploy file is found or none is stale.
+ *
+ * @param dir The project directory.
+ * @param outDir The build output directory (`.denext`).
+ * @returns The check, or null.
+ */
+export async function staleDeployFilesCheck(dir: string, outDir: string): Promise<Check | null> {
+  const stale = (await generatedDeployFiles(dir, outDir))
+    .filter(([, text]) => REMOVED_TOOLCHAIN_VERB.test(text))
+    .map(([path]) => path);
+  if (stale.length === 0) return null;
+  return {
+    name: "deploy files",
+    ok: false,
+    detail: `${stale.join(", ")} still run${stale.length === 1 ? "s" : ""} \`denext toolchain ` +
+      "path`, which this denext no longer has, so the deploy build fails there. Regenerate " +
+      "them: `denext generate docker --force` for a Dockerfile, `denext deploy prepare` for a " +
+      "preset's files (or replace `toolchain path` with `runtime path` in a file you edited)",
+    critical: false,
+  };
+}
+
 /** The process environment, never throwing (no `--allow-env`). */
 function safeEnv(name: string): string | undefined {
   try {
@@ -1278,6 +1326,8 @@ export async function collectDoctorReport(
   if (localImports) checks.push(localImports);
   const importVersions = await importVersionsCheck(paths.projectDir);
   if (importVersions) checks.push(importVersions);
+  const staleDeploy = await staleDeployFilesCheck(paths.projectDir, paths.outDir);
+  if (staleDeploy) checks.push(staleDeploy);
   const advisories = await Promise.all([
     jailScriptsCheck(paths.projectDir, options),
     runtimeSplitCheck(paths.projectDir, paths.config),

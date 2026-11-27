@@ -23,6 +23,7 @@ import {
   pinnedConfigArgs,
   pinnedDenextCli,
   revocationCheckFor,
+  runtimeNoticeFor,
   servesInProcess,
   toolchainApplies,
   toolchainConfigArgs,
@@ -566,6 +567,16 @@ async function toolchainChildFlags(
   ];
 }
 
+/** The "newer runtime" notice the gate asks for, when the verb and its selected release want one. */
+function noticeDep(
+  command: CommandSpec,
+  release: RuntimeRelease | null,
+  dir: string,
+): { runtimeNotice?: () => Promise<string | null> } {
+  if (!release || !runtimeNoticeFor(command)) return {};
+  return { runtimeNotice: () => runtimeUpdateNotice({ selected: release, projectDir: dir }) };
+}
+
 /**
  * Run a verb that executes project code on denext's Deno toolchain — the decision is
  * {@linkcode maybeReexecToolchain} (src/cli/self-exec.ts); this wires it to the process: the same
@@ -591,8 +602,7 @@ async function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise
     standalone: () => standalone,
     resolve: () =>
       resolveDenoToolchain({ revocations: revocationCheckFor(command), projectDir: dir }),
-    runtimeNotice: () =>
-      release ? runtimeUpdateNotice({ selected: release, projectDir: dir }) : Promise.resolve(null),
+    ...noticeDep(command, release, dir),
     // This child may re-run again before it serves (the CSS / module-config re-exec): it gets
     // `start.limits` as data, never as flags (src/build/resource-limits.ts `hopLimits`).
     spawn: async (deno, marker, env = {}) =>

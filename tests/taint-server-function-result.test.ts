@@ -77,3 +77,27 @@ Deno.test("assertUntainted: walks arrays, objects, Maps and Sets; stops at the c
   loop.self = loop;
   assertUntainted(loop);
 });
+
+Deno.test("assertUntainted: a shared or cyclic graph is walked once per object", () => {
+  experimental_taintUniqueValue(undefined, lifetime, SECRET);
+  // A diamond chain: each level holds the next one twice. Walked by path the last level is read
+  // 2^8 times (an ORM graph whose children point back never finishes); walked by object, once.
+  let visits = 0;
+  const leaf = new Proxy({ id: 1 } as Record<string, unknown>, {
+    ownKeys(t) {
+      visits++;
+      return Reflect.ownKeys(t);
+    },
+  });
+  let level: unknown = leaf;
+  for (let i = 0; i < 8; i++) level = { left: level, right: level };
+  assertUntainted({ root: level });
+  assertEquals(visits, 1, "the shared object's keys are read once");
+  // A cycle back to the root returns too, and a secret reached only through the shared object is
+  // still found.
+  const parent: Record<string, unknown> = { children: [{ up: null }, { up: null }] };
+  for (const c of parent.children as Record<string, unknown>[]) c.up = parent;
+  assertUntainted(parent);
+  leaf.token = SECRET;
+  assertThrows(() => assertUntainted({ root: level }), Error);
+});

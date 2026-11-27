@@ -139,8 +139,9 @@ export function handlerMethods(text: string): string[] {
 
 /**
  * Whether `denext export` writes a route handler's response to a file a static host serves: it
- * exports GET (and at most HEAD besides), is not `dynamic = "force-dynamic"`, and a dynamic
- * segment comes with `generateStaticParams`.
+ * exports GET (and at most HEAD besides), is marked static (`dynamic = "force-static"`, or a
+ * `revalidate` of `false` or a positive number, as Next's static export requires), and a
+ * dynamic segment comes with `generateStaticParams`.
  *
  * @param text The module's source.
  * @param dynamicSegments Whether the route pattern has a dynamic segment.
@@ -149,8 +150,12 @@ export function handlerMethods(text: string): string[] {
 export function handlerExportable(text: string, dynamicSegments: boolean): boolean {
   const methods = handlerMethods(text);
   if (!methods.includes("GET") || methods.some((m) => m !== "GET" && m !== "HEAD")) return false;
-  if (DYNAMIC_EXPORT.exec(text)?.[1] === "force-dynamic") return false;
-  return !dynamicSegments || STATIC_PARAMS.test(text);
+  const dynamic = DYNAMIC_EXPORT.exec(text)?.[1];
+  if (dynamic === "force-dynamic") return false;
+  const revalidate = REVALIDATE_EXPORT.exec(text)?.[1];
+  const marked = dynamic === "force-static" ||
+    revalidate === "false" || (revalidate !== undefined && Number(revalidate) > 0);
+  return marked && (!dynamicSegments || STATIC_PARAMS.test(text));
 }
 
 /**

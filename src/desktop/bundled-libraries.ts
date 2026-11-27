@@ -495,12 +495,12 @@ export function bundledLibraryPathIn(
  * @example
  * ```ts
  * import { bundledLibraryPath } from "denext/desktop";
- * const path = bundledLibraryPath("rullama_audio_ffi");
+ * const path = bundledLibraryPath("audio_ffi");
  * const lib = path ? Deno.dlopen(path, { level: { parameters: [], result: "f32" } }) : null;
  * ```
  *
  * @param name The library's name: an entry's `name`, else its file name without `lib` and the
- *   extension (`librullama_audio_ffi.dylib` → `rullama_audio_ffi`).
+ *   extension (`libaudio_ffi.dylib` → `audio_ffi`).
  * @returns The absolute path, or `null`.
  */
 export function bundledLibraryPath(name: string): string | null {

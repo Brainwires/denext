@@ -98,32 +98,37 @@ const MAX_TAINT_DEPTH = 64;
  * Throw when `value`, or anything it holds (array items, object fields, Map entries, Set
  * members), is tainted: the check for a server function's return value before it is encoded
  * for the client, where React's Flight would refuse it. Returns at once when nothing was ever
- * tainted.
+ * tainted. Each object is walked once, so a shared or cyclic graph (an ORM parent whose children
+ * point back) costs its size, not its paths.
  *
  * @param value The value about to be sent to the client.
  * @throws Error with the taint's message.
  */
 export function assertUntainted(value: unknown): void {
   if (!taintState.objects && taintedValues.size === 0) return;
-  assertUntaintedAt(value, 0);
+  assertUntaintedAt(value, 0, new WeakSet());
 }
 
-function assertUntaintedAt(value: unknown, depth: number): void {
+// An object met again is skipped: its first walk checked it. When that walk stopped at the depth
+// cap, the value is deeper than the wire codec encodes along that path, so it fails to encode.
+function assertUntaintedAt(value: unknown, depth: number, seen: WeakSet<object>): void {
   const message = taintMessageFor(value);
   if (message !== undefined) throw new Error(message);
   if (value === null || typeof value !== "object" || depth > MAX_TAINT_DEPTH) return;
+  if (seen.has(value)) return;
+  seen.add(value);
   if (value instanceof Map) {
     for (const [k, v] of value) {
-      assertUntaintedAt(k, depth + 1);
-      assertUntaintedAt(v, depth + 1);
+      assertUntaintedAt(k, depth + 1, seen);
+      assertUntaintedAt(v, depth + 1, seen);
     }
     return;
   }
   if (Array.isArray(value) || value instanceof Set) {
-    for (const v of value) assertUntaintedAt(v, depth + 1);
+    for (const v of value) assertUntaintedAt(v, depth + 1, seen);
     return;
   }
   for (const k of Object.keys(value)) {
-    assertUntaintedAt((value as Record<string, unknown>)[k], depth + 1);
+    assertUntaintedAt((value as Record<string, unknown>)[k], depth + 1, seen);
   }
 }

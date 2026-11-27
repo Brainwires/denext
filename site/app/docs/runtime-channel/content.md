@@ -77,7 +77,7 @@ denext runtime upgrade [--project] [--dry-run] [--json]
 denext runtime use <version|latest|bundled> [--project] [--json]
 denext runtime path | link | unlink
 denext runtime uninstall <version> | --all [--force] [--dry-run] [--json]
-denext runtime prune [--dry-run] [--json]
+denext runtime prune [--force] [--dry-run] [--json]
 ```
 
 - `version` names the release that runs, the rung that chose it (`DENEXT_RUNTIME`, the project
@@ -85,7 +85,11 @@ denext runtime prune [--dry-run] [--json]
   that was skipped, a withdrawn release), then the bundled runtime and its rollback, the oldest
   runtime this denext supports, your default, the channel (from its cache, no network) with the
   newer release it offers, and the revocation list and the tools beside the runtime. It exits 1
-  when the selection can't run (a malformed or incompatible project pin).
+  when the selection can't run (a malformed or incompatible project pin), or when a tool's cached
+  copy fails its check (the toolchain, Gleam or fastlane).
+- `prune` removes the cached releases nothing here uses: it keeps this denext's bundled runtime and
+  rollback, the release selected here, and those the project's own denext version bundles. When it
+  can't tell which denext the project pins, it removes nothing unless `--force`.
 - `list` shows the installed releases and the ones in use (the one that runs is starred), the
   release `upgrade` would take and the one the hold keeps out, each with the channel's verdict:
   `available`, `held`, `yanked` (with the reason), `incompatible` (with why) or `unlisted`. `--all`
@@ -107,8 +111,10 @@ work; `upgrade` and installing anything else fail with the reason.
 ## The installer
 
 `install.sh` / `install.ps1` install the latest denext, then run `denext runtime upgrade`: the
-newest runtime that denext supports, past the hold, made your default. The scripts never read the
-channel themselves; the binary verifies everything. Two flags move only the runtime:
+newest runtime that denext supports, past the hold, made your default. When that fails (the
+channel can't be read), a plain install falls back to `denext runtime install`, the runtime the
+denext bundles. The scripts never read the channel themselves; the binary verifies everything. Two
+flags choose the runtime step:
 
 ```sh
 curl -fsSL https://denext.dev/install.sh | sh -s -- --runtime-only            # runtime upgrade only
@@ -118,7 +124,9 @@ curl -fsSL https://denext.dev/install.sh | sh -s -- --runtime=<version> # instal
 
 `--runtime-only` (`DENEXT_RUNTIME_ONLY=1`, `-RuntimeOnly`) leaves an installed denext alone (with
 none installed it installs both); `--runtime=<version>` (`DENEXT_RUNTIME_VERSION`, `-Runtime
-<version>`) runs `denext runtime install <version>` and `denext runtime use <version>`. With either,
+<version>`) runs `denext runtime install <version>` and `denext runtime use <version>` in place of
+`runtime upgrade`. On its own it still installs the latest denext first; add `--runtime-only` to
+leave the binary alone. With either,
 a runtime step that fails fails the run; in a plain install it is one warning, and the runtime
 downloads on the first command that needs it. `DENEXT_NO_RUNTIME=1` skips the runtime step. A denext
 from before `denext runtime` gets its own older step (`denext toolchain install`), and
@@ -160,8 +168,9 @@ previous minor; the oldest passing one is recorded. Older denexts keep the runti
 ## The dependency-age hold
 
 `upgrade`, `use latest` and the installer take the newest compatible release whose publication
-is older than the dependency-age rule in force: the root `deno.json`'s
-`minimumDependencyAge`, else `.npmrc`, else 24 hours. They print the same one-line explanation
+is older than the dependency-age rule in force, in Deno's order: `DENEXT_MIN_DEP_AGE`, else the
+root `deno.json`'s `minimumDependencyAge`, else `min-release-age` in the project's `.npmrc` or
+your own `~/.npmrc`, else 24 hours. They print the same one-line explanation
 `denext upgrade` prints. Naming a version (`runtime install <version>`, `runtime use <version>`)
 is your choice and is not held. There is no exception for security releases: a flag that skipped
 the hold would be the first thing a stolen key set.
@@ -186,6 +195,11 @@ GitHub download URLs or `https://denext.dev/runtime/`, name a version outside de
 line, or change what a command runs (only the commands above do). A signing key that leaks can be
 withdrawn by the separate key that signs the [revoked-runtimes list](/docs/toolchain#revoked-runtimes);
 a denext that sees its channel key withdrawn ignores the channel and runs its bundled runtime.
+The list is read before the index: a command that may fetch the index (`runtime upgrade | use |
+install`, the installer, the update notice) fetches the list first when its cached copy is missing
+or stale, and with no current list to be had it takes nothing from the channel and says so (a
+machine that has never run denext is covered too). Commands that only read the cached index keep
+running what they verified before.
 
 Anything wrong (no key, a bad or withdrawn signature, an expired index, a replayed one, an unknown
 format, a document whose hash differs) and the channel counts as absent: `upgrade` and `install`
@@ -197,8 +211,10 @@ word of an index that does not verify.
 - **Yanked** (broken, not dangerous): `upgrade` and the installer stop offering it; a machine that
   runs it gets one warning naming `denext runtime upgrade`.
 - **Revoked** (a security problem): the [revoked-runtimes list](/docs/toolchain#revoked-runtimes)
-  applies to whatever runtime was chosen. denext runs the newest installed release that is
-  compatible and not revoked, else the bundled rollback, and the warning names
+  applies to whatever runtime was chosen. For a release chosen by `DENEXT_RUNTIME`, a project pin
+  or your default, denext runs the newest installed release that is compatible, not yanked and not
+  revoked, else the bundled runtime; a revoked bundled runtime falls back to its pinned rollback
+  ([Revoked runtimes](/docs/toolchain#revoked-runtimes)). The warning names
   `denext runtime upgrade`. `build --compile` and `desktop build | package` refuse a revoked
   runtime unless `DENEXT_ALLOW_REVOKED_RUNTIME=<version>` names it.
 

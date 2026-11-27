@@ -155,6 +155,8 @@ Deno.test("install.ps1 harness: only a PowerShell host crash is retried, never t
  */
 const GH_STUB = [
   "@echo off",
+  // The installer's probe for `gh attestation` (a gh before 2.49 has none: STUB_GH_OLD).
+  'if "%1 %2 %3"=="attestation verify --help" (if defined STUB_GH_OLD (echo unknown command "attestation" for "gh" 1>&2& exit /b 1) else (exit /b 0))',
   'if defined STUB_GH_LOG echo %* >> "%STUB_GH_LOG%"',
   // The real CLI writes its refusals to stderr, which Windows PowerShell 5.1 turns into a
   // terminating NativeCommandError under ErrorActionPreference 'Stop'; the stub does the same.
@@ -354,12 +356,21 @@ Deno.test("install.ps1: a wrong checksum installs nothing", { ignore: NOT_WINDOW
   const dir = await Deno.makeTempDir();
   const release = serveRelease("v9.9.9");
   try {
-    release.files.set(ASSET, await releaseZip(dir));
+    const zip = await releaseZip(dir);
+    release.files.set(ASSET, zip);
     release.files.set("SHA256SUMS", new TextEncoder().encode(`${"0".repeat(64)}  ${ASSET}\n`));
     const root = join(dir, "home");
     const { code, out } = await install(release, root, { DENEXT_VERSION: "v9.9.9" });
     assert(code !== 0, out);
     assertStringIncludes(out, "checksum verification FAILED");
+    // Both hashes are shown whole, each on a line of its own (never re-wrapped by the error view).
+    const shown = out.split(/\r?\n/);
+    assert(shown.includes(`  expected ${"0".repeat(64)}`), out);
+    assert(shown.includes(`  got      ${await sha256(zip)}`), out);
+    assert(
+      shown.includes(`denext: checksum verification FAILED for ${ASSET} - not installing.`),
+      out,
+    );
     assert(!(await exists(join(root, "bin", "denext.exe"))));
     assert(!release.hits.some((h) => h.endsWith("/releases/latest")), "DENEXT_VERSION skips it");
   } finally {
@@ -380,10 +391,26 @@ Deno.test("install.ps1: no checksum is fatal unless DENEXT_INSECURE=1; .sha256 i
     const refused = await install(release, root);
     assert(refused.code !== 0, refused.out);
     assertStringIncludes(refused.out, "no checksum could be fetched");
+    // The whole refusal is one line, however long (a URL to open is never broken up).
+    assert(
+      refused.out.split(/\r?\n/).includes(
+        `denext: no checksum could be fetched for ${ASSET} - not installing. Every release ` +
+          "publishes SHA256SUMS; check https://github.com/Brainwires/denext/releases/tag/v9.9.9 " +
+          "(DENEXT_INSECURE=1 installs anyway, unverified).",
+      ),
+      refused.out,
+    );
     assert(!(await exists(join(root, "bin", "denext.exe"))));
     const insecure = await install(release, root, { DENEXT_INSECURE: "1" });
     assertEquals(insecure.code, 0, insecure.out);
     assertStringIncludes(insecure.out, "UNVERIFIED");
+    assert(
+      insecure.out.split(/\r?\n/).includes(
+        `WARNING: denext: no checksum could be fetched for ${ASSET}; installing UNVERIFIED ` +
+          "because DENEXT_INSECURE=1 is set.",
+      ),
+      insecure.out,
+    );
     await Deno.remove(root, { recursive: true });
     release.files.set(
       `${ASSET}.sha256`,
@@ -425,8 +452,27 @@ Deno.test("install.ps1: a signed-in gh must verify the archive's build attestati
     // A release whose archive does not verify (swapped with a matching SHA256SUMS): nothing.
     const bad = await install(release, join(dir, "bad"), { ...quiet, STUB_GH_AUTH: "1" });
     assert(bad.code !== 0, bad.out);
-    assertStringIncludes(bad.out, "build attestation verification FAILED");
+    assertStringIncludes(bad.out, `the build attestation of ${ASSET} could not be verified`);
+    // gh's own words are shown, and the causes besides tampering are named.
+    assertStringIncludes(bad.out, "no attestations found");
+    assertStringIncludes(bad.out, "A network problem");
     assert(!(await exists(join(dir, "bad", "bin", "denext.exe"))));
+    // A gh without `gh attestation`: installed on the checksum with a note; required, refused.
+    const old = await install(release, join(dir, "old"), {
+      ...quiet,
+      STUB_GH_AUTH: "1",
+      STUB_GH_OLD: "1",
+    });
+    assertEquals(old.code, 0, old.out);
+    assertStringIncludes(old.out, "this GitHub CLI has no `gh attestation`");
+    const oldRequired = await install(release, join(dir, "old-required"), {
+      ...quiet,
+      STUB_GH_AUTH: "1",
+      STUB_GH_OLD: "1",
+      DENEXT_REQUIRE_ATTESTATION: "1",
+    });
+    assert(oldRequired.code !== 0, oldRequired.out);
+    assertStringIncludes(oldRequired.out, "has no `gh attestation`; update gh");
     const forced = await install(release, join(dir, "forced"), {
       ...quiet,
       STUB_GH_AUTH: "1",
@@ -1117,7 +1163,12 @@ try { Test-ModifyPath | Out-Null; "bad=accepted" } catch { "bad=$($_.Exception.M
   assertEquals(lines.env0flag, "True", "a flag beats the variable");
   assertEquals(lines.envall, "True");
   assertEquals(lines.nopath, "False");
-  assertStringIncludes(lines.bad, "DENEXT_MODIFY_PATH=sometimes");
+  // The refusal is written whole (Stop-Denext's Write-Host) before the short thrown error.
+  assert(
+    out.split("\n").includes("denext: DENEXT_MODIFY_PATH=sometimes is not one of 1, all, 0"),
+    out,
+  );
+  assertEquals(lines.bad, "denext: stopped (the reason is above).");
 });
 
 Deno.test("install.ps1: Get-UserPath reads the stored value unexpanded", {

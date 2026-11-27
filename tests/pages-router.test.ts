@@ -514,6 +514,62 @@ Deno.test("Preview Mode: setPreviewData signs a cookie that enables context.prev
   // 4. No cookie → no preview.
   const plain = await handle(new Request("http://localhost/post"));
   assertStringIncludes(await plain!.text(), '{"preview":false,"data":null}');
+
+  // 5. A preview render is the cookie holder's alone: the document and the soft-navigation
+  // data are marked private, as a getServerSideProps answer is. Without a valid cookie the
+  // statically generated page keeps its own (absent) policy.
+  const PRIVATE = "private, no-cache, no-store, max-age=0, must-revalidate";
+  assertEquals(withPreview!.headers.get("cache-control"), PRIVATE);
+  const previewData = await handle(
+    new Request("http://localhost/post", {
+      headers: { cookie: `__denext_preview=${token}`, "x-denext-pages-data": "1" },
+    }),
+  );
+  assertEquals((await previewData!.json()).pageProps, { preview: true, data: { id: 42 } });
+  assertEquals(previewData!.headers.get("cache-control"), PRIVATE);
+  assertEquals(forged!.headers.get("cache-control"), null);
+  assertEquals(plain!.headers.get("cache-control"), null);
+});
+
+Deno.test("Preview Mode: a redirect or notFound resolved under preview is private too", async () => {
+  const scan: PagesScan = {
+    ...EMPTY_SPECIALS,
+    pages: [pageEntry("/moved", "moved", "moved.tsx"), pageEntry("/gone", "gone", "gone.tsx")],
+    api: [{
+      routePath: "/api/preview",
+      pattern: parse("api/preview"),
+      filePath: "enable.ts",
+      isApi: true,
+    }],
+  };
+  const draftOnly = (result: Record<string, unknown>) => ({
+    getStaticProps: (ctx: { preview?: boolean }) => ctx.preview ? result : { props: {} },
+    default: () => h("div", null, "published"),
+  });
+  const handle = makeHandler(scan, {
+    "enable.ts": {
+      // deno-lint-ignore no-explicit-any
+      default: (_req: any, res: any) => {
+        res.setPreviewData({});
+        res.json({ ok: true });
+      },
+    },
+    "moved.tsx": draftOnly({ redirect: { destination: "/draft", permanent: false } }),
+    "gone.tsx": draftOnly({ notFound: true }),
+  });
+  const enable = await handle(new Request("http://localhost/api/preview", { method: "POST" }));
+  const cookie = `__denext_preview=${
+    /__denext_preview=([^;]+)/.exec(enable!.headers.get("set-cookie")!)![1]
+  }`;
+  const PRIVATE = "private, no-cache, no-store, max-age=0, must-revalidate";
+  for (const [path, status] of [["/moved", 307], ["/gone", 404]] as const) {
+    const draft = await handle(new Request(`http://localhost${path}`, { headers: { cookie } }));
+    await draft!.body?.cancel();
+    assertEquals([draft!.status, draft!.headers.get("cache-control")], [status, PRIVATE], path);
+    const published = await handle(new Request(`http://localhost${path}`));
+    await published!.body?.cancel();
+    assertEquals([published!.status, published!.headers.get("cache-control")], [200, null], path);
+  }
 });
 
 Deno.test("Preview Mode: clearPreviewData expires the cookie", async () => {

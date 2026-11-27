@@ -45,7 +45,7 @@ Deno.test("runtime reference: every area has its section", async () => {
   ) assertStringIncludes(md, heading);
 });
 
-Deno.test("toolchain docs: rc.6-only jail features are labelled with their runtime", async () => {
+Deno.test("toolchain docs: the jail's host lists are described by what they do, not a release", async () => {
   const md = await Deno.readTextFile(
     new URL("../site/app/docs/toolchain/content.md", import.meta.url),
   );
@@ -55,8 +55,9 @@ Deno.test("toolchain docs: rc.6-only jail features are labelled with their runti
   assertStringIncludes(md, "\n### Versions\n");
   assertStringIncludes(md, "\n### Identity\n");
   assert(!md.includes("<a id="), "no raw anchors: the renderer escapes them");
-  assertStringIncludes(md, "**What a host list holds (runtime `3.0.0-rc.6`).**");
-  assertStringIncludes(md, "From runtime `3.0.0-rc.6` `net` also takes the hosts");
+  assertStringIncludes(md, "**What a host list holds.**");
+  assertStringIncludes(md, "`net` takes the hosts the scripts may reach");
+  assert(!/runtime `3\.0\.0-rc\.\d+`/.test(md), "no gate on a release older than denext supports");
   assert(
     !md.includes("such as `curl`, can still reach any host"),
     "rc.6's proxy holds every program; the page must not say curl gets around a host list",

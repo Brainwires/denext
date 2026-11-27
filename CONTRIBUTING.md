@@ -650,6 +650,12 @@ only within 15 days of it); `deno task runtime:channel expiry` warns when that i
 published release document into the bundled pins, the old pins kept as `rollback`.
 `--with-backup` on any signing verb adds the backup key's signature (a key rotation: sign with both,
 ship a denext release with the new backup slot, then retire the old key).
+Every signing verb (`publish`, `yank`, `resign`) reads the index from both bases (denext.dev and the
+mirror) and refuses unless both serve the same verified index; it starts from that index's entries,
+not from a checkout's `security/runtime-channel.json`, and rewrites the file to match.
+`runtime:verify` fails when the bases serve different indexes. `--first` signs without an agreed
+index: the first publish, or a base known to be down (then from the entries file, above the newest
+copy any base serves).
 
 The docs-site deploy must leave `runtime/` alone: its rsync takes `--exclude /runtime/` (see
 `site/README.md`).

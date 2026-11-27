@@ -20,6 +20,7 @@ import {
   activeDesktopRuntimePinOrBundled,
   activeRuntimeRelease,
   BUNDLED_RUNTIME,
+  bundledRuntimeReleases,
   factsOfEntry,
   factsOfPins,
   fetchLockedReleaseDocument,
@@ -55,7 +56,12 @@ import { MIN_RUNTIME } from "../src/build/deno-version.ts";
 import { rollbackToolchainPin } from "../src/build/deno-toolchain.ts";
 import { sha256Hex } from "../src/build/signed-envelope.ts";
 import { toBase64 } from "../src/build/ota-signing.ts";
-import { freshRevocationList, signRevocationList } from "../src/build/runtime-revocations.ts";
+import {
+  freshRevocationList,
+  revokedChoiceRefusal,
+  revokesVersion,
+  signRevocationList,
+} from "../src/build/runtime-revocations.ts";
 
 const BUNDLED = BUNDLED_RUNTIME.toolchain.version!;
 const ROLLBACK = BUNDLED_RUNTIME.toolchain.rollback!.version;
@@ -155,6 +161,25 @@ async function pinProject(dir: string, lock: unknown, extra: Record<string, unkn
 // ---------------------------------------------------------------------------------------------
 // Release documents and locks.
 
+Deno.test("lockOfPins: the bundled rollback's lock is the integrity its channel entry records", async () => {
+  // The rollback's pins are rebuilt from the bundled pins' `rollback` blocks; their lock must be
+  // the hash of the published release document, or a project pinned to it with `runtime use
+  // --project` fails on every other denext.
+  const channel = JSON.parse(
+    await Deno.readTextFile(new URL("../security/runtime-channel.json", import.meta.url)),
+  ) as { releases: { version: string; doc: { sha256: string; size: number } }[] };
+  const [, rollback] = bundledRuntimeReleases(BUNDLED_RUNTIME);
+  assert(rollback, "the bundled pins carry a rollback release");
+  const entry = channel.releases.find((r) => r.version === rollback.toolchain.version);
+  assert(entry, `security/runtime-channel.json records ${rollback.toolchain.version}`);
+  assertEquals(lockOfPins(rollback)!.integrity, `sha256-${entry.doc.sha256}`);
+  const text = releaseDocumentText(releaseDocumentOf(rollback));
+  assertEquals(new TextEncoder().encode(text).byteLength, entry.doc.size);
+  // The bundled release itself, likewise.
+  const own = channel.releases.find((r) => r.version === BUNDLED);
+  if (own) assertEquals(lockOfPins(BUNDLED_RUNTIME)!.integrity, `sha256-${own.doc.sha256}`);
+});
+
 Deno.test("lockOfPins: the bundled pins without their rollback are a document of their release", async () => {
   const lock = lockOfPins(BUNDLED_RUNTIME)!;
   assertEquals(lock.version, BUNDLED);
@@ -229,6 +254,33 @@ Deno.test("fetchLockedReleaseDocument: the first base whose copy hashes to the l
       RuntimeSelectError,
     );
     assertStringIncludes(err.message, "no copy");
+  });
+});
+
+Deno.test("fetchLockedReleaseDocument: a stalled first base leaves the mirror its own budget", async () => {
+  await withDirs(async (root) => {
+    const { text, lock } = await locked(docFor(NEWER));
+    const BODY = text;
+    const seen: Array<[string, boolean]> = [];
+    // denext.dev stalls until its budget aborts it; the mirror answers at once, with a budget
+    // of its own (a shared deadline would have started it already aborted).
+    const stalled = ((input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      seen.push([url, init?.signal?.aborted ?? false]);
+      if (url.startsWith(CHANNEL_BASES[0])) {
+        return new Promise<Response>((_, reject) =>
+          init?.signal?.addEventListener("abort", () => reject(init.signal!.reason))
+        );
+      }
+      return Promise.resolve(new Response(BODY));
+    }) as typeof fetch;
+    const doc = await fetchLockedReleaseDocument(lock, {
+      cacheRoot: root,
+      fetch: stalled,
+      budgetMs: 50,
+    });
+    assertEquals(doc.toolchain.version, NEWER);
+    assertEquals(seen.map(([, aborted]) => aborted), [false, false]);
   });
 });
 
@@ -555,7 +607,22 @@ Deno.test("resolveRuntimeRelease: a lock not cached is fetched by its hash; offl
     assertEquals(fetched, [NEWER]);
     await Deno.remove(join(root, "releases"), { recursive: true });
     const offline = { ...o, fetchLocked: () => Promise.reject(new Error("offline")) };
-    await assertRejects(() => resolveRuntimeRelease(offline), RuntimeSelectError, "not installed");
+    const err = await assertRejects(
+      () => resolveRuntimeRelease(offline),
+      RuntimeSelectError,
+      "not installed",
+    );
+    // The fetch's own cause is named, and the fix is not the install that fails the same way.
+    assertStringIncludes(err.message, "could not be fetched: offline");
+    assert(!err.message.includes("denext runtime install"), err.message);
+    assertStringIncludes(err.message, `denext runtime use ${NEWER} --project`);
+    // A copy that does not hash to the pin's integrity reads as that.
+    const mismatch = {
+      ...o,
+      fetchLocked: () => Promise.reject(new RuntimeSelectError("no copy … hashes to sha256-x")),
+    };
+    const bad = await assertRejects(() => resolveRuntimeRelease(mismatch), RuntimeSelectError);
+    assertStringIncludes(bad.message, "could not be fetched: no copy … hashes to sha256-x");
   });
 });
 
@@ -758,6 +825,11 @@ Deno.test("activeRuntimeRelease: the process's own resolution is remembered; the
     integrity: releaseIntegrity("c".repeat(64)),
     notices: [],
   };
+  // The process's own environment is what this reads: a pin file in it (the runtime-compat
+  // workflow points DENEXT_TOOLCHAIN_PIN_FILE at the candidate's pin) wins over any remembered
+  // resolution by design, so it is set aside for the test.
+  const pinFile = Deno.env.get("DENEXT_TOOLCHAIN_PIN_FILE");
+  Deno.env.delete("DENEXT_TOOLCHAIN_PIN_FILE");
   try {
     rememberRuntimeRelease(remembered);
     assertEquals(activeRuntimeRelease(), remembered);
@@ -765,6 +837,27 @@ Deno.test("activeRuntimeRelease: the process's own resolution is remembered; the
     assertEquals(activeDesktopRuntimePinOrBundled().version, NEWER);
   } finally {
     rememberRuntimeRelease(null);
+    if (pinFile !== undefined) Deno.env.set("DENEXT_TOOLCHAIN_PIN_FILE", pinFile);
+  }
+});
+
+Deno.test("activeRuntimeRelease: a pin file in the environment wins over a remembered resolution", () => {
+  const remembered = {
+    source: "project" as const,
+    version: NEWER,
+    ...(docFor(NEWER) as unknown as RuntimePins),
+    integrity: releaseIntegrity("c".repeat(64)),
+    notices: [],
+  };
+  const file = Deno.makeTempFileSync({ suffix: ".json" });
+  try {
+    Deno.writeTextFileSync(file, JSON.stringify(docFor(NEWEST).toolchain));
+    rememberRuntimeRelease(remembered);
+    const release = activeRuntimeRelease(envOf({ DENEXT_TOOLCHAIN_PIN_FILE: file }));
+    assertEquals(release.toolchain.version, NEWEST);
+  } finally {
+    rememberRuntimeRelease(null);
+    Deno.removeSync(file);
   }
 });
 
@@ -803,6 +896,65 @@ Deno.test("newestAvailableRelease: compatible, not yanked, and past the dependen
   );
   const none = newestAvailableRelease(releases.slice(0, 1), { rule: { cutoff } });
   assertEquals([none.pick, none.held?.version], [null, "3.0.0-denext.35"]);
+  // A release the revoked-runtimes list names is neither the pick nor the held one.
+  const list = freshRevocationList([
+    { component: "cli", version: NEWER, reason: "bad" },
+    {
+      component: "desktop",
+      version: "3.0.0-denext.35",
+      targets: ["x86_64-pc-windows-msvc"],
+      reason: "bad",
+    },
+  ], new Date());
+  const revoked = (version: string) => revokesVersion(list, version);
+  assertEquals([revoked(NEWER), revoked("3.0.0-denext.35"), revoked(NEWEST)], [true, true, false]);
+  assertEquals(revokesVersion(null, NEWER), false);
+  const safe = newestAvailableRelease(releases, { rule: { cutoff }, revoked });
+  assertEquals([safe.pick, safe.held?.version], [null, "3.0.0-denext.32"]);
+  assertEquals(
+    newestAvailableRelease(releases, { rule: { cutoff: null }, revoked }).pick?.version,
+    "3.0.0-denext.32",
+  );
+  // Choosing a revoked release by name: refused with the reason, unless the override names it.
+  const hit = { component: "cli" as const, version: NEWER, reason: "bad", advisory: "https://x/a" };
+  const refusal = revokedChoiceRefusal(hit, "aarch64-apple-darwin", envOf())!;
+  assertStringIncludes(
+    refusal,
+    `runtime ${NEWER} is revoked for aarch64-apple-darwin (bad; https://x/a)`,
+  );
+  assertStringIncludes(refusal, `DENEXT_ALLOW_REVOKED_RUNTIME=${NEWER}`);
+  assertEquals(
+    revokedChoiceRefusal(hit, undefined, envOf({ DENEXT_ALLOW_REVOKED_RUNTIME: NEWER })),
+    null,
+  );
+  assert(revokedChoiceRefusal(hit, undefined, envOf({ DENEXT_ALLOW_REVOKED_RUNTIME: NEWEST })));
+});
+
+Deno.test("runtimeUpdateNotice: a cache it can't record in asks nothing (no repeat, no fetch)", async () => {
+  await withDirs(async (root) => {
+    const channel = channelOf([await entryFor(docFor(NEWEST))]);
+    const now = Date.parse("2026-11-20T00:00:00Z");
+    const selected = activeRuntimeRelease(envOf(), { cacheRoot: root, projectDir: root });
+    // The cache root sits under a regular file: nothing can be created there.
+    await Deno.writeTextFile(join(root, "file"), "");
+    let loads = 0;
+    const o = {
+      selected,
+      env: envOf(),
+      cacheRoot: join(root, "file", "cache"),
+      now: () => now,
+      loadChannel: () => {
+        loads++;
+        return Promise.resolve(loaded(channel));
+      },
+      rule: () => Promise.resolve({ cutoff: new Date(now - 86_400_000) }),
+    };
+    assertEquals(await runtimeUpdateNotice(o), null);
+    assertEquals(await runtimeUpdateNotice(o), null);
+    assertEquals(loads, 0, "the channel is never loaded");
+    // The same release with a writable cache: said once.
+    assertStringIncludes((await runtimeUpdateNotice({ ...o, cacheRoot: root }))!, NEWEST);
+  });
 });
 
 Deno.test("runtimeUpdateNotice: once a day per release, per process tree, never for an explicit choice", async () => {
@@ -857,6 +1009,18 @@ Deno.test("runtimeUpdateNotice: once a day per release, per process tree, never 
       await runtimeUpdateNotice({ ...o, rule: () => Promise.resolve({ cutoff: new Date(0) }) }),
       null,
     );
+    // A revoked release is never announced: the next one down is, when it is newer.
+    const noNewest = await revoking([{ component: "cli", version: NEWEST }]);
+    assertEquals(
+      await runtimeUpdateNotice({ ...o, revocations: noNewest }),
+      `denext: runtime ${NEWER} is available: denext runtime upgrade`,
+    );
+    now += 25 * 3600_000;
+    const neither = await revoking([
+      { component: "cli", version: NEWEST },
+      { component: "desktop", version: NEWER },
+    ]);
+    assertEquals(await runtimeUpdateNotice({ ...o, revocations: neither }), null);
   });
 });
 

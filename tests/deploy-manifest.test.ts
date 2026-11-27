@@ -277,13 +277,17 @@ Deno.test("deploy scans: handler methods, the middleware matcher, a job's schedu
 });
 
 Deno.test("deploy scans: which route handlers a static export writes", () => {
-  const get = "export function GET() {}\n";
-  assert(handlerExportable(get, false), "a GET handler");
+  const get = 'export const dynamic = "force-static";\nexport function GET() {}\n';
+  assert(handlerExportable(get, false), "a force-static GET handler");
+  assert(!handlerExportable("export function GET() {}\n", false), "a GET not marked static");
+  assert(handlerExportable("export const revalidate = 60;\nexport function GET() {}", false));
+  assert(handlerExportable("export const revalidate = false;\nexport function GET() {}", false));
+  assert(!handlerExportable("export const revalidate = 0;\nexport function GET() {}", false));
   assert(handlerExportable(get + "export function HEAD() {}", false), "GET + HEAD");
   assert(!handlerExportable("export function POST() {}", false), "no GET");
   assert(!handlerExportable(get + "export function POST() {}", false), "GET + POST");
   assert(
-    !handlerExportable(get + 'export const dynamic = "force-dynamic";', false),
+    !handlerExportable('export const dynamic = "force-dynamic";\nexport function GET() {}', false),
     "force-dynamic",
   );
   assert(!handlerExportable(get, true), "a dynamic segment without generateStaticParams");

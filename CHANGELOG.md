@@ -8,6 +8,208 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.23.0] - 2026-11-27
+
+### Changed
+
+- **Runtime 3.0.0-denext.30.** The bundled Deno toolchain and Desktop runtime move to
+  3.0.0-denext.30 (rollback 3.0.0-denext.28; there is no 3.0.0-denext.29). It adds
+  `Deno.openRoot` (a directory handle nothing in it can escape),
+  `Deno.createHttpClient({ denyAddresses })`, `DENO_NARROW_PERMISSIONS` (a compiled program run
+  with less than its baked permissions) and, on Windows, `Deno.pipeServerIdentity`; the `deno` CLI
+  reads denext's revoked-runtimes list at startup; `deno test` / `deno bench` run under the kernel
+  sandbox's opt-in `enforce`, which gains deny ceilings and a stand-alone broker (`auto` still
+  applies nothing). Deno Desktop: a `desktop.permissions: "strict"` app is held by the kernel
+  sandbox where its web engine can run inside it (elsewhere its own process runs unconfined and one
+  line on stderr says so), an app that declares itself a browser receives the `http` / `https`
+  links the OS opens with it, the full-app update no longer waits for a detached sidecar kept
+  across updates, and a window can host a native view tree on the `gpui` backend. WebRTC takes the
+  next round of web-platform-tests and ECN / L4S; `structuredClone` and `Symbol.toStringTag`
+  follow the platform for more interfaces; CEF 156.0.8078.100.
+- **Deno Desktop: a `unix:` network grant can name a socket in the app's own folders.**
+  `desktop.extraPermissions.net` / `netListen` / `netConnect` and a sidecar's `permissions` take
+  `unix:$DENO_DESKTOP_DATA/<path>` and `unix:$DENO_DESKTOP_CACHE/<path>` besides an absolute path,
+  which the pinned runtime expands to the per-user folder at launch, so an app serving
+  `localIpcPath(name)` on macOS or Linux can grant that one socket instead of an unscoped
+  `netListen` / `netConnect`. Such an entry needs `desktop.app.identifier`, and a build on a runtime
+  that does not expand it (`DENEXT_DESKTOP_RUNTIME=stock`, a local runtime build) fails instead of
+  baking a grant the app would refuse at launch. Other tokens (`$APPDATA`), a relative path and a
+  `..` segment are still config errors, as is any token in `compile.permissions`.
+
+### Fixed
+
+- **`denext runtime prune` says it prunes for one project.** It keeps what the project in the
+  current folder (and this machine's runtime selection) uses, and now says so, naming
+  `denext --cwd <folder> runtime prune` for another project; `--json` carries the `project`.
+- **A static file under a symlinked folder no longer lists that folder on every request.** The
+  check that a file is named exactly as requested now reads each non-symlink component's own
+  stored name, so a request below `public/uploads` (a link to a folder of many files) no longer
+  reads the whole folder; a symlink's own name and any other spelling are still checked by
+  listing its parent.
+- **A local IPC client on Windows refuses a pipe served by another user.** Where the runtime
+  reports who serves a pipe connection (`Deno.pipeServerIdentity`), `connectLocalIpc` takes only a
+  pipe this user serves: a server run by another user, a pipe another user owns, or one whose
+  identity can't be read is refused with `PermissionDenied` and the connection closed. On a runtime
+  that doesn't report it the check is skipped: the client takes whichever process serves the name
+  (the server still claims its pipe name as the first instance).
+- **Two local IPC servers starting at once on one Unix socket can no longer orphan each other.**
+  The stale-socket check and the bind were not atomic, so the second could remove the first's new
+  socket. A server now holds an OS lock beside its socket (`<path>.lock`) for as long as it serves;
+  a second one is refused with `AddrInUse`. A process granted only the socket path itself (not its
+  folder) serves without the lock, as before.
+- **A detached sidecar's start lock is an OS lock.** Two starts that both judged the old lock file
+  stale could remove each other's lock, and a holder whose timers stalled for 30 s (a machine that
+  slept) lost it; after a crash the next launch waited up to 30 s. The start lock is now an
+  exclusive OS advisory lock (`flock` / `LockFileEx`), which the OS releases when its holder exits
+  and which is never broken while held.
+- **A stalled denext.dev no longer fails a runtime install from the mirror.** `denext runtime
+  install | use | upgrade` and a project pin give each host its own budget for the release
+  document, so the GitHub mirror is still tried in full.
+- **A project runtime pin that can't be fetched says why.** The error names the cause (offline, a
+  copy that doesn't match the pin's integrity, a refused document) and points at retrying or
+  `denext runtime use <version> --project`, instead of `denext runtime install`, which fails the
+  same way.
+- **A new runtime line in the channel no longer hides the whole channel.** Entries on a version
+  line this denext doesn't know are skipped; the rest of the signed index is still used.
+- **`denext start` and `denext job` no longer reach the network for the "newer runtime available"
+  notice**, and a read-only cache no longer repeats the notice and its channel fetch on every
+  command.
+- **`denext runtime use | upgrade --project` writes `deno.json` atomically** (temp file and
+  rename).
+- **`denext upgrade` warns when the project's runtime pin won't run on the new denext**, using the
+  cached channel entry, and names the `denext runtime use <version> --project` fix (`runtimePin`
+  in `--json`).
+- **`denext export` fails when copying `public/` fails.** Every error copying it read as "no
+  `public/`", so a full disk or an unreadable file left an export without its public files and no
+  error; only a missing `public/` is skipped now.
+- **A web view download no listener decides is cancelled after 5 minutes.** With `downloads:
+  "app"`, an item the `will-download` listener neither saved nor cancelled stayed pending in the
+  runtime until the view closed; it is now cancelled at the same limit as an unanswered
+  permission request.
+- **`denext desktop package` refuses a macOS script that never copies `desktop.bundle.libraries`.**
+  A `scripts/package-macos.ts` from before the libraries shipped the app without them, and only
+  `denext desktop doctor` said so; the package run now stops with the regenerate command.
+- **`denext doctor` names deploy files generated before 4.21.** A `Dockerfile` or `build.sh`
+  that still runs `denext … toolchain path` (a verb 4.21 removed) fails the image build or the
+  host's build; the new "deploy files" check lists each one and how to regenerate it.
+- **The installer refuses a binary this machine can't run.** On a musl Linux (Alpine) it stops
+  before downloading, and the downloaded `denext` must answer `--version` before it is installed,
+  so `curl … | sh` no longer exits 0 with a binary an older glibc can't start. A shell under Rosetta
+  on Apple silicon gets the arm64 build.
+- **The installer tells a failed attestation check apart from tampering.** A GitHub CLI without
+  `gh attestation` counts as no `gh` (installed on the checksum, with a note; refused under
+  `DENEXT_REQUIRE_ATTESTATION=1`), and a failed `gh attestation verify` shows gh's own message and
+  its likely causes. The checksum is still required.
+- **The installer's PATH edits are safer.** A PATH block whose end marker was removed by hand no
+  longer deletes the rest of the startup file, a startup file it can't write is a warning with the
+  lines to add, a download cut short in its last line runs nothing, and a failed
+  `--runtime=<version>` after the binary was installed still puts it on PATH and says so.
+- **A detached sidecar survives a failed read of its registry record.** It ended itself on any
+  error reading the record; now only a record that is gone, malformed or names another start ends
+  it, and a read that fails otherwise (a scanner holding the file, no free descriptors) is retried
+  at the next check.
+- **Local IPC on a Windows pipe refuses an oversized frame.** A frame header naming more than the
+  1 MiB frame limit now errors the connection's read and closes it, instead of buffering until
+  that many bytes arrive.
+- **The taint check walks each object of a result once.** Once anything was tainted, a Server
+  Action result or Live data value with shared or cyclic references (an ORM parent whose children
+  point back) was walked per path and could block the event loop; it is now walked per object.
+- **A full-app update stops every sidecar, detached ones included, before it quits.**
+  `installAppUpdateAndRelaunch()` now returns a promise: it stops the app's sidecars and waits for
+  them (a detached sidecar's shutdown went out from a promise continuation that a `force` quit
+  never ran, so the sidecar kept running the old executable and, on Windows, held the install
+  folder the swap must replace). A sidecar that cannot be stopped refuses the install with the new
+  `AppUpdateError` code `sidecars_running`. Callers `await` it.
+- **A detached sidecar's log is rotated while it runs.** `logs: "file"` / `"both"` kept the
+  documented 5 MB bound only when a fresh process started; the process now checks its own log
+  every 10 s and rotates it to `.1` in place (copy, then truncate), so a sidecar that runs for days
+  no longer grows it without bound.
+- **A detached sidecar that is busy when the app starts is not replaced.** A recorded instance
+  whose control endpoint accepts the connection but does not answer within the handshake budget
+  (its event loop blocked in synchronous work) was treated as stale, and a second instance started
+  beside it. It is now waited for (up to the sidecar's ready timeout) and the start fails if it
+  still does not answer; `stopDetachedSidecar` and the leftover cleanup report it as still running
+  instead of gone. Only a refused connection, or an endpoint that cannot prove the key, is stale.
+  A connection attempt still pending when the handshake budget passes (Windows reports a refused
+  loopback connect only after about two seconds of its own retries) is aborted and ended before the
+  probe answers, instead of being left to finish on its own.
+- **`install.ps1` shows its refusals and warnings as written.** Each refusal was one thrown
+  message, whose lines PowerShell's error view joins and re-wraps at the console width, breaking up
+  `gh attestation verify`'s own output, a checksum mismatch's expected and actual hashes, and long
+  lines with a URL or a command to copy (warnings were wrapped the same way). Every line is now
+  printed whole, followed by a one-line error.
+- **`denext runtime use <the bundled rollback> --project` writes the release's published
+  integrity.** The rollback's pins were rebuilt with their keys in another order than the
+  release document, so the pin's hash matched no channel entry and every other denext refused the
+  project.
+- **`denext export` pre-renders only route handlers marked static, and never hangs on one.** As
+  Next's `output: "export"` requires, a GET is written to its file only when the module exports
+  `dynamic = "force-static"` (or a `revalidate` of `false` or a positive number); every other GET
+  is listed as skipped without running, and a module whose source names no GET, or no
+  `dynamic` / `revalidate`, is not imported at all, so a POST-only route whose imports need the
+  server's environment no longer fails `denext export`, `denext mobile build` or a desktop build.
+  A static module that fails to import, a `generateStaticParams` that throws, an event stream, and
+  a response that misses its deadline (30 s, `DENEXT_EXPORT_RESPONSE_TIMEOUT_MS`) are skipped and
+  listed by name. The deploy manifest's `staticExport` follows the same rule.
+- **Exported files for params are written under their decoded names.** A `generateStaticParams`
+  value such as `café` was written as `caf%C3%A9`, which a static host (decoding the URL) never
+  served; a value that decodes to a path separator is skipped.
+- **`denext/desktop` and `denext/desktop/client` export every type their public types refer to**
+  (`DesktopWindowLevel`, `TrayMouseDetail` and its `TrayModifiers` / `TrayEventType`,
+  `StandardSchemaV1` and its result types, `SpaProxyConfig`, `DesktopUpdaterConfig`,
+  `DesktopLinuxDesktopEntryConfig`, `SidecarExit`, `SidecarExposedValue`), so each is documented
+  and nameable from there.
+- **`WindowCapabilities` types `windowOrder` and `pointer`** as booleans (they were reachable only
+  through the index signature), and `windowCapabilities()` reports both `false` until the runtime
+  says otherwise.
+- **`localIpcPath(name)` works inside a detached sidecar.** The app hands its identifier to the
+  sidecar it starts, so the sidecar's process finds the app's channels by name without `appId`.
+- **A detached sidecar whose module fails to load exits once.** When the first-attach deadline (or
+  the app's stop) had already begun ending the sidecar while its module was still loading, the
+  load failure no longer starts a second exit with code 1, and a load failure no longer leaves the
+  first-attach timer running.
+- **`safeFetch` keeps the caller's credentials off the rest of a redirect chain once it leaves
+  the original origin.** `Authorization`, `Cookie` and `Proxy-Authorization` were dropped for a hop
+  on another origin but sent again when a later hop came back to the original one; they now stay
+  off for every later hop, as the fetch standard has it.
+- **Pages Router: a page rendered under Preview Mode is not stored by a shared cache.** A page
+  rendered live under a valid preview cookie carried no `Cache-Control`; it now answers
+  `private, no-cache, no-store, max-age=0, must-revalidate` (unless the page sets its own) like a
+  `getServerSideProps` page: the document, the soft-navigation data, and a redirect or not-found
+  resolved under preview (`@denext/pages-router` 0.13.2).
+- **The runtime channel reads the revoked-runtimes list before it takes an index, and never picks
+  a revoked release.** The channel's loader read withdrawn channel keys from the cached list only,
+  so a machine with no cached list (a fresh install) or an expired one did not see them. The list is
+  now loaded the way the channel is (fetched first when missing or stale, from the channel's own
+  cache directory), and a command that may fetch the index takes nothing from the channel without
+  a current list (`the revoked-runtimes list can't be had`). `runtime upgrade`, `runtime use latest`
+  and the update notice skip a release the list names, and `runtime use <version>` /
+  `install <version>` refuse one revoked for this host unless `DENEXT_ALLOW_REVOKED_RUNTIME` names
+  it.
+- **Deno Desktop: the sidecar folders belong to the runtime, and a detached sidecar stays
+  reachable while its control endpoint is busy.** `<app data>/sidecars` (each detached sidecar's
+  record), `<app cache>/sidecars` (the packages a bundled sidecar loads) and `<app data>/ipc` are
+  now reserved for the runtime like the engine profile: no `fs` path, download target or `shell`
+  open / reveal / trash reaches them. A reattached sidecar's port comes from its authenticated control
+  connection instead of the record. The control endpoint closes its oldest unauthenticated
+  connection at its cap of 16 instead of refusing a new one, and the app asks again before it
+  treats a record as stale, so connections that never authenticate no longer make the app replace
+  a running detached sidecar.
+- **Middleware matchers and header rules see the path an encoded separator decodes to.** A
+  dynamic or catch-all segment's param is decoded after matching, so `/docs/a%2Fb` gave
+  `app/docs/[...slug]` the param `a/b` while a matcher on `/docs/a/:path*` was tested only against
+  the path as requested and did not run. A `matcher` and a config `headers` rule are now tested
+  against both spellings (the decoded one with `.` / `..` segments resolved). Params decode as
+  before, and a path check inside a middleware still sees the path as requested.
+- **`/_denext/image` caches a local source that answers per visitor by its bytes.** With a
+  middleware file, the encoded image of a local source was cached under its URL, width, quality and
+  format, so a source that answers different bytes per visitor (a route such as `/api/me/avatar`)
+  could be answered with the variant encoded for an earlier visitor. A source fetched with the
+  visitor's cookie or `Authorization`, or one the app answers `private`, `no-store` or
+  `Vary: Cookie`, is now cached under its URL and a hash of the bytes the app answered for this
+  request; the source is read and hashed inside the optimizer's concurrency gate, so no more
+  sources are held in memory than before.
+
 ## [4.22.0] - 2026-11-23
 
 ### Added
@@ -154,6 +356,18 @@ and this project adheres to
   `deno task runtime:pin` / `desktop:pin-runtime` never keep a rollback older than it (a named
   `--rollback` below it is refused).
 
+### Security
+
+- **Runtimes 3.0.0-denext.25 and 3.0.0-denext.26 are revoked on Linux**
+  ([GHSA-488g-7qvv-g92h](https://github.com/Brainwires/denext/security/advisories/GHSA-488g-7qvv-g92h)).
+  The revoked-runtimes list now names both for `x86_64-unknown-linux-gnu` and
+  `aarch64-unknown-linux-gnu`: in their lifecycle-script jail a script could change the mode,
+  owner, timestamps and extended attributes of the installer's open descriptors through procfs
+  links. A Linux machine that selects either (a project pin, a user default, `DENEXT_RUNTIME`) runs
+  a release that isn't revoked instead and says so once; `denext runtime upgrade` moves it on.
+  Fixed in runtime 3.0.0-denext.27 (denext 4.20.1). On other platforms 3.0.0-denext.25 stays the
+  oldest runtime this denext accepts.
+
 ## [4.21.0] - 2026-11-21
 
 ### Added
@@ -299,6 +513,11 @@ and this project adheres to
 
 ### Security
 
+- **The Linux lifecycle-script jail resolves a script's metadata changes within its own root**
+  ([GHSA-488g-7qvv-g92h](https://github.com/Brainwires/denext/security/advisories/GHSA-488g-7qvv-g92h)),
+  in runtime 3.0.0-denext.27: a jailed script can no longer change the mode, owner, timestamps or
+  extended attributes of the installer's open descriptors through procfs links. Affects runtimes
+  3.0.0-denext.25 and 3.0.0-denext.26 on Linux (denext 4.20.0), which 4.22.0 revokes there.
 - **Middleware matchers see every spelling of a path** ([GHSA-7mcj-vqxf-r65h](https://github.com/Brainwires/denext/security/advisories/GHSA-7mcj-vqxf-r65h)). Files under `public/` and dynamic route segments decoded the request path after matchers and config rules had tested it, so another spelling of a guarded path (a percent-encoded character, an encoded separator, or letter case and other aliases on a case-insensitive file system) could skip the middleware. A path with percent-encoded unreserved characters now answers a 308 to its canonical spelling before rules and middleware, and static files are served only under the name they are stored as; encoded separators and NUL are refused. Affects 0.9.0 through 4.20.0.
 - **Incoming `x-middleware-*` headers are dropped** ([GHSA-rh94-m978-c5c8](https://github.com/Brainwires/denext/security/advisories/GHSA-rh94-m978-c5c8)). A middleware that copied the request's headers onto its response handed a client's `x-middleware-rewrite` / `x-middleware-override-headers` to the runner as its own instruction. They are now removed before middleware runs, as in Next.js. Affects 0.9.0 through 4.20.0.
 - **`NextRequest.nextUrl.pathname` excludes the locale prefix under `i18n`** ([GHSA-4j9v-55c2-r88v](https://github.com/Brainwires/denext/security/advisories/GHSA-4j9v-55c2-r88v)), and `nextUrl.locale` is set in middleware, as in Next.js, so a path check in middleware code also covers the localized paths. `href` keeps the prefix. Affects 4.20.0 and earlier.
@@ -23106,7 +23325,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.22.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.23.0...development
+[4.23.0]: https://jsr.io/@denext/denext@4.23.0
 [4.22.0]: https://jsr.io/@denext/denext@4.22.0
 [4.21.0]: https://jsr.io/@denext/denext@4.21.0
 [4.20.1]: https://jsr.io/@denext/denext@4.20.1

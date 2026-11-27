@@ -5,9 +5,10 @@ lead: Something that worked before fails under the kernel sandbox. How to tell w
 ---
 
 > [!IMPORTANT]
-> **An opt-in preview ships in denext 4.20; the full sandbox, with automatic enforcement, lands
-> in denext 5.0.** Today the kernel refuses things only in a `deno run` or `deno serve` started
-> with `--kernel-sandbox=enforce` (or a `deno.json` that sets it) on Linux or macOS. This page
+> **An opt-in preview ships in denext 4.x; automatic enforcement lands in denext 5.0.** Today the
+> kernel refuses things only in a `deno run`, `deno serve`, `deno test` or `deno bench` started
+> with `--kernel-sandbox=enforce` or `broker` (or a `deno.json` that sets it) on Linux or macOS, and
+> in a program compiled with it. This page
 > collects symptoms as the sandbox is tested against real programs, packages and CI setups. The
 > [overview](/docs/kernel-sandbox#what-enforce-does-today) has what `enforce` does today.
 
@@ -46,25 +47,16 @@ error: --kernel-sandbox=enforce refuses to start: the OS can't hold these rules 
 Use --kernel-sandbox=warn to run with Deno's checks only, or --kernel-sandbox-report for the whole policy.
 ```
 
-**Cause:** a listed rule would be held more loosely by the kernel than by Deno (a `fail-open` gap).
-The common ones follow. **Fix:** change the rule as each entry says, or run with `warn`.
+**Cause:** a listed rule would be held more loosely than by Deno (a `fail-open` gap), even with
+the Mode B supervisor. The common ones follow. **Fix:** change the rule as each entry says, or run
+with `warn`.
 
-### `--allow-net=<host>` refuses under `enforce` on Linux
+### No Landlock or no seccomp filter here (Linux)
 
-**Cause:** a host-scoped grant (`--allow-net=api.example.com:443`) needs the Mode B supervisor,
-which isn't built yet. **Fix:** grant by IP address and port, grant all network, or run that
-command without `enforce`. (On macOS the same grant runs, held by port: any host on that port.)
-
-### A write deny inside a write allow refuses on Linux
-
-**Cause:** `--allow-write=./out --deny-write=./out/keep` needs Mode B too. **Fix:** scope the write
-grant to the folders that should be writable, leaving the protected one out.
-
-### A port list refuses on an older Linux kernel
-
-**Cause:** TCP port rules need Landlock ABI 4 (Linux 6.7). Before it the kernel can allow all TCP
-ports or none. **Fix:** a newer kernel, all network, or no `enforce` there. `deno info --json`
-shows `landlockAbi`.
+**Cause:** the kernel is older than 5.13, Landlock isn't in its security-module list, or a
+container's or outer sandbox's seccomp profile refuses the calls the sandbox needs. **Fix:** a newer
+kernel or a container profile that allows Landlock and a nested seccomp filter, or no `enforce`
+there. `deno info --json` shows `landlockAbi` and `capabilities.seccomp`.
 
 ### A read deny inside an allow refuses to start
 
@@ -72,22 +64,22 @@ shows `landlockAbi`.
 walk stops at 20,000 entries or 64 levels. **Fix:** narrow the read allow (for example `./src`
 instead of `.`), or move the denied file out of the large tree.
 
-### `deno test`, `deno bench` or `deno repl` refuses to start
+### `deno repl` or a test run refuses to start
 
 ```text
 error: --kernel-sandbox=enforce is not supported for this command yet: it can't apply the sandbox before user code runs, so it refuses to start
 ```
 
-**Cause:** `enforce` covers `run` and `serve` only. `test` (before type-checking), `bench`, the
-REPL, Jupyter and `eval` with a deny rule refuse rather than run unconfined, and `deno x` refuses
-a package's native executable. This bites most often when `deno.json` says
+**Cause:** `enforce` covers `run`, `serve`, `test` and `bench`. The REPL, Jupyter, `eval` with a
+deny rule and a `deno test` that loads a Vitest or Jest config refuse rather than run unconfined,
+and `deno x` refuses a package's native executable. This bites most often when `deno.json` says
 `"kernelSandbox": "enforce"`, which applies to every command that runs your code in the project,
 `denext dev` included (a watched, hot-reloading run isn't fixed, so it refuses too). `deno lint`
 and the language server are the exception: their lint plugins run with no kernel sandbox at all
 (`deno lint` warns), so the key neither covers nor refuses them. **Fix:** remove the key (or set it
 to `warn`) and put `--kernel-sandbox=enforce` on the start command.
 
-### A program from stdin is refused on Linux
+### A program from stdin is refused
 
 ```text
 error: --kernel-sandbox=enforce can't run a program read from stdin yet (the sandbox re-executes the process); save it to a file
@@ -101,14 +93,21 @@ program to a file.
 **Cause:** a process already under a Seatbelt profile (App Sandbox, an agent's or editor's sandbox,
 `sandbox-exec`) can't apply another. **Fix:** run outside the outer sandbox, or use `warn` there.
 
-### `deno compile --kernel-sandbox=enforce` is refused
+### `deno compile --kernel-sandbox=enforce` or `broker` is refused
 
-**Cause:** compiled programs have no kernel enforcer yet. **Fix:** compile with `warn`, `auto` or
-`off`.
+**Cause:** the target has no enforcer for it: `enforce` for a target other than Linux, macOS or
+Windows, `broker` for Windows or for a desktop app (no supervisor runs there). **Fix:** compile with
+`enforce` where `broker` was refused, or with `warn`, `auto` or `off`.
+
+### A compiled program refuses to start on a Windows write grant
+
+**Cause:** the small tier labels each write folder Low, which is persistent, so it refuses a grant
+on a drive root, the profile folder, the Windows folder or a system-wide program folder. **Fix:**
+grant narrow data folders.
 
 ## Failures while running
 
-### A child is missing environment variables (Linux)
+### A child is missing environment variables
 
 **Cause:** under `enforce` the environment is scrubbed to the `--allow-env` names plus `PATH`,
 `HOME`, `TMPDIR`, `DENO_DIR`, `LANG`, `LC_*`, `TZ`, the proxy variables, `NO_COLOR` and `TERM`, and
@@ -147,6 +146,40 @@ the sandbox. **Fix:** `deno cache` the module first, or import it statically.
 so a new one has none. **Fix:** create such files in a folder without a deny beside them, or move
 the deny.
 
+### `git fetch`, `curl` or an addon has no network
+
+**Cause:** the network grant is held by the Mode B supervisor (a host name in `--allow-net`, a
+`--deny-net`, a Unix socket by path or a port list on an older Linux kernel). The supervisor makes
+the program's own sockets; native code and child processes other than `deno` can't open one.
+**Fix:** grant the network by IP address and port (Mode A, held by port), grant all network, or
+run that step without `enforce`.
+
+### UDP, QUIC or a WebRTC connection fails
+
+**Cause:** under a host-scoped grant the supervisor refuses UDP sockets (`Deno.listenDatagram`,
+`node:dgram`, QUIC, WebRTC's UDP candidates), because a UDP socket can't be held to one peer. A DNS
+query to a name server the grant names still works. **Fix:** grant those addresses without host
+names, or run without `enforce`.
+
+### A granted host name is refused
+
+**Cause:** the supervisor resolved it to an address on this machine or its networks (loopback, a
+private range, a link-local address), which a public name may not lead to. **Fix:** add that
+address (or its subnet) to the grant if it's meant to be reached.
+
+### A signal reaches the program twice, or `sd_notify` is ignored
+
+**Cause:** under Mode B the process the launcher started is the supervisor, which passes on the
+signals sent to it. A signal sent to the whole process group or control group (systemd's default
+`KillMode=control-group`) reaches the program directly too; `sd_notify` comes from a process that
+isn't the main PID. **Fix:** make the program's shutdown handler idempotent, or use
+`KillMode=mixed`; set `NotifyAccess=all`.
+
+### A browser or `sandbox-exec` fails under `warn` on macOS
+
+**Cause:** `warn` asked for by name applies a report-only Seatbelt profile, and a program that
+applies a sandbox of its own fails under any profile. **Fix:** `DENO_KERNEL_SANDBOX_WARN_OBSERVE=0`.
+
 ### A library outside `--allow-ffi` still loads
 
 **Not a refusal, a documented gap:** on Linux and macOS library loading is bounded by the read
@@ -154,10 +187,10 @@ scope, not by the `--allow-ffi` list. Keep a library you don't want loaded out o
 
 ### Native code reaches another host or address on a granted port
 
-**Documented gap:** a macOS `host:port` grant is held by port (any host on it), and a port list of
-IP addresses or `localhost` is held by port on Linux and macOS (any address on those ports,
-`169.254.169.254` included). Block what must stay unreachable outside the process (a firewall, the
-container's network policy).
+**Documented gap:** in Mode A a port list of IP addresses or `localhost` is held by port on Linux
+and macOS (any address on those ports, `169.254.169.254` included). Run with
+`--kernel-sandbox=broker` to hold it exactly, or block what must stay unreachable outside the
+process (a firewall, the container's network policy).
 
 ### Other symptoms
 

@@ -737,3 +737,25 @@ Deno.test("web view media page: will-download, save to an app folder, reveal, pe
     }
   });
 });
+
+Deno.test("web view media: a download no listener saves or cancels in time is cancelled; a decided one is not", async () => {
+  const { view, v } = await backendView({ answerMs: 30 });
+  const cancels = () =>
+    v.calls.filter((c) => c[0] === "controlDownload" && c[2] === "cancel").map((c) => c[1]);
+  const items: WebViewDownloadItem[] = [];
+  view.on("will-download", (item) => items.push(item)); // looks, never decides 1
+  v.download({ id: 1, state: "requested", receivedBytes: 0 });
+  await until(() => cancels().length === 1);
+  assertEquals(cancels(), [1]);
+  // One saved in time keeps going past the limit.
+  v.download({ id: 2, state: "requested", receivedBytes: 0 });
+  await items[1].save("/tmp/f2.zip");
+  await new Promise((r) => setTimeout(r, 90));
+  assertEquals(cancels(), [1], "the saved download is never cancelled");
+  // One the runtime reports under way (decided elsewhere) likewise.
+  v.download({ id: 3, state: "requested", receivedBytes: 0 });
+  v.download({ id: 3, state: "progressing", receivedBytes: 1 });
+  await new Promise((r) => setTimeout(r, 90));
+  assertEquals(cancels(), [1]);
+  await view.close();
+});

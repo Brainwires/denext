@@ -113,10 +113,17 @@ Beside the pages it writes the files Next's `output: "export"` writes:
 - `out/404.html`: `app/not-found.tsx` (or the default 404 page) inside the root layout, with
   their stylesheets — the page GitHub Pages, Netlify, Cloudflare Pages and an S3 website serve
   for a URL with no file. With `trailingSlash: true` it is also written to `out/404/index.html`.
-- each route handler's GET response at its URL (`app/feed.xml/route.ts` → `out/feed.xml`,
-  `app/api/hello/route.ts` → `out/api/hello`, each `generateStaticParams` set of a dynamic one).
-  A handler with another method than GET, `dynamic = "force-dynamic"`, or a GET that fails or
-  answers a non-2xx status is skipped and listed;
+- each static route handler's GET response at its URL (`app/feed.xml/route.ts` →
+  `out/feed.xml`, `app/api/hello/route.ts` → `out/api/hello`, each `generateStaticParams` set of a
+  dynamic one). As in Next, a handler is static only when it says so:
+  `export const dynamic = "force-static"`, or an `export const revalidate` of `false` or a positive
+  number. A GET without either is skipped and listed, never run (Next fails the build there), and
+  a module that names no GET or no `dynamic` / `revalidate` is not even imported, so a POST-only
+  route whose imports need the server's environment doesn't affect the export. A module that
+  fails to import, `dynamic = "force-dynamic"`, a `generateStaticParams` that throws, and a GET that
+  fails, answers a non-2xx status or an event stream, or takes longer than 30 s
+  (`DENEXT_EXPORT_RESPONSE_TIMEOUT_MS`) are skipped and listed by route. A param value is written
+  under its decoded name (`café`, not `caf%C3%A9`), the file a static host serves for the URL;
 - the metadata files: `sitemap.xml` (and its `generateSitemaps` shards), `robots.txt`,
   `favicon.ico`, `manifest.webmanifest` and the icon / Open Graph / Twitter images. A static
   image keeps its extension (`app/icon.png` → `out/icon.png`), and the pages link it there,
@@ -1068,6 +1075,12 @@ A few things the framework deliberately cannot decide for you:
   matcher is tested against the path with the locale prefix removed, as in
   Next.js), so a locale prefix can never route around a path-restricted
   middleware. `ctx.locale` / `req.nextUrl.locale` carry the peeled locale.
+- **A route param can hold a separator.** `/docs/a%2Fb` gives `app/docs/[...slug]` the param
+  `["a/b"]` (one segment, decoded, as in Next.js). A middleware `matcher` and a config `headers`
+  rule are tested against that decoded path too, so `matcher: "/docs/a/:path*"` fires for it. A
+  path check written inside the middleware sees the path as requested (`/docs/a%2Fb`): when a
+  route joins its params into a key or a file path, compare the decoded path there, or refuse
+  paths that contain `%2F` / `%5C`.
 - **Bound request sizes and rate-limit at your edge/proxy** — denext caps action
   bodies and image sources, but a proxy-level limit and rate limiting are still
   the right place for broad DoS protection (§1).

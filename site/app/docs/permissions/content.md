@@ -27,14 +27,16 @@ the process as a low-privilege user, in a container, or behind a firewall.
 
 Kernel enforcement of the same grants is **in development** for denext's Deno: Landlock and
 seccomp on Linux, Seatbelt on macOS, a job object on Windows, and a supervisor for rules too fine
-for the kernel. The full system, with automatic enforcement, lands in denext 5.0. denext 4.20
+for the kernel. The full system, with automatic enforcement, lands in denext 5.0. denext 4.x
 ships an opt-in preview, off unless you ask for it: `--kernel-sandbox=warn` and
 `--kernel-sandbox-report` report, and `--kernel-sandbox=enforce` makes the operating system hold
-the grant for `deno run` and `deno serve` on Linux and macOS, so FFI, addons and subprocesses are
-held to it too. `enforce` refuses to start over a rule the kernel would hold more loosely than
-Deno, and runs with the documented gaps its report lists (a port grant held by port, library
-loading bounded by the read scope); `broker` still refuses to start. Don't set `enforce` in
-`deno.json`: `deno test` and `denext dev` refuse to start under it. See
+the grant for `deno run`, `deno serve`, `deno test` and `deno bench` on Linux and macOS (and for a
+program compiled with it), so FFI, addons and subprocesses are held to it too. Rules no kernel can
+hold, such as a host name in `--allow-net`, run under a supervising broker (`broker`), and native
+code and children then get no network of their own. `enforce` refuses to start over a rule it
+would hold more loosely than Deno, and runs with the documented gaps its report lists (a port list
+of addresses held by port, library loading bounded by the read scope). Don't set `enforce` in
+`deno.json`: `denext dev` and the REPL refuse to start under it. See
 [What `enforce` does today](/docs/kernel-sandbox#what-enforce-does-today). Outside an `enforce`
 run, every permission on this site means "least-privilege guardrail".
 One part already runs under the OS: an approved dependency's install script runs in the

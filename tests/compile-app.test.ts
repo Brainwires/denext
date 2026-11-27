@@ -79,6 +79,9 @@ Deno.test("denortBinary: the pinned denort on the toolchain, nothing elsewhere",
   const deps = (toolchain: string | undefined, p: DenoToolchainPin = pin) => ({
     toolchain: () => toolchain,
     pin: () => p,
+    // Hermetic: never the live revoked-runtimes list, which revokes this old version (the test
+    // failed once the list was fetched on a CI runner, PR #146).
+    shippable: () => Promise.resolve(),
     ensure: (o: { target: string }) => (asked.push(o.target), Promise.resolve({ denort: "/d" })),
   });
   assertEquals(await denortBinary("x86_64-unknown-linux-gnu", deps("2.9.7-denext.20")), "/d");

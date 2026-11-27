@@ -50,7 +50,10 @@ import {
 import {
   checkRevocationList,
   freshRevocationList,
+  loadRuntimeRevocations,
   REVOCATION_SIGNATURE_DOMAIN,
+  REVOCATION_URLS,
+  signRevocationList,
 } from "../src/build/runtime-revocations.ts";
 import { toBase64 } from "../src/build/ota-signing.ts";
 import {
@@ -339,6 +342,16 @@ Deno.test("checkRuntimeChannel: the payload's fields, and one entry per version"
   assertThrows(() => checkRuntimeChannel({ ...base, releases: {} }), RuntimeChannelError, "list");
   const twice = { ...base, releases: [entry("3.0.0-denext.27"), entry("3.0.0-denext.27")] };
   assertThrows(() => checkRuntimeChannel(twice), RuntimeChannelError, "listed twice");
+  // An entry on a version line this denext does not know (a later one) is left out; the index and
+  // its other entries still stand. A malformed entry on its own line still refuses the index.
+  const later = { ...entry("3.0.0-denext.27"), version: "4.0.0-denext.1", tag: "x" };
+  const mixed = checkRuntimeChannel({ ...base, releases: [later, entry("3.0.0-denext.27")] });
+  assertEquals(mixed.releases.map((r) => r.version), ["3.0.0-denext.27"]);
+  assertThrows(
+    () => checkRuntimeChannel({ ...base, releases: [{ ...entry("3.0.0-denext.27"), deno: 1 }] }),
+    RuntimeChannelError,
+    "deno",
+  );
 });
 
 Deno.test("freshRuntimeChannel: 45 days, a sequence above the previous whatever the clock, newest first", () => {
@@ -555,9 +568,10 @@ const granted = () => Promise.resolve(true);
  * The loader's replay floor, injected: the fixtures are dated `NOW`, and `deno task release`
  * raises the compiled-in {@linkcode RUNTIME_CHANNEL_MIN_SEQUENCE} to the live index's sequence at
  * every release, so a test that left the default in place would start failing the day a release
- * passed `NOW`. The default itself is pinned by its own test below, relative to the floor.
+ * passed `NOW`. The default itself is pinned by its own test below, relative to the floor. The
+ * environment is injected too (empty), so the machine's `DENEXT_RUNTIME_CHANNEL` never decides.
  */
-const NO_FLOOR = { minSequence: 0 } as const;
+const NO_FLOOR = { minSequence: 0, env: () => undefined } as const;
 
 async function withCache(fn: (root: string) => Promise<void>): Promise<void> {
   const root = await Deno.makeTempDir({ prefix: "denext-channel-" });
@@ -648,6 +662,129 @@ Deno.test("loadRuntimeChannel: an older index is a replay once a newer one is he
       now: () => T,
     });
     assertEquals(floored.channel, null);
+  });
+});
+
+Deno.test("loadRuntimeChannel: the withdrawn keys come from the revoked-runtimes list, loaded in the channel's mode and cache", async () => {
+  const a = await pair();
+  const rev = await pair();
+  const id = (await spkiSha256(a.pub))!;
+  const index = await signed(fresh(), a.priv);
+  const list = async (withdrawn: string[], at = NOW) =>
+    JSON.stringify(
+      await signRevocationList(freshRevocationList([], at, undefined, withdrawn), rev.priv),
+    );
+  const net = (revocations: string | null) =>
+    fakeNet(
+      new Map([
+        [indexUrl(CHANNEL_BASES[0]), index],
+        ...(revocations === null ? [] : REVOCATION_URLS.map((u) => [u, revocations] as const)),
+      ]),
+    );
+  const options = (root: string, n: ReturnType<typeof fakeNet>) => ({
+    ...NO_FLOOR,
+    keys: [a.pub],
+    cacheRoot: root,
+    now: () => T,
+    fetch: n.fetch,
+    netGranted: granted,
+    revocations: { keys: [rev.pub], minSequence: 0 },
+  });
+
+  // A machine with nothing cached: the list is fetched before the index is trusted, and a key
+  // it withdraws signs nothing here.
+  await withCache(async (root) => {
+    const n = net(await list([id]));
+    const got = await loadRuntimeChannel({ ...options(root, n), mode: "force" });
+    assertEquals([got.channel, got.absent], [null, "revoked-key"]);
+    assert(n.hits.some((u) => REVOCATION_URLS.includes(u)), "the list was asked for");
+    // It is cached where the channel is (not in the default cache directory). The environment is
+    // injected (empty), as the channel's is, so a test pass's DENEXT_REVOCATION_CHECK=0 never decides.
+    const cached = await loadRuntimeRevocations({
+      mode: "cache-only",
+      env: NO_FLOOR.env,
+      cacheRoot: root,
+      keys: [rev.pub],
+      minSequence: 0,
+      now: () => T,
+    });
+    assertEquals(cached.list?.revokedChannelKeys, [id]);
+    assertEquals(
+      (await loadRuntimeChannel({ ...options(root, n), mode: "cache-only" })).absent,
+      "revoked-key",
+    );
+  });
+  // The default mode fetches it too (the cached copy is missing).
+  await withCache(async (root) => {
+    const got = await loadRuntimeChannel(options(root, net(await list([id]))));
+    assertEquals(got.absent, "revoked-key");
+  });
+  // A list that withdraws nothing: the index is taken.
+  await withCache(async (root) => {
+    const got = await loadRuntimeChannel({ ...options(root, net(await list([]))), mode: "force" });
+    assertEquals([got.source, got.absent], ["network", null]);
+  });
+
+  // No current list to be had: a load that may reach the network takes no index, and asks for
+  // none; one that reads the cache keeps what the machine verified before.
+  await withCache(async (root) => {
+    const dark = net(null);
+    for (const mode of ["force", "fetch"] as const) {
+      const got = await loadRuntimeChannel({ ...options(root, dark), mode });
+      assertEquals([got.channel, got.absent, got.source], [null, "no-revocations", "none"], mode);
+    }
+    assert(!dark.hits.includes(indexUrl(CHANNEL_BASES[0])), "the index was not fetched");
+    // An expired list is no list.
+    const stale = net(await list([], new Date(T - 60 * DAY)));
+    assertEquals(
+      (await loadRuntimeChannel({ ...options(root, stale), mode: "force" })).absent,
+      "no-revocations",
+    );
+    // With an index cached while a list was current...
+    await loadRuntimeChannel({ ...options(root, net(await list([]))), mode: "force" });
+    // ...and the list since expired and unreachable, the cache still answers a cache-only load.
+    const later = { ...options(root, dark), now: () => T + 25 * DAY };
+    const kept = await loadRuntimeChannel({ ...later, mode: "cache-only" });
+    assertEquals([kept.source, kept.absent], ["cache", null]);
+    assertEquals((await loadRuntimeChannel({ ...later, mode: "force" })).absent, "no-revocations");
+  });
+
+  // The revocation check turned off, or `revokedKeys` given: no list is needed or loaded.
+  await withCache(async (root) => {
+    const dark = net(null);
+    const off = await loadRuntimeChannel({
+      ...options(root, dark),
+      mode: "force",
+      env: (k) => (k === "DENEXT_REVOCATION_CHECK" ? "0" : undefined),
+    });
+    assertEquals(off.absent, null);
+    dark.hits.length = 0;
+    const given = await loadRuntimeChannel({
+      ...options(root, dark),
+      mode: "force",
+      revokedKeys: [],
+    });
+    assertEquals(given.absent, null);
+    assert(!dark.hits.some((u) => REVOCATION_URLS.includes(u)));
+  });
+
+  // The loader is handed the channel's mode, cache directory, clock and network.
+  await withCache(async (root) => {
+    const seen: Record<string, unknown>[] = [];
+    const n = net(null);
+    await loadRuntimeChannel({
+      ...options(root, n),
+      mode: "force",
+      revocations: {
+        load: (o) => {
+          seen.push({ ...o });
+          return Promise.resolve({ configured: true, list: null, source: "none", expired: null });
+        },
+      },
+    });
+    assertEquals(seen.length, 1);
+    assertEquals([seen[0].mode, seen[0].cacheRoot, seen[0].fetch], ["force", root, n.fetch]);
+    assertEquals((seen[0].now as () => number)(), T);
   });
 });
 
@@ -742,6 +879,7 @@ Deno.test("loadRuntimeChannel: the default floor is the compiled-in minimum sequ
     await withCache(async (root) => {
       const index = await signed(fresh(undefined, at(sequence)), a.priv);
       const got = await loadRuntimeChannel({
+        env: () => undefined,
         keys: [a.pub],
         revokedKeys: [],
         cacheRoot: root,
@@ -791,6 +929,29 @@ Deno.test("channelKeys: the compiled-in keys unless a test opts in to the keys f
     } finally {
       honourChannelKeysFileForTests(false);
     }
+  });
+});
+
+Deno.test("loadReleaseDocument: a stalled first base leaves the mirror its own budget", async () => {
+  const { entry: e, text } = await releaseEntryFor(bundledDocument(), META);
+  const BODY = text;
+  await withCache(async (root) => {
+    const seen: Array<[string, boolean]> = [];
+    // denext.dev stalls until its budget aborts it; the mirror answers at once, with a budget
+    // of its own (a shared deadline would have started it already aborted).
+    const stalled = ((input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      seen.push([url, init?.signal?.aborted ?? false]);
+      if (url.startsWith(CHANNEL_BASES[0])) {
+        return new Promise<Response>((_, reject) =>
+          init?.signal?.addEventListener("abort", () => reject(init.signal!.reason))
+        );
+      }
+      return Promise.resolve(new Response(BODY));
+    }) as typeof fetch;
+    const got = await loadReleaseDocument(e, { cacheRoot: root, fetch: stalled, budgetMs: 50 });
+    assertEquals(got.toolchain.version, e.version);
+    assertEquals(seen.map(([, aborted]) => aborted), [false, false]);
   });
 });
 

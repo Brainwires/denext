@@ -1892,7 +1892,8 @@ const updates = { manifestUrl: "https://updates.example.com/myapp/app-update.jso
 const found = await checkForAppUpdate(updates);
 if (found.available) {
   await downloadAppUpdate(updates, { onProgress: (p) => console.log(p.transferred, p.total) });
-  installAppUpdateAndRelaunch(); // quits; the new version starts
+  // Stops the app's sidecars (detached ones too) and waits, then quits; the new version starts.
+  await installAppUpdateAndRelaunch();
 }`}
       </Code>
       <p>
@@ -2457,11 +2458,14 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>fs</code>, <code>shell</code>{" "}
         and drag-out never reach the runtime's own folders in the data directory (the updater's{" "}
         <code>ui-updates</code>, the download records&apos; <code>denext-transfers</code>{" "}
-        (a live record holds its non-credential request headers), and the web engine's profile:{" "}
-        <code>CEF</code>, <code>WebKitGTK</code>,{" "}
-        <code>WebView2</code>, in any letter case): no read, list, write, delete, open, reveal,
-        trash or drag. SQLite connections cannot <code>ATTACH</code> another file, and a{" "}
-        <code>query</code>{" "}
+        (a live record holds its non-credential request headers), the detached-sidecar registry{" "}
+        <code>sidecars</code>, the local IPC sockets&apos;{" "}
+        <code>ipc</code>, and the web engine's profile: <code>CEF</code>, <code>WebKitGTK</code>,
+        {" "}
+        <code>WebView2</code>, in any letter case) nor <code>sidecars</code>{" "}
+        in the cache directory (the packages a bundled sidecar loads): no read, list, write, delete,
+        open, reveal, trash or drag. SQLite connections cannot <code>ATTACH</code>{" "}
+        another file, and a <code>query</code>{" "}
         stops after 20 seconds of producing rows (a single long statement still blocks the app,
         since <code>node:sqlite</code>{" "}
         cannot be interrupted). A reload releases the previous page's keep-awake holds.
@@ -3367,7 +3371,9 @@ tab.addEventListener("pointerdown", async () => {
 
 // Every window (the origin too: a drop on itself is a drop):
 onDragSession((e) => {
-  if (e.type === "enter" || e.type === "over") showDropMarker(e.clientX, e.clientY);
+  if ((e.type === "enter" || e.type === "over") && e.clientX !== undefined) {
+    showDropMarker(e.clientX, e.clientY!);
+  }
   if (e.type === "leave") hideDropMarker();
   if (e.type === "drop") adoptTab((e.data as { tab: string }).tab, e.clientX, e.clientY);
 });`}
@@ -4781,9 +4787,10 @@ await bounce({ critical: true }); // until the app is focused`}
           gets them, so a Dock menu can offer them:
           <Code lang="ts">
             {`// desktop.ts
-const app = await runDesktop({
+type OpenOptions = Parameters<typeof app.windows.open>[0];
+const app: Awaited<ReturnType<typeof runDesktop>> = await runDesktop({
   dockMenu: [{ id: "new-window", label: "New Window" }],
-  onDockMenuItem: (id) => {
+  onDockMenuItem: (id: string) => {
     if (id === "new-window") return void open({ url: "/", key: crypto.randomUUID() });
     const closed = app.windows.closed().find((c) => \`reopen:\${c.key}\` === id);
     if (closed) open({ url: closed.url, key: closed.key });
@@ -4796,7 +4803,7 @@ const refreshDock = () =>
     { label: "Reopen", submenu: app.windows.closed().map((c) =>
       ({ id: \`reopen:\${c.key}\`, label: c.title ?? c.key })) },
   ]);
-const open = (options) => app.windows.open(options).onClosed(refreshDock);`}
+const open = (options: OpenOptions) => app.windows.open(options).onClosed(refreshDock);`}
           </Code>
         </li>
         <li id="desktop-menu-read-back">
@@ -5736,7 +5743,7 @@ desktop: {
     libraries: [
       // {os} darwin | linux | windows, {arch} arm64 | x64, {ext} dylib | so | dll,
       // {target} the Rust triple (aarch64-apple-darwin, x86_64-unknown-linux-gnu, …)
-      "native/{target}/librullama_audio_ffi.{ext}", // name: "rullama_audio_ffi"
+      "native/{target}/libaudio_ffi.{ext}", // name: "audio_ffi"
       { path: "native/{os}-{arch}/libvad.{ext}", optional: true }, // skipped where missing
       // an explicit per-target map: a target with no entry ships without it
       { name: "audio", files: { "darwin-arm64": "native/mac/libaudio.dylib", "linux-x64": "native/linux/libaudio.so" } },
@@ -5747,7 +5754,7 @@ desktop: {
 
 // desktop.ts, or an extension module: the backend, never the page
 import { bundledLibraryPath } from "denext/desktop";
-const path = bundledLibraryPath("rullama_audio_ffi");
+const path = bundledLibraryPath("audio_ffi");
 const audio = path ? Deno.dlopen(path, { level: { parameters: [], result: "f32" } }) : null;`}
       </Code>
       <ul>
@@ -6242,7 +6249,10 @@ sc.ready();`}
         server&apos;s nonces, an HMAC-SHA256 from each side over a label, its role and both nonces,
         checked in constant time. Any failure closes the socket with no detail; a line is at most 8
         KiB, a handshake must finish within 5 s, and at most 16 connections may be waiting to
-        authenticate. An open authenticated connection is an attachment.
+        authenticate (one more closes the oldest of them, and an app whose connection was closed
+        before the answer asks again three times before it calls the record stale). A reattached
+        sidecar&apos;s port is the one it reports over the authenticated connection. An open
+        authenticated connection is an attachment.
       </p>
       <h4 id="desktop-sidecars-detached-orphans">What ends a detached sidecar</h4>
       <ul>
@@ -6337,7 +6347,9 @@ sc.ready();`}
           <code>listenLocalIpc</code>
         </a>{" "}
         instead of a loopback port: a Unix-domain socket or a named pipe that only the app&apos;s
-        user can reach on macOS and Linux, found again by name with <code>localIpcPath</code>.
+        user can reach on macOS and Linux, found again by name with{" "}
+        <code>localIpcPath</code>: the app hands its identifier to the sidecar when it starts it, so
+        <code>localIpcPath(name)</code> needs no <code>appId</code> there either.
       </p>
       <h3 id="desktop-sidecars-login-shell">The user&apos;s login-shell environment</h3>
       <p>
@@ -6403,10 +6415,9 @@ sc.ready();`}
       <p>
         The app controls them from <code>desktop.ts</code> (<code>app.sidecar("server")</code>:{" "}
         <code>status</code>, <code>onStatus</code>, <code>restart</code>, <code>stop</code>,{" "}
-        <code>whenReady</code>; <code>stopSidecars()</code> before{" "}
-        <code>installAppUpdateAndRelaunch()</code>{" "}
-        gives them their graceful stop, detached ones included, and the install ends whatever is
-        left), and the page from{" "}
+        <code>whenReady</code>; <code>await installAppUpdateAndRelaunch()</code>{" "}
+        stops every sidecar, detached ones included, and waits for them before it quits, and refuses
+        with <code>sidecars_running</code> when one cannot be stopped), and the page from{" "}
         <code>denext/desktop/client</code>, token-gated like every bridge call:
       </p>
       <Code lang="ts">
@@ -6479,8 +6490,9 @@ for await (const chunk of conn.readable) console.log(chunk);`}
           name), so two users of one machine never share a pipe name. <code>appId</code> defaults to
           {" "}
           <code>desktop.app.identifier</code>, as <code>resolveDesktopCapabilities</code>{" "}
-          registered it; a process where it did not run (a module sidecar&apos;s worker, a CLI)
-          passes <code>appId</code> (or, on Unix, <code>dir</code>).
+          registered it (a detached sidecar gets it from the app that starts it); a process where
+          neither happened (a module sidecar&apos;s worker, a CLI) passes <code>appId</code>{" "}
+          (or, on Unix, <code>dir</code>).
         </li>
         <li>
           <code>listenLocalIpc(path, onConnection, {"{"} signal? {"}"})</code>{" "}
@@ -6499,6 +6511,15 @@ for await (const chunk of conn.readable) console.log(chunk);`}
           <code>readable</code>, <code>writable</code> (closing it half-closes),{" "}
           <code>close()</code> (both directions at once) and <code>Symbol.asyncDispose</code>.
         </li>
+        <li>
+          <strong>On Windows both ends must be denext&apos;s.</strong>{" "}
+          A named pipe has no half-close, so on a pipe each write travels as frames: a 4-byte
+          little-endian length, then the bytes (at most 1 MiB a frame; a longer write is split), and
+          a zero-length frame means &quot;this side writes no more&quot;. A pipe channel therefore
+          talks only to another <code>listenLocalIpc</code> /{" "}
+          <code>connectLocalIpc</code>, or to a program that speaks the same framing. On macOS and
+          Linux the socket carries the bytes as written, so a client in any language can connect.
+        </li>
       </ul>
       <h4 id="desktop-local-ipc-permissions">Permissions</h4>
       <p>
@@ -6508,14 +6529,40 @@ for await (const chunk of conn.readable) console.log(chunk);`}
         <code>--allow-net-listen</code> / <code>--allow-net-connect</code>{" "}
         with the split flags), on Windows as on Unix. A refused check rejects with{" "}
         <code>NotCapable</code> naming the grants for that path. A <code>unix:</code>{" "}
-        grant names one exact path, and the runtime expands no folder token (<code>$APPDATA</code>,
+        grant names one exact path: an absolute one, or one in the app&apos;s own folders written
+        with the folder token right after <code>unix:</code> (<code>
+          unix:$DENO_DESKTOP_DATA/ipc/ctl.sock
+        </code>,{" "}
+        <code>unix:$DENO_DESKTOP_CACHE/…</code>), which a runtime that expands the token in a
+        network grant turns into the per-user path at launch, as it does a read or write grant.{" "}
+        <code>desktop.extraPermissions.net</code> / <code>netListen</code> / <code>netConnect</code>
         {" "}
-        <code>$DENO_DESKTOP_DATA</code>) in a network grant, so a packaged app cannot bake the
-        per-user path: <code>desktop.extraPermissions.net</code> / <code>netListen</code> /{" "}
-        <code>netConnect</code> accept a <code>unix:</code>{" "}
-        entry only with an absolute path (anything else is a config error, since the runtime would
-        refuse to start). An app that serves a channel in its data folder grants the folder and the
-        direction:
+        and a sidecar&apos;s <code>permissions</code>{" "}
+        accept those two forms only; anything else (<code>$APPDATA</code>, a relative path, a{" "}
+        <code>..</code>{" "}
+        segment) is a config error, since the runtime would refuse to start. A token entry needs
+        {" "}
+        <code>desktop.app.identifier</code>{" "}
+        and denext&apos;s pinned runtime; a build on a runtime that does not expand it (the stock
+        runtime, a local runtime build) fails instead of baking a grant the app would refuse. On
+        macOS and Linux an app that serves a channel at <code>localIpcPath(name)</code>{" "}
+        (its data folder&apos;s{" "}
+        <code>ipc/&lt;name&gt;.sock</code>) grants that socket and the folder:
+      </p>
+      <Code lang="ts">
+        {`desktop: {
+  app: { identifier: "com.acme.app" },
+  extraPermissions: {
+    write: ["$APPDATA/ipc"],   // and read, under desktop.permissions: "strict"
+    netListen: ["unix:$DENO_DESKTOP_DATA/ipc/ctl.sock"], // the server
+    netConnect: ["unix:$DENO_DESKTOP_DATA/ipc/ctl.sock"], // a client in the app
+  },
+},`}
+      </Code>
+      <p>
+        A Windows pipe (<code>\\.\pipe\&lt;appId&gt;.&lt;user&gt;.&lt;name&gt;</code>) is not in a
+        folder and its name holds a per-user token, so a Windows build, or a socket outside the
+        app&apos;s folders, grants the direction instead:
       </p>
       <Code lang="ts">
         {`desktop: {
@@ -6540,18 +6587,21 @@ for await (const chunk of conn.readable) console.log(chunk);`}
           users cannot connect; any process of the same user can.
         </li>
         <li>
-          Windows: the runtime creates the pipe&apos;s first instance with{" "}
+          Windows: the runtime creates every instance of the pipe with a security descriptor that
+          gives access to the creating user and LocalSystem only (no other account can open it or
+          add an instance), the first one with{" "}
           <code>FILE_FLAG_FIRST_PIPE_INSTANCE</code>, so a server never joins a pipe another process
           created (it fails with <code>AddrInUse</code>), and with{" "}
-          <code>PIPE_REJECT_REMOTE_CLIENTS</code>{" "}
-          (tokio&apos;s default, which the runtime keeps), so a client on another machine is
-          refused. The pipe is created with no security attributes, which gives it Windows&apos;
-          default security descriptor: full control for LocalSystem, Administrators and the creating
-          user, and read access for Everyone and the anonymous account. So another local user can
-          open the pipe for reading and receive what the server writes on that connection, and the
-          pipe namespace is machine-wide: a process (of any user) that creates the name first makes
-          the app&apos;s <code>listenLocalIpc</code>{" "}
-          fail, and the app&apos;s clients then connect to that process instead.
+          <code>PIPE_REJECT_REMOTE_CLIENTS</code>, so a client on another machine is refused. The
+          pipe namespace is still machine-wide: a process (of any user) that creates the name first
+          makes the app&apos;s <code>listenLocalIpc</code>{" "}
+          fail, and the app&apos;s clients then reach that process instead. Where the runtime
+          reports who serves a pipe connection (<code>Deno.pipeServerIdentity</code>),{" "}
+          <code>connectLocalIpc</code> refuses it with <code>PermissionDenied</code>{" "}
+          unless this user serves it: a server run by another user, a pipe another user owns, or one
+          whose identity cannot be read is closed before anything is sent. On a runtime that does
+          not report it the check is skipped, and the client is connected to whichever process holds
+          the name.
         </li>
         <li>
           So a channel that carries anything sensitive authenticates before it sends: the client

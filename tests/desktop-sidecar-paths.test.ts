@@ -4,7 +4,13 @@
 // that ignores SIGTERM, the host's own launchers (a real worker and a real program, "auto" ports,
 // log files and their rotation), and the registry the updater and `unload` reach.
 
-import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertRejects,
+  assertStringIncludes,
+} from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import {
   defineSidecar,
@@ -24,6 +30,7 @@ import {
 } from "../src/desktop/sidecar-launch.ts";
 import { createSidecarHost } from "../src/desktop/sidecar-host.ts";
 import {
+  endSidecarsForUpdate,
   killSidecarsNow,
   registerSidecarStopper,
   stopSidecars,
@@ -622,4 +629,56 @@ Deno.test("registry: kill and graceful stop reach every registered host; a faili
   }
   killSidecarsNow();
   assertEquals(seen.length, 2, "unregistered hosts are not reached");
+});
+
+Deno.test("registry: kill carries its reason; the update path stops each host and reports the first one still running", async () => {
+  const seen: string[] = [];
+  const offPlain = registerSidecarStopper({
+    // No `update`: the update path kills it with the "update" reason.
+    kill: (reason) => seen.push(`kill plain ${reason}`),
+    stop: () => Promise.resolve(),
+  });
+  const offGraceful = registerSidecarStopper({
+    kill: (reason) => seen.push(`kill graceful ${reason}`),
+    stop: () => Promise.resolve(),
+    update: () => {
+      seen.push("update graceful");
+      return Promise.resolve();
+    },
+  });
+  try {
+    killSidecarsNow("update");
+    assertEquals(seen, ["kill plain update", "kill graceful update"]);
+    seen.length = 0;
+    await endSidecarsForUpdate();
+    assertEquals(seen, ["kill plain update", "update graceful"]);
+    seen.length = 0;
+    const offStuck = registerSidecarStopper({
+      kill: () => {},
+      stop: () => Promise.resolve(),
+      update: () => Promise.reject(new Error("sidecar a: did not end")),
+    });
+    const offStuck2 = registerSidecarStopper({
+      kill: () => {},
+      stop: () => Promise.resolve(),
+      update: () => Promise.reject(new Error("sidecar b: did not end")),
+    });
+    try {
+      const err = await assertRejects(() => endSidecarsForUpdate(), Error);
+      assertEquals(
+        err.message,
+        "sidecar a: did not end",
+        "the first failure, in registration order",
+      );
+      assertEquals(seen, ["kill plain update", "update graceful"], "every host was still asked");
+    } finally {
+      offStuck();
+      offStuck2();
+    }
+  } finally {
+    offPlain();
+    offGraceful();
+  }
+  await endSidecarsForUpdate(); // nothing registered: resolves
+  assertEquals(seen.length, 2);
 });
