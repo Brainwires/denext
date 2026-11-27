@@ -1163,7 +1163,12 @@ try { Test-ModifyPath | Out-Null; "bad=accepted" } catch { "bad=$($_.Exception.M
   assertEquals(lines.env0flag, "True", "a flag beats the variable");
   assertEquals(lines.envall, "True");
   assertEquals(lines.nopath, "False");
-  assertStringIncludes(lines.bad, "DENEXT_MODIFY_PATH=sometimes");
+  // The refusal is written whole (Stop-Denext's Write-Host) before the short thrown error.
+  assert(
+    out.split("\n").includes("denext: DENEXT_MODIFY_PATH=sometimes is not one of 1, all, 0"),
+    out,
+  );
+  assertEquals(lines.bad, "denext: stopped (the reason is above).");
 });
 
 Deno.test("install.ps1: Get-UserPath reads the stored value unexpanded", {
