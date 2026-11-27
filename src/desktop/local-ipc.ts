@@ -69,7 +69,11 @@ export interface LocalIpcConnection extends AsyncDisposable {
 export interface LocalIpcServer extends AsyncDisposable {
   /** The socket or pipe path it listens on. */
   readonly path: string;
-  /** Stop listening, end the open connections and, on Unix, remove the socket file. */
+  /**
+   * Stop listening, end the open connections and, on Unix, remove the socket file. It resolves
+   * once the listener is closed and, on Unix, the server lock is free: a new server may listen on
+   * the same path right after.
+   */
   close(): Promise<void>;
 }
 
@@ -579,15 +583,15 @@ async function prepareUnixDir(path: string): Promise<void> {
 }
 
 /**
- * Make `path` bindable on Unix (its folder already checked): clear a stale socket file (nothing
- * answers on it), refusing a live one or a non-socket.
+ * What sits at `path` on Unix: `null` for nothing, else whether it is a socket. A non-socket is
+ * refused (`AlreadyExists`): it is never removed, whoever holds the server lock.
  */
-async function prepareUnixPath(path: string): Promise<void> {
+async function classifyUnixPath(path: string): Promise<"socket" | null> {
   let existing: Deno.FileInfo;
   try {
     existing = await Deno.lstat(path);
   } catch (err) {
-    if (err instanceof Deno.errors.NotFound) return;
+    if (err instanceof Deno.errors.NotFound) return null;
     throw err;
   }
   if (existing.isSocket !== true) {
@@ -595,6 +599,15 @@ async function prepareUnixPath(path: string): Promise<void> {
       `local IPC: ${path} exists and is not a socket; remove it or pick another name`,
     );
   }
+  return "socket";
+}
+
+/**
+ * Make `path` bindable on Unix (its folder already checked, the server lock held): clear a stale
+ * socket file (nothing answers on it), refusing a live one or a non-socket.
+ */
+async function prepareUnixPath(path: string): Promise<void> {
+  if ((await classifyUnixPath(path)) === null) return;
   if (await probeUnixSocket(path)) {
     throw new Deno.errors.AddrInUse(`local IPC: another server listens on ${path}`);
   }
@@ -663,21 +676,24 @@ export async function listenLocalIpc(
   // On Unix the server holds an OS lock beside its socket for as long as it serves: the stale
   // check, the bind and the removal at close are one server's alone, so two starting at once can
   // never remove each other's socket (a pipe name is claimed by its first instance instead).
+  // What sits at the path is classified before the lock is taken, so a non-socket there is always
+  // `AlreadyExists` (whoever holds the lock), and checked again under the lock before the bind.
   let lock: OsLock | null = null;
   try {
     if (!pipe) {
       await prepareUnixDir(path);
+      await classifyUnixPath(path);
       lock = await serverLock(path);
       await prepareUnixPath(path);
     }
   } catch (err) {
-    lock?.release();
+    await lock?.releaseAsync();
     throw mapError(err, path, "listen");
   }
   try {
     options.signal?.throwIfAborted();
   } catch (err) {
-    lock?.release();
+    await lock?.releaseAsync();
     throw err;
   }
   const sockets = new Set<net.Socket>();
@@ -701,8 +717,8 @@ export async function listenLocalIpc(
     } catch (err) {
       reject(mapError(err, path, "listen"));
     }
-  }).catch((err) => {
-    lock?.release();
+  }).catch(async (err) => {
+    await lock?.releaseAsync();
     throw err;
   });
   // A later server error (none is expected once listening) must not crash the process.
@@ -717,7 +733,8 @@ export async function listenLocalIpc(
       try {
         if (!pipe) await removeSocketFile(path);
       } finally {
-        lock?.release();
+        // Resolved only once the OS lock is free: a caller may listen on the path right after.
+        await lock?.releaseAsync();
       }
     })();
     return closing;

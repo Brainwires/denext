@@ -8,6 +8,14 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **A local IPC server's `close()` resolves only once its Unix server lock is free**, so a server
+  restarting on the same path right after is never refused `AddrInUse` by the one it replaces (the
+  lock is dropped explicitly before its file closes), and `listenLocalIpc` classifies the path
+  before it takes the lock: a non-socket file there is always `AlreadyExists` ("is not a socket"),
+  whoever holds the lock.
+
 ## [4.23.0] - 2026-11-27
 
 ### Changed

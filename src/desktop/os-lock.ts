@@ -16,8 +16,15 @@
 
 /** A held lock: {@linkcode OsLock.release} (or exit) frees it. */
 export interface OsLock extends Disposable {
-  /** Release the lock (idempotent). */
+  /** Release the lock (idempotent): close its file, which frees the OS lock with it. */
   release(): void;
+  /**
+   * Release the lock and resolve once the OS has freed it (idempotent): the lock is dropped
+   * explicitly (`flock(LOCK_UN)` / `UnlockFileEx`) before the file closes, so it is free when the
+   * promise resolves even if another reference to the descriptor outlives the close for a moment.
+   * A caller that hands the lock on (a server restarting on the same path) awaits this.
+   */
+  releaseAsync(): Promise<void>;
 }
 
 /** Open (creating, `0600`) the lock file at `path`. */
@@ -36,7 +43,17 @@ function heldLock(file: Deno.FsFile): OsLock {
       file.close(); // closing the descriptor releases the OS lock
     } catch { /* already closed */ }
   };
-  return { release, [Symbol.dispose]: release };
+  const releaseAsync = async () => {
+    if (released) return;
+    released = true;
+    try {
+      await file.unlock();
+    } catch { /* already closed, or nothing to unlock: the close below frees it */ }
+    try {
+      file.close();
+    } catch { /* already closed */ }
+  };
+  return { release, releaseAsync, [Symbol.dispose]: release };
 }
 
 /**

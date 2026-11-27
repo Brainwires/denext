@@ -33,6 +33,7 @@ import {
   type RuntimePipeServerIdentity,
 } from "../src/desktop/local-ipc.ts";
 import { osDataDir } from "../src/desktop/app-dirs.ts";
+import { acquireOsLock } from "../src/desktop/os-lock.ts";
 
 const WINDOWS = Deno.build.os === "windows";
 const APP_ID = "dev.denext.localipctest";
@@ -541,6 +542,71 @@ setTimeout(() => {}, 60_000);`,
       }
       // Its holder is gone: the OS freed the lock.
       await (await listenLocalIpc(ch.path, echo)).close();
+    } finally {
+      await ch.cleanup();
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "local IPC: a non-socket at the path is AlreadyExists even while another opener holds the lock (Unix)",
+  ignore: WINDOWS, // the server lock and the path checks are the Unix socket's
+  fn: async () => {
+    const ch = await channel();
+    try {
+      await Deno.writeTextFile(ch.path, "keep");
+      // A second opener in this process is another owner: the lock reads as held by a server.
+      const held = await acquireOsLock(localIpcLockPath(ch.path), { timeoutMs: 0 });
+      assert(held);
+      try {
+        await assertRejects(
+          () => listenLocalIpc(ch.path, () => {}),
+          Deno.errors.AlreadyExists,
+          "is not a socket",
+        );
+        assertEquals(
+          await acquireOsLock(localIpcLockPath(ch.path), { timeoutMs: 0 }),
+          null,
+          "the held lock is never broken",
+        );
+      } finally {
+        held.release();
+      }
+      assertEquals(await Deno.readTextFile(ch.path), "keep");
+      // A live socket under another server is still AddrInUse.
+      await Deno.remove(ch.path);
+      await using _server = await listenLocalIpc(ch.path, echo);
+      await assertRejects(() => listenLocalIpc(ch.path, () => {}), Deno.errors.AddrInUse);
+    } finally {
+      await ch.cleanup();
+    }
+  },
+});
+
+Deno.test({
+  name: "local IPC: close() frees the path at once: listening again right after succeeds (Unix)",
+  ignore: WINDOWS,
+  fn: async () => {
+    const ch = await channel();
+    try {
+      for (let i = 0; i < 25; i++) {
+        const server = await listenLocalIpc(ch.path, echo);
+        await server.close();
+        // Nothing is left behind: the lock is free and the socket file is gone.
+        const probe = await acquireOsLock(localIpcLockPath(ch.path), { timeoutMs: 0 });
+        assert(probe, `round ${i}: the server lock is free once close() resolved`);
+        probe.release();
+        await assertRejects(() => Deno.lstat(ch.path), Deno.errors.NotFound);
+      }
+      // And a regular file written right after a close is refused as one, never as a live server.
+      await (await listenLocalIpc(ch.path, echo)).close();
+      await Deno.writeTextFile(ch.path, "keep");
+      await assertRejects(
+        () => listenLocalIpc(ch.path, () => {}),
+        Deno.errors.AlreadyExists,
+        "is not a socket",
+      );
     } finally {
       await ch.cleanup();
     }

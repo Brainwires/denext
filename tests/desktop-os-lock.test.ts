@@ -1,6 +1,7 @@
 // The desktop runtime's OS advisory lock (src/desktop/os-lock.ts): a held lock refuses a second
 // opener (two opens in one process are separate owners), a waiter takes it once the holder lets go,
-// a timeout answers `null`, release is idempotent (and `using` releases), the lock file is created
+// a timeout answers `null`, release is idempotent (and `using` releases), releaseAsync frees the
+// lock before it resolves, the lock file is created
 // `0600` and kept, and a failing lock call closes the file before it rethrows.
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
@@ -78,6 +79,31 @@ Deno.test("os-lock: `using` releases the lock at the end of its scope", () =>
     }
     const after = await acquireOsLock(path, { timeoutMs: 0 });
     assert(after, "disposed: free again");
+    after.release();
+  }));
+
+Deno.test("os-lock: releaseAsync frees the lock before it resolves, idempotent with release", () =>
+  withDir(async (dir) => {
+    const path = join(dir, "app.lock");
+    for (let i = 0; i < 20; i++) {
+      const lock = await acquireOsLock(path, { timeoutMs: 0 });
+      assert(lock, `round ${i}: free after the previous releaseAsync resolved`);
+      await lock.releaseAsync();
+      await lock.releaseAsync(); // idempotent
+      lock.release(); // and release after it is a no-op
+    }
+    const proto = Deno.FsFile.prototype;
+    const unlock = proto.unlock;
+    proto.unlock = () => Promise.reject(new Error("unlock refused"));
+    try {
+      const lock = await acquireOsLock(path, { timeoutMs: 0 });
+      assert(lock);
+      await lock.releaseAsync(); // a failing unlock still closes the file, which frees the lock
+    } finally {
+      proto.unlock = unlock;
+    }
+    const after = await acquireOsLock(path, { timeoutMs: 0 });
+    assert(after, "closed: free again");
     after.release();
   }));
 
