@@ -55,6 +55,6 @@ Deno.test("runtime-compat.yml: hermetic legs, the curated unit suite, the gleam 
   assert(!yml.includes("run: deno run -A cli.ts runtime install --with gleam"));
   // The suite script runs from the tooling checkout: that is the dispatched commit (which has it),
   // never `development` (which may not yet).
-  const tooling = yml.match(/ref: (\S+)\n\s+path: tooling/);
+  const tooling = yml.match(/ref: (.+)\n\s+path: tooling/);
   assertEquals(tooling?.[1], "${{ github.sha }}");
 });
