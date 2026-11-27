@@ -55,6 +55,11 @@ export const RUNTIME_COMPAT_EXCLUDED: Readonly<Record<string, readonly CompatExc
       file: "tests/spa-dev-self-write.test.ts",
       reason: "a same-content rewrite raced the watcher's hash (test race, fixed in ff0f12a87)",
     },
+    {
+      file: "tests/serial-tests.test.ts",
+      reason: "the re-emit test assumes a coverage report that skips a clobbered emit, which a " +
+        "runtime transpiling the module itself no longer does (test fixed in 1fdb2f6b1)",
+    },
   ],
   "4.22": [
     { file: "tests/runtime-channel.test.ts", reason: CHANNEL_ENV },
