@@ -262,7 +262,9 @@ export async function runDetachedSidecarChild(options: RunDetachedChildOptions):
   let pollTimer: ReturnType<typeof setInterval> | undefined;
   const logTimer = startLogRotation(init);
   /** Armed once the endpoint serves: no app attaching within the budget ends the process. */
-  const firstAttach: { timer?: ReturnType<typeof setTimeout> } = {};
+  // `number` too: with Node's types loaded (a packaged app's check), the global setTimeout and
+  // ReturnType<typeof setTimeout> name different timer types.
+  const firstAttach: { timer?: ReturnType<typeof setTimeout> | number } = {};
 
   const shutdown = async (grace: number, reason: string): Promise<void> => {
     if (ending) return;
