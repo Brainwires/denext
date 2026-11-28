@@ -178,6 +178,12 @@ jobs:
           deno run -A scripts/test-run.ts "--ignore=$ignore"
         env:
           DENEXT: ${{ matrix.denext }}
+          # The per-test watchdog (tests/helpers/watchdog.ts) at 30 min, not 10: the legs share a
+          # host and run the whole suite in parallel, so a test that type-checks a few dozen files
+          # (api-types: 5m50s on denext.30's legs, past 10 min on denext.31's, 2m28s alone on one
+          # CPU on both runtimes) can outlast 10 min with no runtime at fault. A real hang still
+          # fails at 30 min.
+          DENEXT_TEST_DEADLINE_MS: "1800000"
           DENEXT_TEST_GLEAM: ${{ steps.gleam-pin.outputs.path }}/gleam
 
       - name: Integration tests
