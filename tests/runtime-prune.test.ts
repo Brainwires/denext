@@ -348,7 +348,14 @@ Deno.test("denext runtime uninstall / prune: the real CLI against a temp cache",
       boundedOutput(Deno.execPath(), {
         args: ["run", "-A", "--config", join(ROOT, "deno.json"), CLI, ...args],
         cwd: work,
-        env: { DENO_DIR: cacheDir, DENEXT_TOOLCHAIN_ACTIVE: "", NO_COLOR: "1" },
+        // DENEXT_TOOLCHAIN_PIN_FILE blank: `pinned` above is the bundled pin, and a runtime-compat leg
+        // sets the variable to its candidate's, which the child would otherwise take as the pin.
+        env: {
+          DENO_DIR: cacheDir,
+          DENEXT_TOOLCHAIN_ACTIVE: "",
+          DENEXT_TOOLCHAIN_PIN_FILE: "",
+          NO_COLOR: "1",
+        },
       }).then((o) => {
         const d = new TextDecoder();
         return { code: o.code, stdout: d.decode(o.stdout), stderr: d.decode(o.stderr) };

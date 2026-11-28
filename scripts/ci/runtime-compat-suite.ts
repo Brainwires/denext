@@ -80,6 +80,14 @@ export const RUNTIME_COMPAT_EXCLUDED: Readonly<Record<string, readonly CompatExc
         "runtime transpiling the module itself no longer does (test fixed in 1fdb2f6b1)",
     },
   ],
+  "4.23": [
+    {
+      file: "tests/runtime-prune.test.ts",
+      reason:
+        "its real-CLI test's child inherits the leg's DENEXT_TOOLCHAIN_PIN_FILE while the test " +
+        "asserts the bundled pin (fixed after 4.23: the child gets the variable blank)",
+    },
+  ],
 };
 
 /**

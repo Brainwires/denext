@@ -22,8 +22,8 @@ Deno.test("runtime-compat suite: a leg's ignores are its task's plus the exclusi
     "tests/e2e/,tests/migration-bed/,tests/integration/,tests/runtime-select.test.ts",
   );
   // A minor with no exclusions runs its whole unit suite.
-  assertEquals(compatExclusions("4.23.0"), []);
-  assertEquals(compatIgnore(TASK, compatExclusions("4.23.1"), () => true), taskIgnore(TASK));
+  assertEquals(compatExclusions("4.24.0"), []);
+  assertEquals(compatIgnore(TASK, compatExclusions("4.24.1"), () => true), taskIgnore(TASK));
   // A task of another shape is a loud failure, never a silently wider suite.
   assertThrows(() => taskIgnore("deno test -A"), Error, "update");
   assertThrows(() => compatExclusions("next"), Error, "not a denext version");
@@ -37,8 +37,8 @@ Deno.test("runtime-compat suite: every exclusion names a test file and why", () 
       assert(e.reason.length > 20, `${minor} ${e.file} needs a reason`);
     }
   }
-  // The current tests carry none of these problems: nothing past 4.22 is excluded.
-  assert(Object.keys(RUNTIME_COMPAT_EXCLUDED).every((m) => Number(m.split(".")[1]) <= 22));
+  // The current tests carry none of these problems: nothing past 4.23 is excluded.
+  assert(Object.keys(RUNTIME_COMPAT_EXCLUDED).every((m) => Number(m.split(".")[1]) <= 23));
 });
 
 Deno.test("runtime-compat.yml: hermetic legs, the curated unit suite, the gleam verb each release has", async () => {
