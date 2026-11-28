@@ -1,6 +1,20 @@
 {
   "releases": [
     {
+      "version": "3.0.0-denext.31",
+      "tag": "denext-runtime-v3.0.0-denext.31",
+      "deno": "2.9.8",
+      "releasedAt": "2026-11-28T03:22:46Z",
+      "minDenext": "4.22.0",
+      "esbuild": "0.25.5",
+      "laufeyApi": 60,
+      "minGlibc": "2.27",
+      "doc": {
+        "sha256": "f105b6d5aeeb14d839ec775e9fc4e53f79f10aa26da8e89dfaa1968a3a75a6c2",
+        "size": 15116
+      }
+    },
+    {
       "version": "3.0.0-denext.30",
       "tag": "denext-runtime-v3.0.0-denext.30",
       "deno": "2.9.8",
